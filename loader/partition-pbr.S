@@ -1,47 +1,45 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * PC-98 fixed-disk IPL for the Mirai98 Linux disk.
+ * PC-98 FAT16 partition boot record for the Mirai98 Linux disk.
  *
- * The firmware loads LBA 0 and LBA 1 at 1fc0:0000.  LBA 1 contains the
- * sixteen-entry NEC98 partition table.  The gap at LBA 2..135 contains a
- * small FAT-aware second-stage loader; load it and transfer control.
+ * A genuine PC-98 disk IPL boots a selected partition through its PBR.
+ * Load the same second-stage Linux loader used by disk-ipl.S from the
+ * pre-partition gap at absolute LBA 2.
  */
 
 	.code16
 	.section .text
 	.globl _start
 
-	.set STAGE_SEG,        0x1000
-	.set HANDOFF,          0x0700
-	.set HANDOFF_MAGIC,    0x4839384c	/* "L98H" */
-	.set LOADER_SECTORS,   0x01f0
+	.set STAGE_SEG,		0x1000
+	.set HANDOFF,		0x0700
+	.set HANDOFF_MAGIC,	0x4839384c	/* "L98H" */
+	.set LOADER_SECTORS,	0x0046
 
 _start:
-	jmp	ipl_start
+	jmp	pbr_start
 	nop
-	nop
-	.ascii	"IPL1"
-	.byte	0, 0, 0
-	.byte	0x1e
+	.ascii	"NEC  5.0"
+	.fill	0x003e - (. - _start), 1, 0
 
-ipl_start:
+	/*
+	 * Offsets 0x3e..0x45 are the NEC DOS fixed-disk BPB extension.
+	 * The image builder fills them with the absolute partition start,
+	 * relative data start, and physical sector size.
+	 */
+	.fill	0x0046 - (. - _start), 1, 0
+	.word	0			/* patched second-stage sector count */
+
+pbr_start:
 	cld
 	pushw	%cs
 	popw	%ds
 
-	/* LBA = cylinder * (8 * 17) + head * 17 + sector. */
-	movzwl	0x0206, %eax
-	imull	$136, %eax, %eax
-	movzbl	0x0205, %ecx
-	imull	$17, %ecx, %ecx
-	addl	%ecx, %eax
-	movzbl	0x0204, %ecx
-	addl	%ecx, %eax
-
+	/* Pass the physical partition LBA and selected BIOS drive to stage 2. */
+	movl	0x001c, %eax
 	/*
-	 * Keep the firmware-provided stack.  Use segment zero explicitly for
-	 * the BIOS work area and place the handoff block at 0:0700; 0:0500
-	 * overlaps genuine IDE BIOS work data and makes AH=06h time out.
+	 * Keep the genuine IPL's stack and address the BIOS work area and
+	 * handoff block explicitly through segment zero.
 	 */
 	pushw	%ds
 	xorw	%dx, %dx
@@ -138,8 +136,5 @@ boot_failure:
 read_flags:
 	.word	0
 
-	.org	LOADER_SECTORS
-	.word	0			/* patched second-stage sector count */
-	.org	0x01fc
-	.word	9
+	.org	0x01fe
 	.word	0xaa55

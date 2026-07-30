@@ -174,6 +174,13 @@ if [ "$device_profile" = pc98 ]; then
 	yes "" | make -C "$source" O="$kernel_build" ARCH=i386 \
 		LSMOD="$repo/configs/pc9800-modules.list" localmodconfig
 	set -o pipefail
+	# PC-9821 Ra43's onboard PC-9821X-B06-compatible adapter is an
+	# Intel 82557 (8086:1229, subsystem 1033:8000).  Keep e100 built in
+	# so the minimal, module-free i486 rootfs can use the real adapter.
+	"$source/scripts/config" --file "$kernel_build/.config" \
+		--enable NET_VENDOR_INTEL \
+		--enable E100 \
+		--enable MII
 	make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 fi
 mkdir -p "$(dirname "$output")"

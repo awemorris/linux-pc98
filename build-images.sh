@@ -34,6 +34,7 @@ make -C "$repo/loader"
 sudo python3 "$repo/tools/mk-pc98-linux-disk.py" create \
 	"$output" \
 	"$repo/loader/disk-ipl.bin" \
+	"$repo/loader/partition-pbr.bin" \
 	"$repo/loader/fat-loader.bin" \
 	"$kernel_image" \
 	"$root_stage" \

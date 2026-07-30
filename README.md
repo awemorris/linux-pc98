@@ -17,6 +17,8 @@ and a raw disk image builder for qemu-pc98.
 | `build/` | Generated kernel, rootfs, logs, and disk images; ignored by Git |
 | `build-kernel.sh` | Configures and builds the kernel and modules |
 | `build-debian.sh` | Builds the Debian rootfs, kernel, modules, and disk image |
+| `build-i486-rootfs.sh` | Builds a static i486 musl/BusyBox root filesystem without Nix |
+| `build-i486-image.sh` | Builds the experimental Linux 7.1/i486 PC-98 disk image |
 
 Nix is not required. The build uses standard packages available on Debian 13.
 
@@ -94,13 +96,24 @@ partitions.
 | LBA 0 | Disk IPL with the `IPL1` marker |
 | LBA 1 | PC-98 sixteen-entry partition table |
 | LBA 2 through 135 | FAT16-aware Linux second-stage loader |
-| Partition 1 | Standard DOS-compatible FAT16 containing `BZIMAGE` |
+| Partition 1 | PC-98 DOS-compatible FAT16 containing `BZIMAGE` |
 | Partition 2 | Debian i386 ext4 root filesystem, mounted as `/dev/sda2` |
 
-Partition 1 does not use a custom PBR. The LBA 0 IPL loads the Linux loader
-directly from LBA 2, so DOS may install its own PBR without affecting the
-Linux boot path. If DOS reformats the whole FAT16 partition, copy `BZIMAGE`
-back afterwards.
+The LBA 0 IPL loads the Linux loader directly from LBA 2. Partition 1 also
+has a free PC-98 FAT16 PBR, so a genuine PC-98 disk IPL can boot Linux after
+the user selects the active Linux partition. The BPB uses the NEC fixed-disk
+convention of 1024-byte logical DOS sectors and includes the PC-98 extension
+at offsets `0x3e..0x45`.
+
+The current built-in kernel command line uses `root=/dev/sda2`. A genuine
+IPL can select Partition 1 from a second HDD and successfully enter the
+Linux kernel, but the kernel then looks for the root filesystem on the first
+HDD and panics. Device-order-independent root selection remains follow-up
+work; use this image as the first HDD for a complete boot.
+
+DOS may install its own PBR and filesystem in Partition 1. Reformatting it
+removes `BZIMAGE`, so restore the kernel afterwards if the partition is to
+remain Linux-bootable.
 
 The Linux port includes a PC-98 partition-table parser so both partitions are
 reported through the normal Linux block-device interface.
@@ -130,7 +143,7 @@ The main environment-variable overrides are:
 | `KERNEL_SOURCE` | `linux-$KERNEL_VERSION` |
 | `JOBS` | `nproc`; parallel kernel build job count |
 | `KERNEL_BUILD` | `build/kernel` for 6.12; otherwise `build/kernel-$KERNEL_VERSION` |
-| `CPU_FAMILY` | `686`; Linux 7.0 also retains the experimental `486` target |
+| `CPU_FAMILY` | `686`; Linux 7.0 and 7.1 also retain the experimental `486` target |
 | `DEVICE_PROFILE` | Linux 7.1 defaults to `pc98`; use `full` for the full Debian driver catalogue |
 | `INSTALL_MODULES` | `1`; set to `0` to skip `modules_install` |
 | `OUTPUT_IMAGE` | Version-specific raw image path |
@@ -192,13 +205,44 @@ platform and device changes were forward-ported from the Linux 7.0 tree.
 Linux 7.1 changed partition-parser logging to `struct seq_buf`; the NEC98
 parser follows the new API.
 
-The current Linux 7.1 configuration is the Debian-oriented
-`CONFIG_M686=y` target. The i486 target is intentionally deferred to a
-separate follow-up change.
+Linux 7.1 supports the Debian-oriented `CONFIG_M686=y` target and an
+experimental `CONFIG_M486=y` target. The latter restores the x86 i486
+configuration removed by upstream Linux 7.1 and uses a separately built,
+static musl/BusyBox root filesystem instead of the i686 Debian userland.
 
 The trimmed kernel and module set build successfully. The generated
 two-partition image boots under qemu-pc98 with TCG, mounts the Debian 13 ext4
 root filesystem, reaches the login prompt, and reports Linux 7.1.0 i686.
+
+To build and run the experimental i486 image:
+
+```sh
+KERNEL_VERSION=7.1 \
+CPU_FAMILY=486 \
+KERNEL_BUILD=build/kernel-7.1-i486 \
+LOCALVERSION=-i486 \
+DEVICE_PROFILE=pc98 \
+INSTALL_MODULES=0 \
+  ./build-kernel.sh
+./build-i486-rootfs.sh
+./build-i486-image.sh
+
+qemu-system-i386 \
+  -M pc9821 \
+  -cpu 486 \
+  -m 64 \
+  -accel tcg \
+  -drive if=ide,bus=0,unit=0,format=raw,file=build/qemu-pc98-linux-7.1-i486.raw
+```
+
+The i486 image mounts its ext4 root, starts BusyBox init, reaches an
+interactive shell, and reports Linux 7.1.0-i486 under qemu-pc98 and on a
+physical PC-9821 Ra43. The i386 target remains a research milestone.
+
+The i486 kernel includes the `e100` and `MII` drivers for the Ra43 onboard
+PC-9821X-B06-compatible Intel PRO/100 adapter. Linux matches its primary
+PCI ID `8086:1229`; the NEC subsystem ID `1033:8000` needs no separate
+driver-table entry.
 
 ## Running under qemu-pc98
 

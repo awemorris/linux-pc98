@@ -2,7 +2,7 @@ AS := as
 LD := ld
 OBJCOPY := objcopy
 ASFLAGS := --32
-all: boot2.bin disk-ipl.bin fat-loader.bin
+all: boot2.bin disk-ipl.bin partition-pbr.bin fat-loader.bin
 boot2.o: boot2.S
 	$(AS) $(ASFLAGS) $< -o $@
 boot2.elf: boot2.o
@@ -15,6 +15,13 @@ disk-ipl.o: disk-ipl.S
 disk-ipl.elf: disk-ipl.o
 	$(LD) -m elf_i386 -Ttext=0 -e _start $< -o $@
 disk-ipl.bin: disk-ipl.elf
+	$(OBJCOPY) -O binary -j .text $< $@
+	@test $$(stat -c%s $@) -eq 512
+partition-pbr.o: partition-pbr.S
+	$(AS) $(ASFLAGS) $< -o $@
+partition-pbr.elf: partition-pbr.o
+	$(LD) -m elf_i386 -Ttext=0 -e _start $< -o $@
+partition-pbr.bin: partition-pbr.elf
 	$(OBJCOPY) -O binary -j .text $< $@
 	@test $$(stat -c%s $@) -eq 512
 fat-loader.o: fat-loader.S

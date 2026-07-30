@@ -11,7 +11,7 @@
 	.section .text
 	.globl _start
 
-	.set HANDOFF,	0x0500
+	.set HANDOFF,	0x0700
 	.set BOUNCE_SEG,	0x3000
 	.set FAT_SEG,	0x2800
 	.set BP_ADDR,	0x20000
@@ -45,19 +45,35 @@ _start:
 	movl	partition_lba, %eax
 	call	read_disk
 	jc	loader_failure
-	cmpw	$512, %es:0x0b
+	movw	%es:0x0b, %ax
+	cmpw	$512, %ax
+	je	1f
+	cmpw	$1024, %ax
 	jne	loader_failure
+	movb	$2, sector_scale
+	jmp	2f
+1:
+	movb	$1, sector_scale
+2:
 
 	movzbl	%es:0x0d, %eax
 	testl	%eax, %eax
 	jz	loader_failure
+	movzbl	sector_scale, %ecx
+	imull	%ecx, %eax
+	cmpl	$255, %eax
+	ja	loader_failure
 	movb	%al, sectors_per_cluster
 	movl	partition_lba, %eax
 	movzwl	%es:0x0e, %ecx
+	movzbl	sector_scale, %edx
+	imull	%edx, %ecx
 	addl	%ecx, %eax
 	movl	%eax, fat_lba
 	movzbl	%es:0x10, %ecx
 	movzwl	%es:0x16, %edx
+	movzbl	sector_scale, %ebx
+	imull	%ebx, %edx
 	imull	%edx, %ecx
 	addl	%ecx, %eax
 	movl	%eax, root_lba
@@ -394,12 +410,22 @@ read_disk:
 	pushw	%ds
 	pushw	%es
 	pushw	%bp
+	xorl	%edx, %edx
+	movl	$136, %edi
+	divl	%edi
 	movw	%ax, %cx
-	shrl	$16, %eax
-	movb	%al, %dl
+	movl	%edx, %eax
+	xorl	%edx, %edx
+	movl	$17, %edi
+	divl	%edi
+	movb	%al, %dh
+	xorw	%ax, %ax
+	movw	%ax, %ds
 	movb	%ss:0x0584, %al
-	andb	$0x7f, %al
+	orb	$0x80, %al
 	movb	$0x06, %ah
+	movw	%ss:HANDOFF+10, %si
+	movw	%ss:HANDOFF+12, %di
 	int	$0x1b
 	pushfw
 	popw	%ax
@@ -464,6 +490,8 @@ setup_sects:
 header_end:
 	.word	0
 sectors_per_cluster:
+	.byte	0
+sector_scale:
 	.byte	0
 sector_in_cluster:
 	.byte	0

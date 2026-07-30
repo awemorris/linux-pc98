@@ -11,7 +11,7 @@ setup code is not executed.
 | 0             | `disk-ipl.bin`, with `IPL1` at offset 4            |
 | 1             | PC-98 partition table: sixteen 32-byte entries     |
 | 2 through 135 | `fat-loader.bin` followed by unused space          |
-| Partition 1   | Standard DOS-compatible FAT16 containing `BZIMAGE` |
+| Partition 1   | PC-98 DOS-compatible FAT16 containing `BZIMAGE`    |
 | Partition 2   | ext4 Debian root filesystem                        |
 
 The fixed BIOS geometry is eight heads and seventeen sectors per track.
@@ -19,28 +19,38 @@ Partition 1 begins at cylinder 1, which corresponds to LBA 136.
 
 `disk-ipl.bin` obtains the first-partition LBA from the first entry in the
 LBA 1 partition table, then loads the second stage from LBA 2 at `1000:0000`.
-The image builder writes the second-stage sector count at IPL offset 8. The
-loader does not assume that BIOS service `INT 1Bh/AH=06h` preserves general
-registers; it saves and restores them around every disk read.
+The first partition is marked active (`MID=0xa1`) and contains
+`partition-pbr.bin`. This provides a second boot path for a genuine PC-98
+disk IPL: selecting the Linux partition loads the same second stage from
+LBA 2. The image builder writes the second-stage sector count into both
+boot records. In the disk IPL, this count is kept outside the `IPL1` header
+at offset `0x1f0`, leaving the firmware-visible reserved bytes at offsets
+8 through 10 clear. The loaders do not assume that BIOS service
+`INT 1Bh/AH=06h`
+preserves general registers; they save and restore them around every read.
 
-Partition 1 does not require a custom PBR. The image builder installs a
-normal FAT16 BPB and a non-booting PBR that DOS can recognize. A DOS
-installer may replace that PBR without affecting the Linux boot path from
-LBA 0.
+The FAT BPB uses the PC-98 fixed-disk convention of 1024-byte logical DOS
+sectors over 512-byte physical IDE sectors. Its offsets `0x3e..0x45`
+contain the NEC DOS extension: absolute partition start, relative data
+start, and physical sector size. A DOS formatter or installer may replace
+the PBR and filesystem to turn the first partition into a DOS system
+partition; that also replaces `BZIMAGE`, so Linux must be restored
+afterwards if both uses are desired.
 
 ## FAT16 second stage
 
-`fat-loader.bin` reads the BPB and root directory from Partition 1 and
-searches for the 8.3 name `BZIMAGE`. It follows the FAT16 cluster chain, so
-the kernel file may be fragmented. The loader validates the bzImage
-`setup_sects`, `syssize`, `HdrS`, and `LOADED_HIGH` fields before copying the
-protected-mode payload to physical address `0x100000`.
+`fat-loader.bin` reads 512- or 1024-byte logical-sector BPBs and the root
+directory from Partition 1, then searches for the 8.3 name `BZIMAGE`. It
+follows the FAT16 cluster chain, so the kernel file may be fragmented. The
+loader validates the bzImage `setup_sects`, `syssize`, `HdrS`, and
+`LOADED_HIGH` fields before copying the protected-mode payload to physical
+address `0x100000`.
 
 ## Memory layout
 
 | Physical address | Contents                                           |
 |------------------|----------------------------------------------------|
-| `0x00000500`     | Handoff data from the disk IPL to the second stage |
+| `0x00000700`     | Handoff data from the disk IPL to the second stage |
 | `0x00010000`     | FAT16 second-stage loader                          |
 | `0x00020000`     | 4096-byte `boot_params` structure                  |
 | `0x00021000`     | Kernel command line                                |
@@ -62,5 +72,6 @@ make -C loader
 ./update-kernel.sh
 ```
 
-`update-kernel.sh` updates the FAT16 filesystem and `BZIMAGE` in Partition 1
-without modifying the Debian userland in Partition 2.
+`update-kernel.sh` updates both boot records, the second-stage loader, the
+FAT16 filesystem, and `BZIMAGE` without modifying the Debian userland in
+Partition 2.

@@ -26,8 +26,13 @@
 #define get_boot_seed() kaslr_offset()
 #endif
 
+#ifdef CONFIG_X86_PC9800
+#define I8254_PORT_CONTROL	0x77
+#define I8254_PORT_COUNTER0	0x71
+#else
 #define I8254_PORT_CONTROL	0x43
 #define I8254_PORT_COUNTER0	0x40
+#endif
 #define I8254_CMD_READBACK	0xC0
 #define I8254_SELECT_COUNTER0	0x02
 #define I8254_STATUS_NOTREADY	0x40

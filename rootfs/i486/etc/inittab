@@ -1,0 +1,9 @@
+::sysinit:/bin/mount -t proc proc /proc
+::sysinit:/bin/mount -t sysfs sysfs /sys
+::sysinit:/bin/mount -t devtmpfs devtmpfs /dev
+::sysinit:/bin/busybox --install -s
+::sysinit:/bin/hostname pc98-i486
+tty1::respawn:-/bin/sh
+ttyS0::respawn:-/bin/sh
+::ctrlaltdel:/bin/reboot
+::shutdown:/bin/umount -a -r

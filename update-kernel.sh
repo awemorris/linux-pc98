@@ -22,6 +22,11 @@ if [ ! -f "$kernel_image" ]; then
 	exit 1
 fi
 
+make -C "$repo/loader"
+
 python3 "$repo/tools/mk-pc98-linux-disk.py" update-kernel \
 	"$image" \
+	"$repo/loader/disk-ipl.bin" \
+	"$repo/loader/partition-pbr.bin" \
+	"$repo/loader/fat-loader.bin" \
 	"$kernel_image"

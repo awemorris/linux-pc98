@@ -2,7 +2,13 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")" && pwd)"
-disk="${1:-$repo/build/qemu-pc98-linux.raw}"
+kernel_version="${KERNEL_VERSION:-6.12}"
+if [ "$kernel_version" = 6.12 ]; then
+	default_disk="$repo/build/qemu-pc98-linux.raw"
+else
+	default_disk="$repo/build/qemu-pc98-linux-$kernel_version.raw"
+fi
+disk="${1:-${OUTPUT_IMAGE:-$default_disk}}"
 
 qemu="${QEMU:-$HOME/qemu-codex/qemu-pc98-dev/build-release-codex/qemu-system-i386}"
 bios_dir="${BIOS_DIR:-$HOME/qemu-codex/qemu-pc98-dev/pc-bios}"

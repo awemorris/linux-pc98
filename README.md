@@ -1,21 +1,23 @@
-Linux/PC-98 for QEMU PC98 and Mirai98
-=====================================
+# Mirai98 Linux/PC-98
 
-This repository contains a Linux 6.12 port for the NEC PC-9800 series,
+This repository contains Linux 6.12 and Linux 7.0 ports for the NEC PC-9800 series,
 boot loaders, tools for building a Debian i386 userland, and a raw disk image
 builder for qemu-pc98.
 
 ## Repository layout
 
-| Path              | Contents                                                         |
-|-------------------|------------------------------------------------------------------|
-| `linux-6.12/`     | Linux 6.12 source tree with the PC-98 port integrated            |
-| `configs/`        | Debian-derived i686 base configuration and PC-98 configuration   |
-| `loader/`         | PC-98 disk IPL and FAT16-aware Linux second-stage loader         |
-| `tools/`          | Two-partition PC-98 raw disk image builder and helper tools      |
-| `build/`          | Generated kernel, rootfs, logs, and disk images; ignored by Git  |
-| `build-kernel.sh` | Configures and builds the kernel and modules                     |
-| `build-debian.sh` | Builds the Debian rootfs, kernel, modules, and disk image        |
+| Path | Contents |
+| --- | --- |
+| `linux-6.12/` | Linux 6.12 source tree with the PC-98 port integrated |
+| `linux-7.0/` | Linux 7.0 source tree with the PC-98 port forward-ported |
+| `configs/` | Debian-derived i686 base and versioned PC-98 configurations |
+| `loader/` | PC-98 disk IPL and FAT16-aware Linux second-stage loader |
+| `tools/` | Two-partition PC-98 raw disk image builder and helper tools |
+| `build/` | Generated kernel, rootfs, logs, and disk images; ignored by Git |
+| `build-kernel.sh` | Configures and builds the kernel and modules |
+| `build-debian.sh` | Builds the Debian rootfs, kernel, modules, and disk image |
+
+Nix is not required. The build uses standard packages available on Debian 13.
 
 ## Host requirements
 
@@ -34,6 +36,9 @@ kernel modules into it, and generating the ext4 filesystem image.
 
 ## Complete Debian image build
 
+Linux 6.12 remains the default so existing build and release procedures keep
+their original behavior:
+
 ```sh
 ./build-debian.sh
 ```
@@ -49,6 +54,16 @@ build/qemu-pc98-linux.raw
 The kernel is built out of tree in `build/kernel`; `linux-6.12/` remains a
 source-only directory.
 
+To build the Linux 7.0 image instead:
+
+```sh
+KERNEL_VERSION=7.0 ./build-debian.sh
+```
+
+This uses `linux-7.0/`, builds out of tree in `build/kernel-7.0`, and writes
+`build/qemu-pc98-linux-7.0.raw`. It does not overwrite the Linux 6.12 kernel
+or disk image.
+
 The individual build stages can also be run separately:
 
 ```sh
@@ -57,18 +72,29 @@ The individual build stages can also be run separately:
 ./build-images.sh
 ```
 
+To create an xz-compressed Release artifact and its SHA-256 file:
+
+```sh
+KERNEL_VERSION=7.0 make dist
+```
+
+The Linux 7.0 artifact is named
+`dist/qemu-pc98-debian13-i386-linux-7.0.raw.xz`. `DIST_BASENAME`,
+`XZ_LEVEL`, and `XZ_THREADS` can override the name and compression settings.
+Existing dist files are never overwritten.
+
 ## Disk layout
 
 `build/qemu-pc98-linux.raw` is a single raw IDE disk with two native PC-98
 partitions.
 
-| Region      | Contents                                                  |
-|-------------|-----------------------------------------------------------|
-| LBA 0       | Disk IPL with the `IPL1` marker                           |
-| LBA 1       | PC-98 sixteen-entry partition table                       |
-| LBA 2-135   | FAT16-aware Linux second-stage loader                     |
-| Partition 1 | Standard DOS-compatible FAT16 containing `BZIMAGE`        |
-| Partition 2 | Debian i386 ext4 root filesystem, mounted as `/dev/sda2`  |
+| Region | Contents |
+| --- | --- |
+| LBA 0 | Disk IPL with the `IPL1` marker |
+| LBA 1 | PC-98 sixteen-entry partition table |
+| LBA 2 through 135 | FAT16-aware Linux second-stage loader |
+| Partition 1 | Standard DOS-compatible FAT16 containing `BZIMAGE` |
+| Partition 2 | Debian i386 ext4 root filesystem, mounted as `/dev/sda2` |
 
 Partition 1 does not use a custom PBR. The LBA 0 IPL loads the Linux loader
 directly from LBA 2, so DOS may install its own PBR without affecting the
@@ -97,25 +123,58 @@ An alternate raw image and bzImage can be supplied as arguments:
 
 The main environment-variable overrides are:
 
-| Variable         | Default or purpose                                  |
-|------------------|-----------------------------------------------------|
-| `JOBS            | `nproc`; parallel kernel build job count            |
-| `KERNEL_BUILD`   | `build/kernel`; out-of-tree kernel build directory  |
-| `ROOT_STAGE`     | `build/debian-i386-root`                            |
-| `DEBIAN_SUITE`   | `trixie`                                            |
-| `DEBIAN_MIRROR`  | Official Debian mirror                              |
-| `DEBIAN_INCLUDE` | Comma-separated packages added to the rootfs        |
-| `ROOT_PASSWORD`  | Initial local test password; default `pc98`         |
-| `ROOT_MB`        | ext4 root partition size; default 1024 MiB          |
+| Variable | Default or purpose |
+| --- | --- |
+| `KERNEL_VERSION` | `6.12`; select `6.12` or `7.0` |
+| `KERNEL_SOURCE` | `linux-$KERNEL_VERSION` |
+| `JOBS` | `nproc`; parallel kernel build job count |
+| `KERNEL_BUILD` | `build/kernel` for 6.12; otherwise `build/kernel-$KERNEL_VERSION` |
+| `CPU_FAMILY` | `686`; use `486` to test the retained i486 kernel target |
+| `INSTALL_MODULES` | `1`; set to `0` to skip `modules_install` |
+| `OUTPUT_IMAGE` | Version-specific raw image path |
+| `ROOT_STAGE` | `build/debian-i386-root` |
+| `DEBIAN_SUITE` | `trixie` |
+| `DEBIAN_MIRROR` | Official Debian mirror |
+| `DEBIAN_INCLUDE` | Comma-separated packages added to the rootfs |
+| `ROOT_PASSWORD` | Initial local test password; default `pc98` |
+| `ROOT_MB` | ext4 root partition size; default 1024 MiB |
 
 `build-debian-rootfs.sh` stops if `ROOT_STAGE` already exists, preventing an
 existing rootfs from being overwritten accidentally.
+
+Linux 7.0 supports both the Debian-oriented i686 kernel and the retained i486
+kernel target. An i486 validation build can be made without installing its
+modules into the Debian staging tree:
+
+```sh
+KERNEL_VERSION=7.0 CPU_FAMILY=486 INSTALL_MODULES=0 ./build-kernel.sh
+```
+
+The Debian 13 userland remains i686 and therefore is not usable on an actual
+i486 even when the kernel itself is built for i486.
+
+## Linux 7.0 port status
+
+The `linux-7.0/` tree is based on the official Linux v7.0 release. The PC-98
+platform, partition parser, PATA, keyboard, serial, text console, Cirrus
+fbdev, and Trident fbdev changes were forward-ported from this repository's
+6.12 tree. The serial driver uses the Linux 7 timer API
+(`timer_delete_sync()`).
+
+Both `CONFIG_M686=y` and `CONFIG_M486=y` PC-98 kernels build successfully.
+The complete Debian-oriented module set also builds and installs. The i686
+kernel has booted under qemu-pc98 through the custom IPL and FAT16 loader,
+mounted the Debian ext4 root filesystem, reached the login prompt, and
+reported Linux 7.0.0 from `uname`.
 
 ## Running under qemu-pc98
 
 ```sh
 ./run-qemu.sh
 ```
+
+Use `KERNEL_VERSION=7.0 ./run-qemu.sh` for
+`build/qemu-pc98-linux-7.0.raw`.
 
 This image requires the PC-98-enabled qemu-pc98 build; upstream QEMU does not
 provide the required machine and device implementations.
@@ -161,5 +220,5 @@ The Trident driver is based on the register sequences documented in Suika3
 aperture, display relay, and 640x480 8-bpp initialization. It compiles and
 passes static checks but has not yet been tested on physical Mate R hardware.
 
-See `QEMU-PC98.md`, `LINUX-PC98-AUDIT.md`, and `loader/README.md` for further
+See `LINUX-7.0-PORT.md`, `QEMU-PC98.md`, and `loader/README.md` for further
 implementation and validation details.

@@ -2,10 +2,31 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")" && pwd)"
-source="$repo/linux-6.12"
-kernel_build="${KERNEL_BUILD:-$repo/build/kernel}"
+kernel_version="${KERNEL_VERSION:-6.12}"
+source="${KERNEL_SOURCE:-$repo/linux-$kernel_version}"
+cpu_family="${CPU_FAMILY:-686}"
+if [ "$kernel_version" = 6.12 ]; then
+	default_kernel_build="$repo/build/kernel"
+else
+	default_kernel_build="$repo/build/kernel-$kernel_version"
+fi
+kernel_build="${KERNEL_BUILD:-$default_kernel_build}"
 base="${BASE_CONFIG:-$repo/configs/debian-i386-base.config}"
-output="${OUTPUT_CONFIG:-$repo/configs/pc9800-debian.config}"
+if [ "$cpu_family" = 686 ]; then
+	if [ "$kernel_version" = 6.12 ]; then
+		default_output="$repo/configs/pc9800-debian.config"
+	else
+		default_output="$repo/configs/pc9800-debian-$kernel_version.config"
+	fi
+	cpu_config=M686
+elif [ "$cpu_family" = 486 ]; then
+	default_output="$repo/configs/pc9800-i486-$kernel_version.config"
+	cpu_config=M486
+else
+	echo "Unsupported CPU_FAMILY: $cpu_family (expected 686 or 486)" >&2
+	exit 1
+fi
+output="${OUTPUT_CONFIG:-$default_output}"
 
 if [ ! -x "$source/scripts/config" ]; then
 	echo "Linux source tree not found at $source" >&2
@@ -23,7 +44,9 @@ make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 # PC-98 platform and the devices required before the root filesystem mounts.
 "$source/scripts/config" --file "$kernel_build/.config" \
 	--disable MGEODE_LX \
-	--enable M686 \
+	--disable M486SX \
+	--disable M486 \
+	--disable M686 \
 	--disable SMP \
 	--disable ACPI \
 	--enable X86_EXTENDED_PLATFORM \
@@ -54,9 +77,10 @@ make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 	--enable CMDLINE_OVERRIDE \
 	--set-str CMDLINE \
 	"console=ttyS0 console=tty0 root=/dev/sda2 rootfstype=ext4 rw"
+"$source/scripts/config" --file "$kernel_build/.config" --enable "$cpu_config"
 
 make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 mkdir -p "$(dirname "$output")"
 cp "$kernel_build/.config" "$output"
 
-echo "PC-98 Debian kernel config: $output"
+echo "PC-98 Linux $kernel_version ($cpu_family) kernel config: $output"

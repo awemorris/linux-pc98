@@ -16,6 +16,7 @@
  * display changes shape, so it is taken from the BIOS work area.
  */
 #include <linux/console.h>
+#include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/kd.h>
 #include <linux/module.h>
@@ -30,9 +31,13 @@
 
 /* master (text) GDC */
 #define GDC_PARAM	0x60		/* command parameters */
-#define GDC_CMD		0x62		/* command / status */
+#define GDC_CMD		0x62		/* commands / data */
 #define GDC_CSRW	0x49		/* set cursor address, 3 parameters */
 #define GDC_CSRFORM	0x4b		/* cursor shape/enable, 3 parameters */
+#define GDC_STAT_FIFO_FULL 0x02
+
+#define GDC_FIFO_TIMEOUT_US 1000
+#define PC98_WAIT_PORT	0x5f		/* 0.6 us fixed recovery time */
 
 #define BIOS_CRT_RASTER	0x53b		/* BIOS work area: lines per row - 1 */
 
@@ -159,12 +164,42 @@ static bool pc98con_blank(struct vc_data *c, enum vesa_blank_mode blank,
 	return true;				/* console.c restores by redraw */
 }
 
+/*
+ * Both commands and parameters enter the uPD7220's 16-byte FIFO.  Checking
+ * FIFO FULL alone is not sufficient: the controller also requires at least
+ * four 2xWCLK cycles between bytes.  A fast P6 can otherwise overrun the
+ * real GDC even though the same sequence happens to work on an i486 or QEMU.
+ * Two accesses to the PC-98 fixed-delay port provide about 1.2 us of
+ * CPU-independent recovery time.
+ *
+ * Status is read from the parameter port, not the command/data port.
+ */
+static bool pc98_gdc_write(u16 port, u8 value)
+{
+	unsigned int timeout;
+
+	for (timeout = 0; timeout < GDC_FIFO_TIMEOUT_US; timeout++) {
+		if (!(inb(GDC_PARAM) & GDC_STAT_FIFO_FULL)) {
+			outb(value, port);
+			outb(0, PC98_WAIT_PORT);
+			outb(0, PC98_WAIT_PORT);
+			return true;
+		}
+		udelay(1);
+	}
+
+	return false;
+}
+
 static void pc98_gdc_cmd(u8 cmd, u8 p1, u8 p2, u8 p3)
 {
-	outb(cmd, GDC_CMD);
-	outb(p1, GDC_PARAM);
-	outb(p2, GDC_PARAM);
-	outb(p3, GDC_PARAM);
+	if (!pc98_gdc_write(GDC_CMD, cmd))
+		return;
+	if (!pc98_gdc_write(GDC_PARAM, p1))
+		return;
+	if (!pc98_gdc_write(GDC_PARAM, p2))
+		return;
+	pc98_gdc_write(GDC_PARAM, p3);
 }
 
 static void pc98_cursor_form(bool on)

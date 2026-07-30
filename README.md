@@ -1,8 +1,8 @@
 # Mirai98 Linux/PC-98
 
-This repository contains Linux 6.12 and Linux 7.0 ports for the NEC PC-9800 series,
-boot loaders, tools for building a Debian i386 userland, and a raw disk image
-builder for qemu-pc98.
+This repository contains Linux 6.12, Linux 7.0, and Linux 7.1 ports for the
+NEC PC-9800 series, boot loaders, tools for building a Debian i386 userland,
+and a raw disk image builder for qemu-pc98.
 
 ## Repository layout
 
@@ -10,6 +10,7 @@ builder for qemu-pc98.
 | --- | --- |
 | `linux-6.12/` | Linux 6.12 source tree with the PC-98 port integrated |
 | `linux-7.0/` | Linux 7.0 source tree with the PC-98 port forward-ported |
+| `linux-7.1/` | Linux 7.1 source tree with the PC-98 port forward-ported |
 | `configs/` | Debian-derived i686 base and versioned PC-98 configurations |
 | `loader/` | PC-98 disk IPL and FAT16-aware Linux second-stage loader |
 | `tools/` | Two-partition PC-98 raw disk image builder and helper tools |
@@ -54,14 +55,14 @@ build/qemu-pc98-linux.raw
 The kernel is built out of tree in `build/kernel`; `linux-6.12/` remains a
 source-only directory.
 
-To build the Linux 7.0 image instead:
+To build a versioned Linux image instead:
 
 ```sh
-KERNEL_VERSION=7.0 ./build-debian.sh
+KERNEL_VERSION=7.1 ./build-debian.sh
 ```
 
-This uses `linux-7.0/`, builds out of tree in `build/kernel-7.0`, and writes
-`build/qemu-pc98-linux-7.0.raw`. It does not overwrite the Linux 6.12 kernel
+This uses `linux-7.1/`, builds out of tree in `build/kernel-7.1`, and writes
+`build/qemu-pc98-linux-7.1.raw`. It does not overwrite the Linux 6.12 kernel
 or disk image.
 
 The individual build stages can also be run separately:
@@ -75,11 +76,11 @@ The individual build stages can also be run separately:
 To create an xz-compressed Release artifact and its SHA-256 file:
 
 ```sh
-KERNEL_VERSION=7.0 make dist
+KERNEL_VERSION=7.1 make dist
 ```
 
-The Linux 7.0 artifact is named
-`dist/qemu-pc98-debian13-i386-linux-7.0.raw.xz`. `DIST_BASENAME`,
+The Linux 7.1 artifact is named
+`dist/qemu-pc98-debian13-i386-linux-7.1.raw.xz`. `DIST_BASENAME`,
 `XZ_LEVEL`, and `XZ_THREADS` can override the name and compression settings.
 Existing dist files are never overwritten.
 
@@ -125,11 +126,12 @@ The main environment-variable overrides are:
 
 | Variable | Default or purpose |
 | --- | --- |
-| `KERNEL_VERSION` | `6.12`; select `6.12` or `7.0` |
+| `KERNEL_VERSION` | `6.12`; select `6.12`, `7.0`, or `7.1` |
 | `KERNEL_SOURCE` | `linux-$KERNEL_VERSION` |
 | `JOBS` | `nproc`; parallel kernel build job count |
 | `KERNEL_BUILD` | `build/kernel` for 6.12; otherwise `build/kernel-$KERNEL_VERSION` |
-| `CPU_FAMILY` | `686`; use `486` to test the retained i486 kernel target |
+| `CPU_FAMILY` | `686`; Linux 7.0 also retains the experimental `486` target |
+| `DEVICE_PROFILE` | Linux 7.1 defaults to `pc98`; use `full` for the full Debian driver catalogue |
 | `INSTALL_MODULES` | `1`; set to `0` to skip `modules_install` |
 | `OUTPUT_IMAGE` | Version-specific raw image path |
 | `ROOT_STAGE` | `build/debian-i386-root` |
@@ -153,6 +155,22 @@ KERNEL_VERSION=7.0 CPU_FAMILY=486 INSTALL_MODULES=0 ./build-kernel.sh
 The Debian 13 userland remains i686 and therefore is not usable on an actual
 i486 even when the kernel itself is built for i486.
 
+Linux 7.1 uses the `pc98` device profile by default. It retains the PCI core
+required by `pc9821`, the PC-98 IDE and framebuffer drivers, and standard
+USB 1.x/2.0 UHCI/OHCI/EHCI host controllers. The USB module set is limited
+to generic HID, mass-storage, CDC Ethernet/NCM, ACM serial, and printer
+classes. The fixed module allow-list is stored in
+`configs/pc9800-modules.list`; it does not depend on the build host's loaded
+modules. This reduces the configured module count from 3,644 in the full
+Debian configuration to 23 modular Kconfig entries (22 installed `.ko`
+files).
+
+The untrimmed Debian driver catalogue remains available for comparison:
+
+```sh
+KERNEL_VERSION=7.1 DEVICE_PROFILE=full ./build-kernel.sh
+```
+
 ## Linux 7.0 port status
 
 The `linux-7.0/` tree is based on the official Linux v7.0 release. The PC-98
@@ -167,14 +185,29 @@ kernel has booted under qemu-pc98 through the custom IPL and FAT16 loader,
 mounted the Debian ext4 root filesystem, reached the login prompt, and
 reported Linux 7.0.0 from `uname`.
 
+## Linux 7.1 port status
+
+The `linux-7.1/` tree is based on the official Linux v7.1 release. The PC-98
+platform and device changes were forward-ported from the Linux 7.0 tree.
+Linux 7.1 changed partition-parser logging to `struct seq_buf`; the NEC98
+parser follows the new API.
+
+The current Linux 7.1 configuration is the Debian-oriented
+`CONFIG_M686=y` target. The i486 target is intentionally deferred to a
+separate follow-up change.
+
+The trimmed kernel and module set build successfully. The generated
+two-partition image boots under qemu-pc98 with TCG, mounts the Debian 13 ext4
+root filesystem, reaches the login prompt, and reports Linux 7.1.0 i686.
+
 ## Running under qemu-pc98
 
 ```sh
 ./run-qemu.sh
 ```
 
-Use `KERNEL_VERSION=7.0 ./run-qemu.sh` for
-`build/qemu-pc98-linux-7.0.raw`.
+Use `KERNEL_VERSION=7.1 ./run-qemu.sh` for
+`build/qemu-pc98-linux-7.1.raw`.
 
 This image requires the PC-98-enabled qemu-pc98 build; upstream QEMU does not
 provide the required machine and device implementations.
@@ -220,5 +253,5 @@ The Trident driver is based on the register sequences documented in Suika3
 aperture, display relay, and 640x480 8-bpp initialization. It compiles and
 passes static checks but has not yet been tested on physical Mate R hardware.
 
-See `LINUX-7.0-PORT.md`, `QEMU-PC98.md`, and `loader/README.md` for further
-implementation and validation details.
+See `LINUX-7.0-PORT.md`, `LINUX-7.1-PORT.md`, `QEMU-PC98.md`, and
+`loader/README.md` for further implementation and validation details.

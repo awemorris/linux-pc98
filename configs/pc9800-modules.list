@@ -1,0 +1,16 @@
+pc98cirrusfb
+pc98tridentfb
+uhci_hcd
+ohci_hcd
+ohci_pci
+ehci_hcd
+ehci_pci
+usb_storage
+usbhid
+hid_generic
+cdc_acm
+usblp
+cdc_wdm
+usbnet
+cdc_ether
+cdc_ncm

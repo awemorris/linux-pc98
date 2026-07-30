@@ -5,6 +5,14 @@ repo="$(cd "$(dirname "$0")" && pwd)"
 kernel_version="${KERNEL_VERSION:-6.12}"
 source="${KERNEL_SOURCE:-$repo/linux-$kernel_version}"
 cpu_family="${CPU_FAMILY:-686}"
+device_profile="${DEVICE_PROFILE:-}"
+if [ -z "$device_profile" ]; then
+	if [ "$kernel_version" = 7.1 ]; then
+		device_profile=pc98
+	else
+		device_profile=full
+	fi
+fi
 if [ "$kernel_version" = 6.12 ]; then
 	default_kernel_build="$repo/build/kernel"
 else
@@ -79,7 +87,95 @@ make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 	"console=ttyS0 console=tty0 root=/dev/sda2 rootfstype=ext4 rw"
 "$source/scripts/config" --file "$kernel_build/.config" --enable "$cpu_config"
 
+if [ "$device_profile" = pc98 ]; then
+	# Keep the PCI core used by pc9821 and the standard USB 1.x/2.0 host
+	# controllers, but omit the large catalogue of unrelated PC/AT devices.
+	"$source/scripts/config" --file "$kernel_build/.config" \
+		--disable DRM \
+		--disable MEDIA_SUPPORT \
+		--disable SOUND \
+		--disable WLAN \
+		--disable INFINIBAND \
+		--disable COMEDI \
+		--disable IIO \
+		--disable STAGING \
+		--disable ACCESSIBILITY \
+		--disable AUXDISPLAY \
+		--disable MTD \
+		--disable FIREWIRE \
+		--disable NFC \
+		--disable BT \
+		--disable IEEE802154 \
+		--disable CAN \
+		--disable ATM \
+		--disable FDDI \
+		--disable HIPPI \
+		--disable HAMRADIO \
+		--disable ISDN \
+		--disable SCSI_LOWLEVEL \
+		--disable MMC \
+		--disable MEMSTICK \
+		--disable NVME_CORE \
+		--disable PARPORT \
+		--disable WATCHDOG \
+		--disable INPUT_JOYSTICK \
+		--disable INPUT_TABLET \
+		--disable INPUT_TOUCHSCREEN
+
+	# USB and HID have many vendor-specific drivers without a common Kconfig
+	# switch. Reset them, then retain the host controllers and generic class
+	# drivers useful with qemu-pc98 and physical USB passthrough.
+	while IFS= read -r symbol; do
+		"$source/scripts/config" --file "$kernel_build/.config" \
+			--disable "$symbol"
+	done < <(sed -n -E 's/^CONFIG_(USB[^=]*)=(y|m)$/\1/p' \
+		"$kernel_build/.config")
+	while IFS= read -r symbol; do
+		"$source/scripts/config" --file "$kernel_build/.config" \
+			--disable "$symbol"
+	done < <(sed -n -E 's/^CONFIG_(HID_[^=]*)=(y|m)$/\1/p' \
+		"$kernel_build/.config")
+	while IFS= read -r symbol; do
+		"$source/scripts/config" --file "$kernel_build/.config" \
+			--disable "$symbol"
+	done < <(sed -n -E 's/^CONFIG_(NET_VENDOR_[^=]*)=y$/\1/p' \
+		"$kernel_build/.config")
+
+	"$source/scripts/config" --file "$kernel_build/.config" \
+		--enable PCI \
+		--enable USB_SUPPORT \
+		--enable USB_PCI \
+		--module USB \
+		--module USB_UHCI_HCD \
+		--module USB_OHCI_HCD \
+		--module USB_OHCI_HCD_PCI \
+		--module USB_EHCI_HCD \
+		--module USB_EHCI_PCI \
+		--module USB_STORAGE \
+		--module USB_ACM \
+		--module USB_PRINTER \
+		--module USB_WDM \
+		--module USB_NET_DRIVERS \
+		--module USB_USBNET \
+		--module USB_NET_CDCETHER \
+		--module USB_NET_CDC_NCM \
+		--enable HID_SUPPORT \
+		--module HID \
+		--module HID_GENERIC \
+		--module USB_HID
+elif [ "$device_profile" != full ]; then
+	echo "Unsupported DEVICE_PROFILE: $device_profile (expected pc98 or full)" >&2
+	exit 1
+fi
+
 make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
+if [ "$device_profile" = pc98 ]; then
+	set +o pipefail
+	yes "" | make -C "$source" O="$kernel_build" ARCH=i386 \
+		LSMOD="$repo/configs/pc9800-modules.list" localmodconfig
+	set -o pipefail
+	make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
+fi
 mkdir -p "$(dirname "$output")"
 cp "$kernel_build/.config" "$output"
 

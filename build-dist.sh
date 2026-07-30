@@ -11,9 +11,10 @@ fi
 image="${OUTPUT_IMAGE:-$default_image}"
 dist_dir="${DIST_DIR:-$repo/dist}"
 dist_basename="${DIST_BASENAME:-qemu-pc98-debian13-i386-linux-$kernel_version}"
+dist_image_name="${DIST_IMAGE_NAME:-$dist_basename.raw}"
 xz_level="${XZ_LEVEL:-6}"
 xz_threads="${XZ_THREADS:-0}"
-archive="$dist_dir/$dist_basename.raw.xz"
+archive="$dist_dir/$dist_image_name.xz"
 checksum="$archive.sha256"
 
 case "$xz_level" in

@@ -3,12 +3,33 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")" && pwd)"
 jobs="${JOBS:-$(nproc)}"
-work="${I486_WORK:-$repo/build/i486-toolchain}"
-root_stage="${ROOT_STAGE:-$repo/build/i486-rootfs}"
+cpu_family="${CPU_FAMILY:-486}"
+case "$cpu_family" in
+	486)
+		cpu_name=i486
+		default_work="$repo/build/i486-toolchain"
+		default_root_stage="$repo/build/i486-rootfs"
+		;;
+	686)
+		cpu_name=i686
+		default_work="$repo/build/i686-toolchain"
+		default_root_stage="$repo/build/i686-rootfs"
+		;;
+	*)
+		echo "Unsupported CPU_FAMILY: $cpu_family (expected 486 or 686)" >&2
+		exit 1
+		;;
+esac
+if [ "$cpu_family" = 486 ]; then
+	work="${BUSYBOX_WORK:-${I486_WORK:-$default_work}}"
+else
+	work="${BUSYBOX_WORK:-$default_work}"
+fi
+root_stage="${ROOT_STAGE:-$default_root_stage}"
 gcc_version="${GCC_VERSION:-14.2.0}"
 musl_version="${MUSL_VERSION:-1.2.5}"
 busybox_version="${BUSYBOX_VERSION:-1.36.1}"
-target=i486-linux-musl
+target="$cpu_name-linux-musl"
 prefix="$work/toolchain"
 xgcc="$prefix/bin/$target-gcc"
 
@@ -75,7 +96,7 @@ if [ ! -x "$xgcc" ]; then
 			--with-newlib
 		make -j"$jobs" all-gcc
 		make -j"$jobs" all-target-libgcc \
-			CFLAGS_FOR_TARGET="-O2 -march=i486 -fcf-protection=none"
+			CFLAGS_FOR_TARGET="-O2 -march=$cpu_name -fcf-protection=none"
 		make install-gcc install-target-libgcc
 	)
 fi
@@ -91,7 +112,7 @@ if [ ! -x "$prefix/musl/bin/musl-gcc" ]; then
 			--target="$target" \
 			--enable-wrapper=gcc \
 			CC="$xgcc" \
-			CFLAGS="-O2 -march=i486 -fcf-protection=none" \
+			CFLAGS="-O2 -march=$cpu_name -fcf-protection=none" \
 			AR="$target-ar" \
 			RANLIB="$target-ranlib"
 		make -j"$jobs"
@@ -107,7 +128,7 @@ make -s -C "$repo/linux-7.1" \
 	INSTALL_HDR_PATH="$prefix/musl"
 
 if [ -e "$root_stage" ]; then
-	echo "Refusing to overwrite existing i486 rootfs: $root_stage" >&2
+	echo "Refusing to overwrite existing $cpu_name rootfs: $root_stage" >&2
 	exit 1
 fi
 
@@ -131,22 +152,24 @@ cp -a "$work/src/busybox-$busybox_version" "$busybox_build"
 		CC="$prefix/musl/bin/musl-gcc -Wl,-melf_i386" \
 		LD="$target-ld -m elf_i386" \
 		HOSTCC=gcc \
-		CONFIG_EXTRA_CFLAGS="-march=i486 -fcf-protection=none -Wno-error"
+		CONFIG_EXTRA_CFLAGS="-march=$cpu_name -fcf-protection=none -Wno-error"
 
-	bad=$("$target-objdump" -d busybox | awk -F'\t' 'NF >= 3 {
-		split($3, field, " ")
-		mnemonic = field[1]
-		if (mnemonic ~ /^(cmov|endbr|nop[lw]$|fu?comip?$|fisttp|cmpxchg8b|cpuid|rdtsc|rdmsr|wrmsr|rdpmc|rsm$|emms|femms|sysenter|sysexit|syscall|sysret|fxsave|fxrstor|xsave|xrstor|prefetch|[slm]fence|clflush|movnti|monitor|mwait|popcnt|lzcnt|tzcnt|movbe|rdrand|rdseed|adcx|adox|mulx|sh[lr]x|sarx|rorx|andn$|bextr|bzhi|bls[imr]|pdep|pext|crc32)/) {
-			print
-			next
-		}
-		if ($3 ~ /%[xyz]?mm[0-9]/)
-			print
-	}')
-	if [ -n "$bad" ]; then
-		echo "BusyBox contains instructions newer than i486:" >&2
-		printf '%s\n' "$bad" | head -20 >&2
-		exit 1
+	if [ "$cpu_family" = 486 ]; then
+		bad=$("$target-objdump" -d busybox | awk -F'\t' 'NF >= 3 {
+			split($3, field, " ")
+			mnemonic = field[1]
+			if (mnemonic ~ /^(cmov|endbr|nop[lw]$|fu?comip?$|fisttp|cmpxchg8b|cpuid|rdtsc|rdmsr|wrmsr|rdpmc|rsm$|emms|femms|sysenter|sysexit|syscall|sysret|fxsave|fxrstor|xsave|xrstor|prefetch|[slm]fence|clflush|movnti|monitor|mwait|popcnt|lzcnt|tzcnt|movbe|rdrand|rdseed|adcx|adox|mulx|sh[lr]x|sarx|rorx|andn$|bextr|bzhi|bls[imr]|pdep|pext|crc32)/) {
+				print
+				next
+			}
+			if ($3 ~ /%[xyz]?mm[0-9]/)
+				print
+		}')
+		if [ -n "$bad" ]; then
+			echo "BusyBox contains instructions newer than i486:" >&2
+			printf '%s\n' "$bad" | head -20 >&2
+			exit 1
+		fi
 	fi
 
 	mkdir -p \
@@ -158,15 +181,20 @@ cp -a "$work/src/busybox-$busybox_version" "$busybox_build"
 		"$root_stage/var" \
 		"$root_stage/mnt"
 	cp -a "$repo/rootfs/i486/." "$root_stage/"
+	if [ "$cpu_family" = 686 ]; then
+		sed -i 's/i486/i686/g' \
+			"$root_stage/etc/profile" \
+			"$root_stage/etc/inittab"
+	fi
 	make \
 		CC="$prefix/musl/bin/musl-gcc -Wl,-melf_i386" \
 		LD="$target-ld -m elf_i386" \
 		HOSTCC=gcc \
-		CONFIG_EXTRA_CFLAGS="-march=i486 -fcf-protection=none -Wno-error" \
+		CONFIG_EXTRA_CFLAGS="-march=$cpu_name -fcf-protection=none -Wno-error" \
 		CONFIG_PREFIX="$root_stage" \
 		install
 )
 
-printf 'i486 rootfs: %s\n' "$root_stage"
+printf '%s rootfs: %s\n' "$cpu_name" "$root_stage"
 du -sh "$root_stage"
 file "$root_stage/bin/busybox"

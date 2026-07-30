@@ -17,8 +17,8 @@ and a raw disk image builder for qemu-pc98.
 | `build/` | Generated kernel, rootfs, logs, and disk images; ignored by Git |
 | `build-kernel.sh` | Configures and builds the kernel and modules |
 | `build-debian.sh` | Builds the Debian rootfs, kernel, modules, and disk image |
-| `build-i486-rootfs.sh` | Builds a static i486 musl/BusyBox root filesystem without Nix |
-| `build-i486-image.sh` | Builds the experimental Linux 7.1/i486 PC-98 disk image |
+| `build-i486-rootfs.sh` | Builds a static i486 or i686 musl/BusyBox root filesystem without Nix |
+| `build-i486-image.sh` | Builds a Linux 7.1/i486 or i686 BusyBox PC-98 disk image |
 
 Nix is not required. The build uses standard packages available on Debian 13.
 
@@ -153,6 +153,7 @@ The main environment-variable overrides are:
 | `DEBIAN_INCLUDE` | Comma-separated packages added to the rootfs |
 | `ROOT_PASSWORD` | Initial local test password; default `pc98` |
 | `ROOT_MB` | ext4 root partition size; default 1024 MiB |
+| `DIST_IMAGE_NAME` | Filename inside `dist/` before the `.xz` suffix |
 
 `build-debian-rootfs.sh` stops if `ROOT_STAGE` already exists, preventing an
 existing rootfs from being overwritten accidentally.
@@ -234,6 +235,25 @@ qemu-system-i386 \
   -accel tcg \
   -drive if=ide,bus=0,unit=0,format=raw,file=build/qemu-pc98-linux-7.1-i486.raw
 ```
+
+The same scripts can build a Linux 7.1/i686 BusyBox image. The existing
+Linux 7.1 i686 kernel build is reused:
+
+```sh
+CPU_FAMILY=686 ./build-i486-rootfs.sh
+CPU_FAMILY=686 ./build-i486-image.sh
+
+qemu-system-i386 \
+  -M pc9821 \
+  -cpu pentium2,-apic \
+  -m 64 \
+  -accel tcg \
+  -drive if=ide,bus=0,unit=0,format=raw,file=build/qemu-pc98-linux-7.1-i686-busybox.raw
+```
+
+The equivalent convenience targets are `make busybox-i486` and
+`make busybox-i686`. Set `BUSYBOX_WORK` or `ROOT_STAGE` to override their
+default build and staging directories.
 
 The i486 image mounts its ext4 root, starts BusyBox init, reaches an
 interactive shell, and reports Linux 7.1.0-i486 under qemu-pc98 and on a

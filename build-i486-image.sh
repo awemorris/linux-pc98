@@ -2,9 +2,28 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")" && pwd)"
-kernel_build="${KERNEL_BUILD:-$repo/build/kernel-7.1-i486}"
-root_stage="${ROOT_STAGE:-$repo/build/i486-rootfs}"
-output="${OUTPUT_IMAGE:-$repo/build/qemu-pc98-linux-7.1-i486.raw}"
+cpu_family="${CPU_FAMILY:-486}"
+case "$cpu_family" in
+	486)
+		cpu_name=i486
+		default_kernel_build="$repo/build/kernel-7.1-i486"
+		default_root_stage="$repo/build/i486-rootfs"
+		default_output="$repo/build/qemu-pc98-linux-7.1-i486.raw"
+		;;
+	686)
+		cpu_name=i686
+		default_kernel_build="$repo/build/kernel-7.1"
+		default_root_stage="$repo/build/i686-rootfs"
+		default_output="$repo/build/qemu-pc98-linux-7.1-i686-busybox.raw"
+		;;
+	*)
+		echo "Unsupported CPU_FAMILY: $cpu_family (expected 486 or 686)" >&2
+		exit 1
+		;;
+esac
+kernel_build="${KERNEL_BUILD:-$default_kernel_build}"
+root_stage="${ROOT_STAGE:-$default_root_stage}"
+output="${OUTPUT_IMAGE:-$default_output}"
 
 if [ -e "$output" ]; then
 	echo "Refusing to overwrite existing image: $output" >&2
@@ -12,6 +31,7 @@ if [ -e "$output" ]; then
 fi
 
 KERNEL_VERSION=7.1 \
+CPU_FAMILY="$cpu_family" \
 KERNEL_BUILD="$kernel_build" \
 KERNEL_IMAGE="$kernel_build/arch/x86/boot/bzImage" \
 ROOT_STAGE="$root_stage" \

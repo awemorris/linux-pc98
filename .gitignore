@@ -1,0 +1,7 @@
+/build/
+/dist/
+/loader/*.bin
+/loader/*.elf
+/loader/*.o
+__pycache__/
+*.py[cod]

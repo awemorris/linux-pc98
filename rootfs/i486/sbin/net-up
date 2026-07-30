@@ -1,0 +1,24 @@
+#!/bin/sh
+
+set -eu
+
+interface="${1:-}"
+if [ -z "$interface" ]; then
+	for device in /sys/class/net/*; do
+		[ -e "$device" ] || continue
+		candidate="${device##*/}"
+		if [ "$candidate" != lo ]; then
+			interface="$candidate"
+			break
+		fi
+	done
+fi
+
+if [ -z "$interface" ]; then
+	echo "net-up: no non-loopback network interface found" >&2
+	exit 1
+fi
+
+echo "Configuring $interface with DHCP"
+ip link set dev "$interface" up
+exec udhcpc -q -i "$interface" -s /usr/share/udhcpc/default.script

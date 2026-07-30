@@ -5,7 +5,7 @@ repo="$(cd "$(dirname "$0")" && pwd)"
 stage="${ROOT_STAGE:-$repo/build/debian-i386-root}"
 suite="${DEBIAN_SUITE:-trixie}"
 mirror="${DEBIAN_MIRROR:-https://deb.debian.org/debian}"
-include="${DEBIAN_INCLUDE:-sysvinit-core,e2fsprogs,kmod,udev,ifupdown,iproute2,ca-certificates}"
+include="${DEBIAN_INCLUDE:-sysvinit-core,e2fsprogs,kmod,udev,ifupdown,iproute2,dhcpcd-base,ca-certificates}"
 root_password="${ROOT_PASSWORD:-pc98}"
 
 if ! command -v debootstrap >/dev/null 2>&1; then
@@ -44,5 +44,12 @@ printf '%s\n' \
 printf 'auto lo\niface lo inet loopback\n' \
 	| sudo tee "$stage/etc/network/interfaces" >/dev/null
 printf 'root:%s\n' "$root_password" | sudo chroot "$stage" chpasswd
+
+sudo chroot "$stage" /bin/sh -c '
+	command -v ip >/dev/null ||
+		{ echo "iproute2 installation did not provide ip" >&2; exit 1; }
+	command -v dhcpcd >/dev/null ||
+		{ echo "dhcpcd-base installation did not provide dhcpcd" >&2; exit 1; }
+'
 
 echo "Debian $suite i386 rootfs staging tree: $stage"

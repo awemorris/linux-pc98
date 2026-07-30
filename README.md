@@ -259,6 +259,15 @@ The i486 image mounts its ext4 root, starts BusyBox init, reaches an
 interactive shell, and reports Linux 7.1.0-i486 under qemu-pc98 and on a
 physical PC-9821 Ra43. The i386 target remains a research milestone.
 
+The BusyBox image includes `ip`, `ping`, and `udhcpc`. To obtain an address
+on the first non-loopback interface and install the DHCP-provided route and
+DNS configuration:
+
+```sh
+net-up
+ip addr
+```
+
 During the slower i486 kernel load and decompression, the second-stage loader
 shows a BSD-style size, load address, loaded-byte count, and progress dots on
 the first GDC text row. The kernel enables the PC-98 early console immediately
@@ -268,7 +277,7 @@ firmware boot menu and normal console initialization.
 The i486 kernel includes the `e100` and `MII` drivers for the Ra43 onboard
 PC-9821X-B06-compatible Intel PRO/100 adapter. Linux matches its primary
 PCI ID `8086:1229`; the NEC subsystem ID `1033:8000` needs no separate
-driver-table entry.
+driver-table entry. The adapter has been detected on physical Ra43 hardware.
 
 ## Running under qemu-pc98
 
@@ -320,8 +329,22 @@ Two optional fbdev modules are included for later graphical use:
 
 The Trident driver is based on the register sequences documented in Suika3
 `98disp_trident.c`. It handles the PC-98 BAR1 MMIO window, CR21 linear
-aperture, display relay, and 640x480 8-bpp initialization. It compiles and
-passes static checks but has not yet been tested on physical Mate R hardware.
+aperture, display relay, and 640x480 8-bpp initialization. On Ra hardware,
+long streams of direct aperture writes can be dropped during scanout. The
+driver therefore exposes a system-RAM shadow framebuffer and copies changed
+rows to VRAM with paced, read-back-verified writes.
+
+`pc98tridentfb` deliberately has no PCI module alias, so Debian will not switch
+away from the GDC console merely because udev discovers the Trident device.
+Load it explicitly before starting an fbdev application or X server:
+
+```sh
+modprobe pc98tridentfb
+```
+
+Physical Ra43 testing still shows vertical colour bars after explicit module
+loading. The remaining register-initialization mismatch is deferred; the GDC
+console remains the supported display path for the current i486 work.
 
 See `LINUX-7.0-PORT.md`, `LINUX-7.1-PORT.md`, `QEMU-PC98.md`, and
 `loader/README.md` for further implementation and validation details.

@@ -1,0 +1,43 @@
+#!/bin/sh
+
+set -e
+
+case "$1" in
+deconfig)
+	ip -4 addr flush dev "$interface"
+	ip link set dev "$interface" up
+	;;
+
+bound|renew)
+	address="$ip"
+	if [ -n "${subnet:-}" ]; then
+		address="$address/$subnet"
+	fi
+
+	ip -4 addr flush dev "$interface"
+	ip link set dev "$interface" up
+	if [ -n "${broadcast:-}" ]; then
+		ip addr add "$address" broadcast "$broadcast" dev "$interface"
+	else
+		ip addr add "$address" dev "$interface"
+	fi
+
+	while ip route del default dev "$interface" 2>/dev/null; do
+		:
+	done
+	for gateway in ${router:-}; do
+		ip route add default via "$gateway" dev "$interface"
+		break
+	done
+
+	: > /etc/resolv.conf
+	if [ -n "${domain:-}" ]; then
+		echo "search $domain" >> /etc/resolv.conf
+	fi
+	for server in ${dns:-}; do
+		echo "nameserver $server" >> /etc/resolv.conf
+	done
+	;;
+esac
+
+exit 0

@@ -109,21 +109,20 @@ config FB_PC98_TRIDENT
 	tristate "NEC PC-9821 built-in Trident TGUI96xx framebuffer"
 	depends on FB && X86_PC9800 && PCI && HAS_IOPORT
 	depends on !FB_TRIDENT
-	select FB_CFB_FILLRECT
-	select FB_CFB_COPYAREA
-	select FB_CFB_IMAGEBLIT
-	select FB_IOMEM_FOPS
+	select FB_SYSMEM_HELPERS_DEFERRED
 	help
 	  Framebuffer support for NEC Mate R systems with the on-board PCI
 	  Trident TGUI9660/9680/9682. The driver handles the PC-98-specific
 	  BAR1 register MMIO, CR21 linear aperture, mode initialization and
 	  display relay which the generic tridentfb driver does not support.
 
-	  This initial implementation provides 640x480 8-bpp and is intended
-	  for later testing on real hardware. Build it as a module to retain
-	  the GDC text console during boot. Direct framebuffer writes on Ra
-	  hardware are known to be unreliable; graphics-engine or shadow
-	  framebuffer support is still required for a production X server.
+	  This implementation provides 640x480 8-bpp through a shadow
+	  framebuffer. It paces and verifies writes to the linear aperture
+	  because Ra hardware can drop back-to-back CPU writes during scanout.
+
+	  Build it as a module to retain the GDC text console during boot. The
+	  module intentionally has no PCI hotplug alias; load pc98tridentfb
+	  explicitly when a framebuffer application or X server needs it.
 
 config FB_PM2
 	tristate "Permedia2 support"

@@ -21,9 +21,11 @@
 #include <linux/io.h>
 #include <linux/ioport.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/pci.h>
 #include <linux/sizes.h>
 #include <linux/spinlock.h>
+#include <linux/vmalloc.h>
 
 #define DRV_NAME		"pc98tridentfb"
 
@@ -46,7 +48,9 @@
 #define TG_HEIGHT		480
 #define TG_BPP			8
 #define TG_PITCH		1024
+#define TG_FB_SIZE		(TG_PITCH * TG_HEIGHT)
 #define TG_BAR1_MIN_SIZE	0x10000
+#define TG_VERIFY_PASSES	8
 
 static unsigned long fb_phys;
 module_param(fb_phys, ulong, 0444);
@@ -81,6 +85,7 @@ struct pc98tridentfb {
 	struct fb_info *info;
 	void __iomem *regs;
 	void __iomem *vram;
+	u8 *shadow;
 	resource_size_t regs_phys;
 	resource_size_t fb_phys;
 	resource_size_t vram_size;
@@ -94,6 +99,7 @@ struct pc98tridentfb {
 	bool fixed_fb_claimed;
 	bool relay_active;
 	spinlock_t reg_lock;
+	struct mutex vram_lock;
 	struct pc98trident_saved saved;
 };
 
@@ -726,16 +732,132 @@ static int pc98tridentfb_blank(int blank, struct fb_info *info)
 	return 0;
 }
 
+/*
+ * Ra43 field testing found that the linear aperture can drop complete dword
+ * writes when a CPU emits a long stream while scanout is active.  Reads are
+ * reliable.  Pace every four writes with a read, then repair any missing
+ * dwords.  This is the same fallback used by StratoHAL's 98disp_trident.c.
+ */
+static int tg_store_verified(struct pc98tridentfb *tfb, unsigned long offset,
+			     const u8 *src, size_t nbytes)
+{
+	u8 __iomem *dst = tfb->vram + offset;
+	const u32 *src32 = (const u32 *)src;
+	size_t ndwords = nbytes / sizeof(*src32);
+	unsigned int pass;
+	size_t i;
+	bool bad;
+
+	if (WARN_ON_ONCE((offset | nbytes) & (sizeof(*src32) - 1)))
+		return -EINVAL;
+
+	for (i = 0; i < ndwords; i++) {
+		writel(src32[i], dst + i * sizeof(*src32));
+		if ((i & 3) == 3)
+			(void)readl(dst + i * sizeof(*src32));
+	}
+	if (ndwords && (ndwords & 3))
+		(void)readl(dst + (ndwords - 1) * sizeof(*src32));
+
+	for (pass = 0; pass < TG_VERIFY_PASSES; pass++) {
+		bad = false;
+		for (i = 0; i < ndwords; i++) {
+			if (readl(dst + i * sizeof(*src32)) == src32[i])
+				continue;
+			writel(src32[i], dst + i * sizeof(*src32));
+			(void)readl(dst + i * sizeof(*src32));
+			bad = true;
+		}
+		if (!bad)
+			return pass;
+	}
+
+	return -EIO;
+}
+
+static void tg_flush_rows(struct fb_info *info, unsigned int first,
+			  unsigned int last)
+{
+	struct pc98tridentfb *tfb = info->par;
+	unsigned int failed = 0;
+	unsigned int y;
+
+	first = min(first, (unsigned int)TG_HEIGHT);
+	last = min(last, (unsigned int)TG_HEIGHT);
+	if (first >= last)
+		return;
+
+	mutex_lock(&tfb->vram_lock);
+	for (y = first; y < last; y++) {
+		unsigned long offset = y * TG_PITCH;
+
+		if (tg_store_verified(tfb, offset, tfb->shadow + offset,
+				      TG_PITCH) < 0)
+			failed++;
+	}
+	mutex_unlock(&tfb->vram_lock);
+
+	if (failed)
+		dev_warn_ratelimited(&tfb->pdev->dev,
+				     "VRAM verification failed on %u row(s)\n",
+				     failed);
+}
+
+static void pc98tridentfb_damage_range(struct fb_info *info, off_t offset,
+				       size_t len)
+{
+	size_t end;
+
+	if (!len || offset < 0 || offset >= TG_FB_SIZE)
+		return;
+	end = offset + min_t(size_t, len, TG_FB_SIZE - offset);
+	tg_flush_rows(info, offset / TG_PITCH,
+		      DIV_ROUND_UP(end, TG_PITCH));
+}
+
+static void pc98tridentfb_damage_area(struct fb_info *info, u32 x, u32 y,
+				      u32 width, u32 height)
+{
+	if (!width || !height || x >= TG_WIDTH || y >= TG_HEIGHT)
+		return;
+	tg_flush_rows(info, y, y + min_t(u32, height, TG_HEIGHT - y));
+}
+
+static void pc98tridentfb_deferred_io(struct fb_info *info,
+				      struct list_head *pagelist)
+{
+	struct fb_deferred_io_pageref *pageref;
+	size_t first = TG_FB_SIZE;
+	size_t last = 0;
+
+	list_for_each_entry(pageref, pagelist, list) {
+		size_t offset = min_t(size_t, pageref->offset, TG_FB_SIZE);
+		size_t end = min_t(size_t, offset + PAGE_SIZE, TG_FB_SIZE);
+
+		first = min(first, offset);
+		last = max(last, end);
+	}
+	if (first < last)
+		tg_flush_rows(info, first / TG_PITCH,
+			      DIV_ROUND_UP(last, TG_PITCH));
+}
+
+FB_GEN_DEFAULT_DEFERRED_SYSMEM_OPS(pc98tridentfb,
+				   pc98tridentfb_damage_range,
+				   pc98tridentfb_damage_area)
+
 static const struct fb_ops pc98tridentfb_ops = {
 	.owner		= THIS_MODULE,
-	__FB_DEFAULT_IOMEM_OPS_RDWR,
+	FB_DEFAULT_DEFERRED_OPS(pc98tridentfb),
 	.fb_check_var	= pc98tridentfb_check_var,
 	.fb_setcolreg	= pc98tridentfb_setcolreg,
 	.fb_blank	= pc98tridentfb_blank,
-	.fb_fillrect	= cfb_fillrect,
-	.fb_copyarea	= cfb_copyarea,
-	.fb_imageblit	= cfb_imageblit,
-	__FB_DEFAULT_IOMEM_OPS_MMAP,
+};
+
+static struct fb_deferred_io pc98tridentfb_defio = {
+	.delay			= DIV_ROUND_UP(HZ, 60),
+	.sort_pagereflist	= true,
+	.deferred_io		= pc98tridentfb_deferred_io,
 };
 
 static void tg_release_access_path(struct pc98tridentfb *tfb)
@@ -771,6 +893,7 @@ static int pc98tridentfb_probe(struct pci_dev *pdev,
 	tfb->crtc = TG_CRTC_COLOR;
 	tfb->status = TG_STATUS_COLOR;
 	spin_lock_init(&tfb->reg_lock);
+	mutex_init(&tfb->vram_lock);
 
 	ret = tg_select_access_path(tfb);
 	if (ret)
@@ -783,15 +906,20 @@ static int pc98tridentfb_probe(struct pci_dev *pdev,
 	ret = tg_map_vram(tfb);
 	if (ret)
 		goto err_restore;
+	tfb->shadow = vzalloc(TG_FB_SIZE);
+	if (!tfb->shadow) {
+		ret = -ENOMEM;
+		goto err_unwind_video;
+	}
 
 	tg_set_mode(tfb);
 	tg_relay_to_trident(tfb);
-	memset_io(tfb->vram, 0, TG_PITCH * TG_HEIGHT);
+	tg_flush_rows(info, 0, TG_HEIGHT);
 	tg_seq_write(tfb, 0x01, 0x01);
 
 	strscpy(info->fix.id, "PC98 TGUI96xx", sizeof(info->fix.id));
-	info->fix.smem_start = tfb->fb_phys;
-	info->fix.smem_len = tfb->vram_size;
+	info->fix.smem_start = 0;
+	info->fix.smem_len = TG_FB_SIZE;
 	info->fix.type = FB_TYPE_PACKED_PIXELS;
 	info->fix.visual = FB_VISUAL_PSEUDOCOLOR;
 	info->fix.line_length = TG_PITCH;
@@ -805,31 +933,37 @@ static int pc98tridentfb_probe(struct pci_dev *pdev,
 	info->var.height = -1;
 	info->var.width = -1;
 	pc98tridentfb_check_var(&info->var, info);
-	info->screen_base = tfb->vram;
-	info->screen_size = tfb->vram_size;
+	info->screen_buffer = tfb->shadow;
+	info->screen_size = TG_FB_SIZE;
 	info->fbops = &pc98tridentfb_ops;
-	info->flags = FBINFO_HWACCEL_DISABLED;
+	info->flags = FBINFO_VIRTFB | FBINFO_HWACCEL_DISABLED;
+	info->fbdefio = &pc98tridentfb_defio;
 
 	ret = fb_alloc_cmap(&info->cmap, 256, 0);
 	if (ret)
 		goto err_unwind_video;
-	ret = register_framebuffer(info);
+	ret = fb_deferred_io_init(info);
 	if (ret)
 		goto err_cmap;
+	ret = register_framebuffer(info);
+	if (ret)
+		goto err_defio;
 
 	pci_set_drvdata(pdev, info);
 	dev_info(&pdev->dev,
-		 "fb%d: PC-98 TGUI96xx 640x480x8, pitch %u; real hardware unverified\n",
+		 "fb%d: PC-98 TGUI96xx 640x480x8, pitch %u, verified shadow writes\n",
 		 info->node, TG_PITCH);
-	dev_warn(&pdev->dev,
-		 "direct framebuffer stores may be dropped on Ra hardware; graphics-engine support is pending\n");
 	return 0;
 
+err_defio:
+	fb_deferred_io_cleanup(info);
 err_cmap:
 	fb_dealloc_cmap(&info->cmap);
 err_unwind_video:
 	tg_relay_to_gdc(tfb);
 	tg_restore_state(tfb);
+	vfree(tfb->shadow);
+	tfb->shadow = NULL;
 	tg_unmap_vram(tfb);
 	goto err_access;
 err_restore:
@@ -852,10 +986,13 @@ static void pc98tridentfb_remove(struct pci_dev *pdev)
 		return;
 	tfb = info->par;
 	unregister_framebuffer(info);
+	fb_deferred_io_cleanup(info);
 	fb_dealloc_cmap(&info->cmap);
 	tg_seq_write(tfb, 0x01, tg_seq_read(tfb, 0x01) | 0x20);
 	tg_relay_to_gdc(tfb);
 	tg_restore_state(tfb);
+	vfree(tfb->shadow);
+	tfb->shadow = NULL;
 	tg_unmap_vram(tfb);
 	tg_release_access_path(tfb);
 	framebuffer_release(info);
@@ -866,7 +1003,6 @@ static const struct pci_device_id pc98tridentfb_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_TRIDENT, PCI_DEVICE_TGUI9660) },
 	{ }
 };
-MODULE_DEVICE_TABLE(pci, pc98tridentfb_ids);
 
 static struct pci_driver pc98tridentfb_driver = {
 	.name		= DRV_NAME,

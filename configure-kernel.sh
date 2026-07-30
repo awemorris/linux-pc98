@@ -177,10 +177,15 @@ if [ "$device_profile" = pc98 ]; then
 	# PC-9821 Ra43's onboard PC-9821X-B06-compatible adapter is an
 	# Intel 82557 (8086:1229, subsystem 1033:8000).  Keep e100 built in
 	# so the minimal, module-free i486 rootfs can use the real adapter.
+	# Keep the LGY-98 driver built in as well; qemu-pc98 exposes this
+	# C-Bus NE2000-compatible adapter at I/O 0x00d0 and IRQ 6.
 	"$source/scripts/config" --file "$kernel_build/.config" \
 		--enable NET_VENDOR_INTEL \
 		--enable E100 \
-		--enable MII
+		--enable MII \
+		--enable NET_VENDOR_NATSEMI \
+		--enable NET_VENDOR_8390 \
+		--enable NE2K_LGY98
 	make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 fi
 mkdir -p "$(dirname "$output")"

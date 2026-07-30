@@ -103,6 +103,21 @@ config NE2000
 	  To compile this driver as a module, choose M here. The module
 	  will be called ne.
 
+config NE2K_LGY98
+	tristate "Melco/Buffalo LGY-98 support"
+	depends on X86_PC9800 && ISA && HAS_IOPORT
+	select CRC32
+	help
+	  Support for the Melco/Buffalo LGY-98 C-Bus Ethernet adapter.
+	  This is a 16-bit NE2000-compatible board whose data and reset
+	  ports are relocated in the NEC PC-9800 C-Bus I/O space.
+
+	  The default settings are I/O base 0x00d0 and IRQ 6. They can be
+	  overridden with the io= and irq= module parameters.
+
+	  To compile this driver as a module, choose M here. The module
+	  will be called ne2k-lgy98.
+
 config NE2K_PCI
 	tristate "PCI NE2000 and clones support (see help)"
 	depends on PCI && HAS_IOPORT

@@ -82,6 +82,16 @@ INSTALL_MODULES=0 \
 musl, and static BusyBox. It compiles with `-march=i486` and rejects known
 post-i486 instructions in the final BusyBox binary. Generated UAPI headers
 use a separate output directory, so the Linux source tree remains clean.
+The image includes BusyBox `ip`, `ping`, and `udhcpc` plus a small DHCP
+configuration script. Bring up the first non-loopback interface with:
+
+```sh
+net-up
+ip addr
+ping -c 3 10.0.2.2
+```
+
+An interface name can be supplied explicitly, for example `net-up eth0`.
 
 The resulting image is
 `build/qemu-pc98-linux-7.1-i486.raw`. Run it with:
@@ -124,6 +134,7 @@ over.
 - `uname -a` reporting Linux 7.1.0-i486 on i486
 - genuine PC-98 ROM boot through the disk IPL and partition PBR
 - physical PC-9821 Ra43 boot through ext4 root to the i486 shell
+- physical PC-9821 Ra43 detection of the onboard Intel PRO/100 (`e100`)
 - continuous loader, early-printk, and normal-console display handoff
 - `git diff --check`
 
@@ -134,3 +145,25 @@ fixed-disk IPL can select the Linux partition PBR on a second HDD and the
 PBR successfully starts the kernel, but root mounting then fails because
 the same filesystem is `/dev/sdb2`. Device-order-independent root selection
 is intentionally left for a follow-up change.
+
+On a physical PC-9821 Ra43, explicitly loading `pc98tridentfb` still produces
+vertical colour bars. The module's automatic PCI loading is disabled so this
+does not replace the working GDC console during normal boot. The remaining
+Trident initialization-sequence mismatch is deferred while i486 work takes
+priority.
+
+An experimental test with upstream QEMU's generic `-device i82559er`
+enumerated the PCI NIC but left PCI INT A unrouted. This is not a
+qemu-pc98-specific device and is not the supported emulated network path.
+qemu-pc98 instead implements the C-bus LGY-98 as `pc98-lgy98`, with IRQ 6 by
+default. Linux 7.1 now has a dedicated `ne2k-lgy98` frontend which reuses the
+standard 8390 PIO core without adding PC-98 conditionals to the generic ISA
+NE2000 driver. It maps the DP8390 registers at `0x00d0-0x00df`, remote-DMA data
+port at `0x02d0`, and reset latch at `0x03d0`; `io=` and `irq=` can override
+the defaults.
+
+The built-in driver was validated on qemu-pc98 with
+`-device pc98-lgy98,netdev=n0`: four ICMP requests to the QEMU user-network
+gateway completed without loss, and the IRQ 6 counter increased from 0 to 12.
+The i486 rootfs also contains the commands needed for physical Ra43 network
+testing.

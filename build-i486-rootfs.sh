@@ -181,6 +181,9 @@ cp -a "$work/src/busybox-$busybox_version" "$busybox_build"
 		"$root_stage/var" \
 		"$root_stage/mnt"
 	cp -a "$repo/rootfs/i486/." "$root_stage/"
+	chmod 0755 \
+		"$root_stage/sbin/net-up" \
+		"$root_stage/usr/share/udhcpc/default.script"
 	if [ "$cpu_family" = 686 ]; then
 		sed -i 's/i486/i686/g' \
 			"$root_stage/etc/profile" \

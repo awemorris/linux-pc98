@@ -84,7 +84,7 @@ make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 	--enable CMDLINE_BOOL \
 	--enable CMDLINE_OVERRIDE \
 	--set-str CMDLINE \
-	"console=ttyS0 console=tty0 root=/dev/sda2 rootfstype=ext4 rw"
+	"console=ttyS0 console=tty0 earlyprintk=pc9800 root=/dev/sda2 rootfstype=ext4 rw"
 "$source/scripts/config" --file "$kernel_build/.config" --enable "$cpu_config"
 
 if [ "$device_profile" = pc98 ]; then

@@ -46,6 +46,13 @@ loader validates the bzImage `setup_sects`, `syssize`, `HdrS`, and
 `LOADED_HIGH` fields before copying the protected-mode payload to physical
 address `0x100000`.
 
+The loader writes BSD-style progress directly to the first GDC text row. It
+shows the bzImage size, the `0x00100000` protected-mode load address, a live
+loaded-byte count, and one dot per 128 KiB. It changes the line to
+`Decompressing Linux...` before entering the compressed kernel. The kernel
+command line enables `earlyprintk=pc9800`, which takes over immediately after
+decompression and unregisters when the normal PC-98 console becomes ready.
+
 ## Memory layout
 
 | Physical address | Contents                                           |

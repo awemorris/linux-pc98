@@ -30,6 +30,11 @@ _start:
 	pushw	%cs
 	popw	%ds
 
+	movw	$0, progress_sectors
+	movb	$(load_dot_field - load_status), progress_column
+	movw	$loading_message, %si
+	call	show_status
+
 	xorw	%ax, %ax
 	movw	%ax, %es
 	cmpl	$0x4839384c, %es:HANDOFF
@@ -193,6 +198,15 @@ kernel_found:
 	addl	remaining, %eax
 	cmpl	file_size, %eax
 	ja	loader_failure
+	movl	payload_offset, %eax
+	movl	%eax, loaded_bytes
+	movw	$load_count_field, %di
+	call	format_decimal8
+	movl	file_size, %eax
+	movw	$load_total_field, %di
+	call	format_decimal8
+	movw	$load_status, %si
+	call	show_status
 
 	/* Clear boot_params and copy the setup header. */
 	movl	$BP_ADDR, %edi
@@ -259,9 +273,15 @@ copy_next:
 	jnz	5b
 	addl	%edx, cur_dest
 	subl	%edx, remaining
+	addl	%edx, loaded_bytes
+	incw	progress_sectors
+	testb	$0xff, progress_sectors
+	jnz	copy_next
+	call	update_load_status
 	jmp	copy_next
 
 copy_done:
+	call	update_load_status
 	movl	$BP_ADDR, %edi
 	movb	$0xff, %fs:0x210(%edi)
 	movl	$CMDLINE, %fs:0x228(%edi)
@@ -303,6 +323,9 @@ copy_done:
 	movl	$CMDLINE, %ebx
 	movb	$0, %fs:(%ebx)
 
+	movw	$starting_message, %si
+	call	show_status
+
 	cli
 	movb	$0xff, %al
 	outb	%al, $0x0a
@@ -323,6 +346,99 @@ copy_done:
 	movw	%ax, %es
 	movw	%ax, %ss
 	ljmpl	$BOOT_CS, $KDEST
+
+/*
+ * Leave visible progress on the first 80-column GDC text row while the
+ * compressed kernel is running without a console. DS:SI is a NUL-terminated
+ * ANK string. Character and attribute planes use a two-byte cell stride.
+ */
+show_status:
+	pushw	%ax
+	pushw	%bx
+	pushw	%cx
+	pushw	%si
+	pushw	%di
+	pushw	%es
+	movw	%si, %bx
+
+	movw	$0xa000, %ax
+	movw	%ax, %es
+	xorw	%di, %di
+	movw	$0x0020, %ax
+	movw	$80, %cx
+	rep stosw
+	xorw	%di, %di
+	movw	%bx, %si
+1:
+	lodsb
+	testb	%al, %al
+	jz	2f
+	xorb	%ah, %ah
+	stosw
+	jmp	1b
+2:
+	movw	$0xa200, %ax
+	movw	%ax, %es
+	xorw	%di, %di
+	movw	$0x00e1, %ax
+	movw	$80, %cx
+	rep stosw
+
+	popw	%es
+	popw	%di
+	popw	%si
+	popw	%cx
+	popw	%bx
+	popw	%ax
+	ret
+
+/* Refresh the decimal byte count and append one persistent progress dot. */
+update_load_status:
+	pushl	%eax
+	pushw	%bx
+	pushw	%di
+	pushw	%si
+	movl	loaded_bytes, %eax
+	movw	$load_count_field, %di
+	call	format_decimal8
+	xorw	%bx, %bx
+	movb	progress_column, %bl
+	cmpb	$79, %bl
+	jae	1f
+	movb	$0x2e, load_status(%bx)
+	incb	progress_column
+1:
+	movw	$load_status, %si
+	call	show_status
+	popw	%si
+	popw	%di
+	popw	%bx
+	popl	%eax
+	ret
+
+/* Write EAX as eight zero-padded decimal digits at DS:DI. */
+format_decimal8:
+	pushl	%eax
+	pushl	%ebx
+	pushl	%edx
+	pushw	%cx
+	pushw	%di
+	addw	$7, %di
+	movl	$10, %ebx
+	movw	$8, %cx
+1:
+	xorl	%edx, %edx
+	divl	%ebx
+	addb	$0x30, %dl
+	movb	%dl, (%di)
+	decw	%di
+	loop	1b
+	popw	%di
+	popw	%cx
+	popl	%edx
+	popl	%ebx
+	popl	%eax
+	ret
 
 stream_reset:
 	movw	first_cluster, %ax
@@ -495,5 +611,26 @@ sector_scale:
 	.byte	0
 sector_in_cluster:
 	.byte	0
+progress_sectors:
+	.word	0
+progress_column:
+	.byte	0
+loaded_bytes:
+	.long	0
 read_flags:
 	.word	0
+loading_message:
+	.asciz	"Loading bzImage..."
+starting_message:
+	.asciz	"Decompressing Linux..."
+load_status:
+	.ascii	"Loading bzImage @ 0x00100000: "
+load_count_field:
+	.ascii	"00000000"
+	.ascii	" / "
+load_total_field:
+	.ascii	"00000000"
+	.ascii	" bytes"
+load_dot_field:
+	.fill	24, 1, 0x20
+	.byte	0

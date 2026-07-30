@@ -100,6 +100,13 @@ at `0x71` and `0x77`. This matters on an i486, where the absence of TSC makes
 the early kernel fall back to the PIT; using the PC/AT ports `0x40` and
 `0x43` caused an infinite early-boot loop.
 
+The second-stage loader keeps the GDC text display responsive during the
+relatively slow i486 bzImage load and decompression. Its first-row status
+shows total size, physical load address, a live byte count, and progress
+dots, followed by `Decompressing Linux...`. `earlyprintk=pc9800` then
+displays kernel messages from time zero until the normal PC-98 console takes
+over.
+
 ## Validation
 
 - `CONFIG_M686=y` PC-98 `bzImage` build
@@ -117,6 +124,7 @@ the early kernel fall back to the PIT; using the PC/AT ports `0x40` and
 - `uname -a` reporting Linux 7.1.0-i486 on i486
 - genuine PC-98 ROM boot through the disk IPL and partition PBR
 - physical PC-9821 Ra43 boot through ext4 root to the i486 shell
+- continuous loader, early-printk, and normal-console display handoff
 - `git diff --check`
 
 ## Known limitation

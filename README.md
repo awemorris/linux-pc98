@@ -239,6 +239,12 @@ The i486 image mounts its ext4 root, starts BusyBox init, reaches an
 interactive shell, and reports Linux 7.1.0-i486 under qemu-pc98 and on a
 physical PC-9821 Ra43. The i386 target remains a research milestone.
 
+During the slower i486 kernel load and decompression, the second-stage loader
+shows a BSD-style size, load address, loaded-byte count, and progress dots on
+the first GDC text row. The kernel enables the PC-98 early console immediately
+after decompression, so the display no longer remains black between the
+firmware boot menu and normal console initialization.
+
 The i486 kernel includes the `e100` and `MII` drivers for the Ra43 onboard
 PC-9821X-B06-compatible Intel PRO/100 adapter. Linux matches its primary
 PCI ID `8086:1229`; the NEC subsystem ID `1033:8000` needs no separate

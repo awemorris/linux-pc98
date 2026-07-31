@@ -11,7 +11,7 @@ git submodule update --init --recursive
 |---|---|---|---|
 | `gcc/` | `awemorris/gcc-i386` | GCC 14.3.0 | Known-working i386 compiler baseline; no functional source patch yet |
 | `musl/` | `awemorris/musl-i386` | musl 1.2.6 | TAS internal locks and the static low-memory profile |
-| `glibc/` | `awemorris/glibc-i386` | glibc 2.41 | Working genuine-i386 port on `port/glibc-2.41-i386`; submodule commit and patch export pending review |
+| `glibc/` | `awemorris/glibc-i386` | glibc 2.41 | Validated genuine-i386 port at `cddb5b71c3ee05561cc78ed9c7f8f1e04f703d68` on `port/glibc-2.41-i386` |
 
 qemu-pc98 is a separate top-level submodule at `../qemu-pc98/`.
 
@@ -67,10 +67,11 @@ selftest all pass. A dynamically glibc-linked BusyBox also runs as
 `/sbin/init`. See `../GLIBC-2.41-I386-PORT-PLAN.md`, section 22, for the
 implemented design, test matrix, and remaining Debian packaging gates.
 
-The glibc working tree is not yet committed. Commit it in the submodule
-before updating the superproject gitlink or exporting
-`patchsets/glibc/2.41/*.patch`; otherwise the implementation itself will be
-missing from the recorded revision.
+The glibc implementation is recorded in submodule commit
+`cddb5b71c3ee05561cc78ed9c7f8f1e04f703d68`. Its portable export is
+`patchsets/glibc/2.41/0001-Add-Linux-assisted-atomics-for-genuine-i386.patch`.
+`validate-patchsets.sh` replays that patch from `upstream-2.41` and requires
+the resulting tree to match the pinned submodule revision exactly.
 
 ## Updating a component
 

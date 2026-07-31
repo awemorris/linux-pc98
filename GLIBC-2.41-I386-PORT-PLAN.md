@@ -1882,17 +1882,17 @@ and install/upgrade testing remain later gates.
 
 | Item | Implemented baseline |
 |---|---|
-| glibc source | upstream glibc 2.41, tag `upstream-2.41`, commit `88bdb2beb33cfd95defd85fcfebae4e54023c735` plus the uncommitted port working tree |
+| glibc source | upstream glibc 2.41, tag `upstream-2.41`, commit `88bdb2beb33cfd95defd85fcfebae4e54023c735`; port commit `cddb5b71c3ee05561cc78ed9c7f8f1e04f703d68` |
 | glibc branch | `port/glibc-2.41-i386` in `toolchain/glibc` |
 | kernel | this repository's Linux 7.1 PC-98 tree |
 | compiler | repository GCC/Buildroot i386 cross compiler, invoked with `-march=i386 -mtune=i386` or `-march=i486 -mtune=i486` |
 | runtime emulator | qemu-pc98, `-M pc9801 -cpu 386` and `-M pc9801 -cpu 486`, TCG |
 | test memory | 32 MiB |
 
-The glibc submodule must be committed first. Until that is done, the
-superproject gitlink records only the `upstream-2.41` commit and reports the
-submodule as dirty. Exact `git format-patch` exports must be generated after
-that commit, not from an uncommitted working tree.
+The glibc implementation is committed on `port/glibc-2.41-i386`. The exact
+`git format-patch` export is stored under
+`toolchain/patchsets/glibc/2.41/`; its replay from `upstream-2.41` must match
+the submodule tree ID `be16c4a3a3d7876acbc4d9e569c833c7981689da`.
 
 ### 22.3 Kernel implementation actually used
 
@@ -2020,22 +2020,16 @@ The dedicated atomic selftest is TAP-producing and currently has 12 tests.
 The glibc smoke test additionally exercises the futex/robust-list path which
 is distinct from the public atomic syscall path.
 
-### 22.7 Review and commit order
+### 22.7 Recorded commit and patch export
 
-1. Review and commit the glibc working tree on
-   `toolchain/glibc` branch `port/glibc-2.41-i386`.
-2. Record the resulting glibc commit ID in `toolchain/README.md` and
-   `toolchain/patchsets/README.md`.
-3. Export the submodule commit series from `upstream-2.41` into a new
-   `toolchain/patchsets/glibc/2.41/` directory.
-4. Run `toolchain/validate-patchsets.sh` after teaching it the new 2.41
-   inventory.
-5. Commit the Linux/UAPI/futex/usercopy changes, tests, build scripts,
-   documentation, and the updated submodule gitlink in the superproject.
-
-Do not generate a nominal patch export before step 1: it would omit the
-uncommitted glibc implementation even though the superproject appeared to
-contain a 2.41 submodule.
+The implementation is committed as
+`cddb5b71c3ee05561cc78ed9c7f8f1e04f703d68` on
+`port/glibc-2.41-i386`. The parent repository records the exact one-commit
+series as
+`toolchain/patchsets/glibc/2.41/0001-Add-Linux-assisted-atomics-for-genuine-i386.patch`.
+The mechanical validator replays it from `upstream-2.41` and compares the
+resulting tree ID with the submodule HEAD. This closes the reproducibility
+step which was intentionally deferred until after source review.
 
 ### 22.8 Work which remains after the executable port
 

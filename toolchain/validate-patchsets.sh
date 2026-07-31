@@ -41,4 +41,4 @@ validate()
 
 validate gcc 14.3.0 upstream-14.3.0
 validate musl 1.2.6 upstream-1.2.6
-validate glibc 2.43 upstream-2.43
+validate glibc 2.41 upstream-2.41

@@ -1,0 +1,1330 @@
+From cddb5b71c3ee05561cc78ed9c7f8f1e04f703d68 Mon Sep 17 00:00:00 2001
+From: Awe Morris <awe@noctvm.io>
+Date: Sat, 1 Aug 2026 02:53:26 +0900
+Subject: [PATCH] Add Linux-assisted atomics for genuine i386
+
+---
+ I386-PORT.md                                  | 123 ++++
+ config.h.in                                   |   3 +
+ configure                                     |  16 +
+ configure.ac                                  |  13 +
+ malloc/memusage.c                             |  16 +
+ manual/Makefile                               |  11 +
+ sysdeps/i386/configure                        |  75 ++-
+ sysdeps/i386/configure.ac                     |  68 ++-
+ sysdeps/i386/i386-kernel-atomic/dl-tlsdesc.S  |  95 +++
+ sysdeps/i386/i386-kernel-atomic/isa.h         |   8 +
+ .../i386-kernel-atomic/pthread_spin_trylock.S |  26 +
+ sysdeps/i386/nptl/pthread_spin_lock.S         |   8 +-
+ sysdeps/i386/preconfigure                     |   1 +
+ sysdeps/unix/sysv/linux/i386/arch-syscall.h   |   1 +
+ .../i386/i386-kernel-atomic/atomic-machine.h  | 561 ++++++++++++++++++
+ sysdeps/x86/cpu-features.c                    |  15 +
+ sysdeps/x86/dl-diagnostics-cpu.c              |  11 +-
+ sysdeps/x86/include/cpu-features.h            |   4 +
+ 18 files changed, 1012 insertions(+), 43 deletions(-)
+ create mode 100644 I386-PORT.md
+ create mode 100644 manual/Makefile
+ mode change 100644 => 100755 sysdeps/i386/configure
+ create mode 100644 sysdeps/i386/i386-kernel-atomic/dl-tlsdesc.S
+ create mode 100644 sysdeps/i386/i386-kernel-atomic/isa.h
+ create mode 100644 sysdeps/i386/i386-kernel-atomic/pthread_spin_trylock.S
+ create mode 100644 sysdeps/unix/sysv/linux/i386/i386-kernel-atomic/atomic-machine.h
+
+diff --git a/I386-PORT.md b/I386-PORT.md
+new file mode 100644
+index 00000000..82dde4fe
+--- /dev/null
++++ b/I386-PORT.md
+@@ -0,0 +1,123 @@
++# Genuine Intel 80386 port
++
++This branch ports glibc 2.41 to the original Intel 80386 instruction set. It
++preserves the ordinary i386 GNU/Linux ABI, but it requires a small versioned
++kernel atomic service because an 80386 has neither `CMPXCHG` nor `XADD`.
++
++The implementation was developed with the Linux 7.1 PC-98 port in
++`awemorris/linux-pc98`, but no PC-98 hardware behavior is built into glibc.
++Another i386 Linux port can use it if its kernel implements the same UAPI.
++
++## Configure contract
++
++An exact `--host=i386-linux-gnu` build must explicitly pass:
++
++```sh
++--enable-i386-kernel-atomics
++```
++
++The supplied Linux headers must define both `I386_ATOMIC_ABI_VERSION == 1`
++and `__NR_i386_atomic`. Configure fails closed when either is missing. The
++option is rejected for i486 and newer builds, which continue to use glibc's
++ordinary native-atomic sysdeps.
++
++The validated first build also uses `--disable-multi-arch` and:
++
++```sh
++CFLAGS='-O2 -g -march=i386 -mtune=i386 -fno-omit-frame-pointer'
++```
++
++The top-level linux-pc98 scripts `build-glibc.sh`,
++`build-glibc-tests.sh`, `build-glibc-busybox.sh`, and
++`check-glibc-i386-opcodes.sh` provide the reproducible build and validation
++workflow.
++
++## Kernel ABI
++
++ABI version 1 accepts this request through syscall 472 in the PC-98 Linux
++i386 syscall table:
++
++```c
++struct i386_atomic_args {
++        uint32_t version;
++        uint32_t operation;
++        uint32_t width;
++        uint32_t address;
++        uint32_t expected;
++        uint32_t value;
++        uint32_t observed;
++        uint32_t reserved;
++};
++```
++
++The service supports naturally aligned 1-, 2-, and 4-byte CMPXCHG, XADD,
++XCHG, AND, OR, and XOR. It returns zero on success and writes the old target
++value to `observed`. Kernel and glibc source must be upgraded together if the
++ABI changes.
++
++The Linux implementation is restricted to the uniprocessor `M386` kernel.
++The public syscall pins writable pages to honor COW and read-only mappings on
++a CPU whose supervisor writes ignore read-only PTEs. The kernel also routes
++its i386 futex atomic helpers through the same serialized implementation.
++
++## Source layout
++
++- `sysdeps/i386/i386-kernel-atomic/isa.h` reports the 386 ISA floor.
++- `sysdeps/i386/i386-kernel-atomic/dl-tlsdesc.S` provides the FNSAVE TLS
++  descriptor resolver and avoids later FPU/SSE state instructions.
++- `sysdeps/i386/i386-kernel-atomic/pthread_spin_trylock.S` implements trylock
++  with the implicitly locked memory form of `XCHG`.
++- `sysdeps/unix/sysv/linux/i386/i386-kernel-atomic/atomic-machine.h` is the
++  exact-i386 atomic backend.
++- `sysdeps/i386/preconfigure` selects this leaf only for exact i386.
++- `sysdeps/x86/cpu-features.c` bypasses CPUID and later CPU dispatch for this
++  build.
++- `sysdeps/i386/nptl/pthread_spin_lock.S` avoids `PAUSE` (`REP NOP`) in the
++  exact-i386 build.
++- `sysdeps/unix/sysv/linux/i386/arch-syscall.h` records syscall 472.
++
++Both `configure.ac` and generated `configure` files are updated in this
++branch. Keep generated files synchronized when changing configure logic.
++
++`manual/Makefile` is a minimal no-op subdirectory makefile because Debian's
++repacked source archive omits the GFDL manual while the upstream top-level
++build still descends into `manual/`.
++
++## Atomic design
++
++Memory `XCHG` is available on the 80386 and is used directly for exchange and
++spin-lock operations. Locked arithmetic which does not need to return the old
++value also remains native. Operations whose glibc algorithms require the old
++value or a compare-and-exchange use the kernel service.
++
++The syscall wrapper exchanges EBX with a callee-saved ESI operand around
++`INT 80h`; this preserves the i386 PIC GOT register and works in libc, ld.so,
++static PIE, and non-PIC objects. Any kernel ABI failure triggers `INT3`
++instead of silently violating NPTL atomicity.
++
++64-bit atomics remain unavailable, matching the normal 32-bit i386 ABI
++constraints. A new glibc use which requires a 64-bit lock-free atomic should
++fail at link time and must be reviewed rather than silently emulated.
++
++## Validated behavior
++
++The port has run under qemu-pc98 with `-M pc9801 -cpu 386` and 32 MiB RAM.
++A dynamically glibc-linked BusyBox runs as `/sbin/init`. The validation suite
++passes dynamic loading, malloc/free, libm `dlopen`/`dlsym`, TLS, pthread
++mutexes, fork, process-shared robust owner-death recovery, and a 12-test
++kernel atomic suite including read-only and COW fault containment.
++
++Every executable section in the installed loader, shared libraries, test
++programs, and dynamic BusyBox has also passed the top-level post-386 opcode
++scanner. The same scan verifies that no compiler `__atomic_*` or `__sync_*`
++helper remains unresolved. The source builds and boots successfully as i486
++without the kernel-atomic sysdeps leaf.
++
++## Remaining production gates
++
++This is a working executable port, not yet a Debian archive-ready libc. The
++full upstream glibc testsuite, exact Debian 13 patch stack, ABI/symbol-version
++comparison, Debian package build, install/upgrade tests, broad NSS/locale/
++resolver coverage, and physical 80386 validation remain required. See
++`GLIBC-2.41-I386-PORT-PLAN.md` in the linux-pc98 repository for the complete
++test matrix and risk register.
+diff --git a/config.h.in b/config.h.in
+index cdbd5553..dbc68c17 100644
+--- a/config.h.in
++++ b/config.h.in
+@@ -178,6 +178,9 @@
+ /* Mach/i386 specific: define if the `i386_set_gdt' RPC is available.  */
+ #undef	HAVE_I386_SET_GDT
+ 
++/* Define if exact-i386 atomics are provided by the PC-98 Linux kernel.  */
++#undef	HAVE_I386_KERNEL_ATOMICS
++
+ /* Hurd specific; define if the `proc_getchildren_rusage' RPC is available.  */
+ #undef HAVE_HURD_PROC_GETCHILDREN_RUSAGE
+ 
+diff --git a/configure b/configure
+index eb8abd00..38eeb700 100755
+--- a/configure
++++ b/configure
+@@ -808,6 +808,7 @@ enable_static_nss
+ enable_force_install
+ enable_maintainer_mode
+ enable_kernel
++enable_i386_kernel_atomics
+ enable_werror
+ enable_multi_arch
+ enable_memory_tagging
+@@ -1485,6 +1486,8 @@ Optional Features:
+                           sometimes confusing) to the casual installer
+   --enable-kernel=VERSION compile for compatibility with kernel not older than
+                           VERSION
++  --enable-i386-kernel-atomics
++                          use the PC-98 Linux i386 atomic syscall [default=no]
+   --disable-werror        do not build with -Werror
+   --enable-multi-arch     enable single DSO with optimizations for multiple
+                           architectures
+@@ -4657,6 +4660,19 @@ then :
+   enableval=$enable_kernel; minimum_kernel=$enableval
+ fi
+ 
++# Check whether --enable-i386-kernel-atomics was given.
++if test ${enable_i386_kernel_atomics+y}
++then :
++  enableval=$enable_i386_kernel_atomics; enable_i386_kernel_atomics=$enableval
++else case e in #(
++  e) enable_i386_kernel_atomics=no ;;
++esac
++fi
++
++case "$enable_i386_kernel_atomics" in
++yes|no) ;;
++*) as_fn_error $? "Not a valid argument for --enable-i386-kernel-atomics: \"$enable_i386_kernel_atomics\"" "$LINENO" 5;;
++esac
+ if test "$minimum_kernel" = yes || test "$minimum_kernel" = no; then
+   # Better nothing than this.
+   minimum_kernel=""
+diff --git a/configure.ac b/configure.ac
+index 050bfa65..191f2225 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -305,6 +305,19 @@ AC_ARG_ENABLE([kernel],
+ 			     [compile for compatibility with kernel not older than VERSION]),
+ 	      [minimum_kernel=$enableval],
+ 	      [])
++dnl An exact i386 build has no CMPXCHG or XADD instructions.  The PC-98
++dnl Linux port provides a versioned syscall for these operations; require an
++dnl explicit opt-in so a resulting libc is never mistaken for one which runs
++dnl on an unmodified upstream kernel.
++AC_ARG_ENABLE([i386-kernel-atomics],
++	      AS_HELP_STRING([--enable-i386-kernel-atomics],
++			     [use the PC-98 Linux i386 atomic syscall @<:@default=no@:>@]),
++	      [enable_i386_kernel_atomics=$enableval],
++	      [enable_i386_kernel_atomics=no])
++case "$enable_i386_kernel_atomics" in
++yes|no) ;;
++*) AC_MSG_ERROR([Not a valid argument for --enable-i386-kernel-atomics: "$enable_i386_kernel_atomics"]);;
++esac
+ dnl Prevent unreasonable values.
+ if test "$minimum_kernel" = yes || test "$minimum_kernel" = no; then
+   # Better nothing than this.
+diff --git a/malloc/memusage.c b/malloc/memusage.c
+index 347abba2..1a4ba53a 100644
+--- a/malloc/memusage.c
++++ b/malloc/memusage.c
+@@ -36,6 +36,22 @@
+ #include <machine-sp.h>
+ #include <stackinfo.h>  /* For _STACK_GROWS_UP  */
+ 
++#ifdef HAVE_I386_KERNEL_ATOMICS
++/* C11 atomic read-modify-write builtins become unresolved libatomic calls
++   with -march=i386.  Route the operations used by this optional profiling
++   DSO through libc's exact-i386 atomic implementation instead.  */
++# include <atomic.h>
++# undef atomic_load_explicit
++# undef atomic_fetch_add_explicit
++# undef atomic_compare_exchange_weak
++# define atomic_load_explicit(mem, order) \
++  atomic_load_relaxed (mem)
++# define atomic_fetch_add_explicit(mem, value, order) \
++  atomic_fetch_add_relaxed (mem, value)
++# define atomic_compare_exchange_weak(mem, expected, desired) \
++  atomic_compare_exchange_weak_relaxed (mem, expected, desired)
++#endif
++
+ /* Pointer to the real functions.  These are determined used `dlsym'
+    when really needed.  */
+ static void *(*mallocp)(size_t);
+diff --git a/manual/Makefile b/manual/Makefile
+new file mode 100644
+index 00000000..b3f84692
+--- /dev/null
++++ b/manual/Makefile
+@@ -0,0 +1,11 @@
++# Debian repacks the upstream tarball without the GFDL manual.  Keep the
++# subdirectory in the build graph, but give it no build or install payload.
++
++subdir := manual
++
++include ../Makeconfig
++include ../Rules
++
++.PHONY: install subdir_install install-data
++install subdir_install install-data: ;
++install-%: ;
+diff --git a/sysdeps/i386/configure b/sysdeps/i386/configure
+old mode 100644
+new mode 100755
+index a618692a..a4ee8ae0
+--- a/sysdeps/i386/configure
++++ b/sysdeps/i386/configure
+@@ -6,26 +6,66 @@ if test $enable_cet != no; then
+   as_fn_error $? "\"CET is only supported on x86_64 or x32\"" "$LINENO" 5
+ fi
+ 
+-# We no longer support i386 since it lacks the atomic instructions
+-# required to implement NPTL threading.
++# An exact i386 build uses the versioned PC-98 Linux kernel atomic service
++# for the CMPXCHG and XADD operations required by NPTL.
+ if test "$config_machine" = i386; then
+-  as_fn_error $? "
+-*** ERROR: Support for i386 is deprecated.
+-*** Please use host i786, i686, i585 or i486.
+-*** For example: /src/glibc/configure --host=i686-pc-linux-gnu ...\"" "$LINENO" 5
++  if test "$enable_i386_kernel_atomics" != yes; then
++    as_fn_error $? "
++*** Building with -march=i386/-mcpu=i386 is not supported.
++*** Reconfigure with --enable-i386-kernel-atomics and headers from a
++*** PC-98 Linux kernel that provides I386_ATOMIC_ABI_VERSION 1." "$LINENO" 5
++  fi
++  if test -n "$sysheaders"; then
++    OLD_CPPFLAGS=$CPPFLAGS
++    CPPFLAGS="$CPPFLAGS $SYSINCLUDES"
++  fi
++
++{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for PC-98 Linux i386 atomic ABI version 1" >&5
++printf %s "checking for PC-98 Linux i386 atomic ABI version 1... " >&6; }
++if test ${libc_cv_i386_kernel_atomics+y}
++then :
++  printf %s "(cached) " >&6
++else case e in #(
++  e)
++    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
++/* end confdefs.h.  */
++
++#include <asm/i386_atomic.h>
++#include <asm/unistd.h>
++#if I386_ATOMIC_ABI_VERSION != 1
++# error unsupported i386 atomic ABI
++#endif
++#ifndef __NR_i386_atomic
++# error missing i386 atomic syscall number
++#endif
++struct i386_atomic_args i386_atomic_probe;
++
++_ACEOF
++if ac_fn_c_try_compile "$LINENO"
++then :
++  libc_cv_i386_kernel_atomics=yes
++else case e in #(
++  e) libc_cv_i386_kernel_atomics=no ;;
++esac
++fi
++rm -f core conftest.err conftest.$ac_objext conftest.beam conftest.$ac_ext ;;
++esac
+ fi
++{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $libc_cv_i386_kernel_atomics" >&5
++printf "%s\n" "$libc_cv_i386_kernel_atomics" >&6; }
++  if test -n "$sysheaders"; then
++    CPPFLAGS=$OLD_CPPFLAGS
++  fi
++  if test "$libc_cv_i386_kernel_atomics" != yes; then
++    as_fn_error $? "PC-98 Linux i386 atomic ABI version 1 is required" "$LINENO" 5
++  fi
++  printf "%s\n" "#define HAVE_I386_KERNEL_ATOMICS 1" >>confdefs.h
+ 
+-# The GNU C Library can't be built for i386.  There are several reasons for
+-# this restriction.  The primary reason is that i386 lacks the atomic
+-# operations required to support the current NPTL implementation.  While it is
+-# possible that such atomic operations could be emulated in the kernel to date
+-# no such work has been done to enable this.  Even with NPTL disabled you still
+-# have no atomic.h implementation.  Given the declining use of i386 we disable
+-# support for building with `-march=i386' or `-mcpu=i386.' We don't explicitly
+-# check for i386, instead we make sure the compiler has support for inlining
+-# the builtin __sync_val_compare_and_swap. If it does then we should have no
+-# problem building for i386.
+-{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for compiler support of inlined builtin function __sync_val_compare_and_swap" >&5
++else
++  if test "$enable_i386_kernel_atomics" = yes; then
++    as_fn_error $? "--enable-i386-kernel-atomics is only valid for an exact i386 build" "$LINENO" 5
++  fi
++  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for compiler support of inlined builtin function __sync_val_compare_and_swap" >&5
+ printf %s "checking for compiler support of inlined builtin function __sync_val_compare_and_swap... " >&6; }
+ libc_compiler_builtin_inlined=no
+ cat > conftest.c <<EOF
+@@ -54,6 +94,7 @@ else
+ fi
+ { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $libc_compiler_builtin_inlined" >&5
+ printf "%s\n" "$libc_compiler_builtin_inlined" >&6; }
++fi
+ 
+ if test "$static_pie" = yes; then
+   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for linker static PIE support" >&5
+diff --git a/sysdeps/i386/configure.ac b/sysdeps/i386/configure.ac
+index 7f68e621..875c3556 100644
+--- a/sysdeps/i386/configure.ac
++++ b/sysdeps/i386/configure.ac
+@@ -6,34 +6,54 @@ if test $enable_cet != no; then
+   AC_MSG_ERROR(["CET is only supported on x86_64 or x32"])
+ fi
+ 
+-# We no longer support i386 since it lacks the atomic instructions
+-# required to implement NPTL threading.
++# An exact i386 build uses the versioned PC-98 Linux kernel atomic service
++# for the CMPXCHG and XADD operations required by NPTL.
+ if test "$config_machine" = i386; then
+-  AC_MSG_ERROR([
+-*** ERROR: Support for i386 is deprecated.
+-*** Please use host i786, i686, i585 or i486.
+-*** For example: /src/glibc/configure --host=i686-pc-linux-gnu ..."])
+-fi
+-
+-# The GNU C Library can't be built for i386.  There are several reasons for
+-# this restriction.  The primary reason is that i386 lacks the atomic
+-# operations required to support the current NPTL implementation.  While it is
+-# possible that such atomic operations could be emulated in the kernel to date
+-# no such work has been done to enable this.  Even with NPTL disabled you still
+-# have no atomic.h implementation.  Given the declining use of i386 we disable
+-# support for building with `-march=i386' or `-mcpu=i386.' We don't explicitly
+-# check for i386, instead we make sure the compiler has support for inlining
+-# the builtin __sync_val_compare_and_swap. If it does then we should have no
+-# problem building for i386.
+-LIBC_COMPILER_BUILTIN_INLINED(
+-  [__sync_val_compare_and_swap],
+-  [int a, b, c; __sync_val_compare_and_swap (&a, b, c);],
+-  [-O0],
+-  [libc_cv_unsupported_i386=no],
+-  [AC_MSG_ERROR([
++  if test "$enable_i386_kernel_atomics" != yes; then
++    AC_MSG_ERROR([
++*** Building with -march=i386/-mcpu=i386 is not supported.
++*** Reconfigure with --enable-i386-kernel-atomics and headers from a
++*** PC-98 Linux kernel that provides I386_ATOMIC_ABI_VERSION 1.])
++  fi
++  if test -n "$sysheaders"; then
++    OLD_CPPFLAGS=$CPPFLAGS
++    CPPFLAGS="$CPPFLAGS $SYSINCLUDES"
++  fi
++  AC_CACHE_CHECK([for PC-98 Linux i386 atomic ABI version 1],
++    [libc_cv_i386_kernel_atomics], [
++    AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
++#include <asm/i386_atomic.h>
++#include <asm/unistd.h>
++#if I386_ATOMIC_ABI_VERSION != 1
++# error unsupported i386 atomic ABI
++#endif
++#ifndef __NR_i386_atomic
++# error missing i386 atomic syscall number
++#endif
++struct i386_atomic_args i386_atomic_probe;
++]])], [libc_cv_i386_kernel_atomics=yes],
++       [libc_cv_i386_kernel_atomics=no])])
++  if test -n "$sysheaders"; then
++    CPPFLAGS=$OLD_CPPFLAGS
++  fi
++  if test "$libc_cv_i386_kernel_atomics" != yes; then
++    AC_MSG_ERROR([PC-98 Linux i386 atomic ABI version 1 is required])
++  fi
++  AC_DEFINE(HAVE_I386_KERNEL_ATOMICS)
++else
++  if test "$enable_i386_kernel_atomics" = yes; then
++    AC_MSG_ERROR([--enable-i386-kernel-atomics is only valid for an exact i386 build])
++  fi
++  LIBC_COMPILER_BUILTIN_INLINED(
++    [__sync_val_compare_and_swap],
++    [int a, b, c; __sync_val_compare_and_swap (&a, b, c);],
++    [-O0],
++    [libc_cv_unsupported_i386=no],
++    [AC_MSG_ERROR([
+ *** Building with -march=i386/-mcpu=i386 is not supported.
+ *** Please use host i786, i686, i586, or i486.
+ *** For example: /source/glibc/configure CFLAGS='-O2 -march=i686' ...])])
++fi
+ 
+ dnl Check if linker can convert "movl main@GOT(%ebx), %eax" to
+ dnl "leal main@GOTOFF(%ebx), %eax" for static PIE.
+diff --git a/sysdeps/i386/i386-kernel-atomic/dl-tlsdesc.S b/sysdeps/i386/i386-kernel-atomic/dl-tlsdesc.S
+new file mode 100644
+index 00000000..7bb8ed3b
+--- /dev/null
++++ b/sysdeps/i386/i386-kernel-atomic/dl-tlsdesc.S
+@@ -0,0 +1,95 @@
++/* Thread-local storage handling in the ELF dynamic linker.  i386 version.
++   Copyright (C) 2004-2025 Free Software Foundation, Inc.
++   This file is part of the GNU C Library.
++
++   The GNU C Library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU Lesser General Public
++   License as published by the Free Software Foundation; either
++   version 2.1 of the License, or (at your option) any later version.
++
++   The GNU C Library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   Lesser General Public License for more details.
++
++   You should have received a copy of the GNU Lesser General Public
++   License along with the GNU C Library; if not, see
++   <https://www.gnu.org/licenses/>.  */
++
++#include <sysdep.h>
++#include <tls.h>
++#include <cpu-features-offsets.h>
++#include <features-offsets.h>
++#include "tlsdesc.h"
++
++#ifndef DL_STACK_ALIGNMENT
++/* Due to GCC bug:
++
++   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=58066
++
++   __tls_get_addr may be called with 4-byte stack alignment.  Although
++   this bug has been fixed in GCC 4.9.4, 5.3 and 6, we can't assume
++   that stack will be always aligned at 16 bytes.  */
++# define DL_STACK_ALIGNMENT 4
++#endif
++
++/* True if _dl_tlsdesc_dynamic should align stack for STATE_SAVE or align
++   stack to MINIMUM_ALIGNMENT bytes before calling ___tls_get_addr.  */
++#define DL_RUNTIME_RESOLVE_REALIGN_STACK \
++  (STATE_SAVE_ALIGNMENT > DL_STACK_ALIGNMENT \
++   || MINIMUM_ALIGNMENT > DL_STACK_ALIGNMENT)
++
++	.text
++
++     /* This function is used to compute the TP offset for symbols in
++	Static TLS, i.e., whose TP offset is the same for all
++	threads.
++
++	The incoming %eax points to the TLS descriptor, such that
++	0(%eax) points to _dl_tlsdesc_return itself, and 4(%eax) holds
++	the TP offset of the symbol corresponding to the object
++	denoted by the argument.  */
++
++	.hidden _dl_tlsdesc_return
++	.global	_dl_tlsdesc_return
++	.type	_dl_tlsdesc_return,@function
++	cfi_startproc
++	.align 16
++_dl_tlsdesc_return:
++	movl	4(%eax), %eax
++	ret
++	cfi_endproc
++	.size	_dl_tlsdesc_return, .-_dl_tlsdesc_return
++
++     /* This function is used for undefined weak TLS symbols, for
++	which the base address (i.e., disregarding any addend) should
++	resolve to NULL.
++
++	%eax points to the TLS descriptor, such that 0(%eax) points to
++	_dl_tlsdesc_undefweak itself, and 4(%eax) holds the addend.
++	We return the addend minus the TP, such that, when the caller
++	adds TP, it gets the addend back.  If that's zero, as usual,
++	that's most likely a NULL pointer.  */
++
++	.hidden _dl_tlsdesc_undefweak
++	.global	_dl_tlsdesc_undefweak
++	.type	_dl_tlsdesc_undefweak,@function
++	cfi_startproc
++	.align 16
++_dl_tlsdesc_undefweak:
++	movl	4(%eax), %eax
++	subl	%gs:0, %eax
++	ret
++	cfi_endproc
++	.size	_dl_tlsdesc_undefweak, .-_dl_tlsdesc_undefweak
++
++#ifdef SHARED
++# define USE_FNSAVE
++# define MINIMUM_ALIGNMENT	4
++# define STATE_SAVE_ALIGNMENT	4
++# define _dl_tlsdesc_dynamic	_dl_tlsdesc_dynamic_fnsave
++# include "dl-tlsdesc-dynamic.h"
++# undef _dl_tlsdesc_dynamic
++# undef MINIMUM_ALIGNMENT
++# undef USE_FNSAVE
++#endif /* SHARED */
+diff --git a/sysdeps/i386/i386-kernel-atomic/isa.h b/sysdeps/i386/i386-kernel-atomic/isa.h
+new file mode 100644
+index 00000000..7e553784
+--- /dev/null
++++ b/sysdeps/i386/i386-kernel-atomic/isa.h
+@@ -0,0 +1,8 @@
++/* Minimum ISA for the genuine Intel 80386 glibc port.  */
++
++#ifndef _ISA_H
++#define _ISA_H
++
++#define MINIMUM_ISA 386
++
++#endif
+diff --git a/sysdeps/i386/i386-kernel-atomic/pthread_spin_trylock.S b/sysdeps/i386/i386-kernel-atomic/pthread_spin_trylock.S
+new file mode 100644
+index 00000000..7f4dd244
+--- /dev/null
++++ b/sysdeps/i386/i386-kernel-atomic/pthread_spin_trylock.S
+@@ -0,0 +1,26 @@
++/* pthread_spin_trylock for a genuine Intel 80386.
++   A memory XCHG is implicitly locked and is available on the 80386.  */
++
++#include <sysdep.h>
++#include <errno.h>
++#include <shlib-compat.h>
++
++ENTRY (__pthread_spin_trylock)
++	movl	4(%esp), %edx
++	xorl	%eax, %eax
++	xchgl	%eax, (%edx)
++	cmpl	$1, %eax
++	je	0f
++	movl	$EBUSY, %eax
++	ret
++0:
++	xorl	%eax, %eax
++	ret
++END (__pthread_spin_trylock)
++versioned_symbol (libc, __pthread_spin_trylock, pthread_spin_trylock,
++		  GLIBC_2_34)
++
++#if OTHER_SHLIB_COMPAT (libpthread, GLIBC_2_2, GLIBC_2_34)
++compat_symbol (libpthread, __pthread_spin_trylock, pthread_spin_trylock,
++	       GLIBC_2_2)
++#endif
+diff --git a/sysdeps/i386/nptl/pthread_spin_lock.S b/sysdeps/i386/nptl/pthread_spin_lock.S
+index 5b27fefc..53e42d8b 100644
+--- a/sysdeps/i386/nptl/pthread_spin_lock.S
++++ b/sysdeps/i386/nptl/pthread_spin_lock.S
+@@ -27,8 +27,14 @@ ENTRY (__pthread_spin_lock)
+ 	ret
+ 
+ 	.align	16
+-2:	rep
++2:
++#ifdef HAVE_I386_KERNEL_ATOMICS
++	/* PAUSE (REP NOP) is not implemented by the 80386.  */
+ 	nop
++#else
++	rep
++	nop
++#endif
+ 	cmpl	$0, 0(%eax)
+ 	jg	1b
+ 	jmp	2b
+diff --git a/sysdeps/i386/preconfigure b/sysdeps/i386/preconfigure
+index c8fefd1b..173162af 100644
+--- a/sysdeps/i386/preconfigure
++++ b/sysdeps/i386/preconfigure
+@@ -1,5 +1,6 @@
+ # preconfigure fragment for i386.
+ 
+ case "$machine" in
++i386)		base_machine=i386 machine=i386/i386-kernel-atomic ;;
+ i[4567]86)	base_machine=i386 machine=i386/$machine ;;
+ esac
+diff --git a/sysdeps/unix/sysv/linux/i386/arch-syscall.h b/sysdeps/unix/sysv/linux/i386/arch-syscall.h
+index 500ca1ec..531ba412 100644
+--- a/sysdeps/unix/sysv/linux/i386/arch-syscall.h
++++ b/sysdeps/unix/sysv/linux/i386/arch-syscall.h
+@@ -162,6 +162,7 @@
+ #define __NR_iopl 110
+ #define __NR_ioprio_get 290
+ #define __NR_ioprio_set 289
++#define __NR_i386_atomic 472
+ #define __NR_ipc 117
+ #define __NR_kcmp 349
+ #define __NR_kexec_load 283
+diff --git a/sysdeps/unix/sysv/linux/i386/i386-kernel-atomic/atomic-machine.h b/sysdeps/unix/sysv/linux/i386/i386-kernel-atomic/atomic-machine.h
+new file mode 100644
+index 00000000..8050ee1b
+--- /dev/null
++++ b/sysdeps/unix/sysv/linux/i386/i386-kernel-atomic/atomic-machine.h
+@@ -0,0 +1,561 @@
++/* Atomic operations for a genuine Intel 80386 on PC-98 Linux.
++   Copyright (C) 2018-2025 Free Software Foundation, Inc.
++   This file is part of the GNU C Library.
++
++   The GNU C Library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU Lesser General Public
++   License as published by the Free Software Foundation; either
++   version 2.1 of the License, or (at your option) any later version.
++
++   The GNU C Library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   Lesser General Public License for more details.
++
++   You should have received a copy of the GNU Lesser General Public
++   License along with the GNU C Library; if not, see
++   <https://www.gnu.org/licenses/>.  */
++
++#ifndef _X86_ATOMIC_MACHINE_H
++#define _X86_ATOMIC_MACHINE_H 1
++
++#include <stdint.h>
++#include <tls.h>			/* For tcbhead_t.  */
++#include <libc-pointer-arith.h>		/* For cast_to_integer.  */
++
++#define LOCK_PREFIX "lock;"
++
++#include <asm/i386_atomic.h>
++#include <arch-syscall.h>
++
++#ifndef HAVE_I386_KERNEL_ATOMICS
++# error exact-i386 glibc requires the PC-98 Linux kernel atomic ABI
++#endif
++
++void __atomic_link_error (void);
++
++#define USE_ATOMIC_COMPILER_BUILTINS	0
++
++static __inline__ __attribute__ ((__always_inline__, __noreturn__)) void
++__i386_kernel_atomic_failure (void)
++{
++  /* INT3 is available on the 80386.  A failure means that libc and the
++     running kernel have incompatible ABIs, so continuing would silently
++     violate NPTL's atomicity guarantees.  */
++  for (;;)
++    __asm __volatile ("int3");
++}
++
++static __inline__ __attribute__ ((__always_inline__)) uint32_t
++__i386_kernel_atomic (uint32_t operation, volatile void *address,
++		      uint32_t width, uint32_t expected, uint32_t value)
++{
++  struct i386_atomic_args args =
++    {
++      .version = I386_ATOMIC_ABI_VERSION,
++      .operation = operation,
++      .width = width,
++      .address = (uint32_t) (uintptr_t) address,
++      .expected = expected,
++      .value = value,
++      .observed = 0,
++      .reserved = 0
++    };
++  register long int status __asm ("eax") = __NR_i386_atomic;
++  register struct i386_atomic_args *argp __asm ("esi") = &args;
++
++  /* EBX carries syscall argument 1 but is also the i386 PIC GOT register.
++     Exchange it with the callee-saved ESI operand around INT 80h so this
++     helper is valid in libc.so, ld.so, static PIE, and non-PIC objects.  */
++  __asm __volatile ("xchgl %%ebx, %1\n\t"
++		    "int $0x80\n\t"
++		    "xchgl %%ebx, %1"
++		    : "+a" (status), "+S" (argp)
++		    :
++		    : "memory", "cc");
++  if (__builtin_expect (status != 0, 0))
++    __i386_kernel_atomic_failure ();
++  return args.observed;
++}
++
++#define __i386_kernel_atomic_val(mem, newval, oldval, operation) \
++  ({ __typeof (mem) __memp = (mem); \
++     uint32_t __observed = __i386_kernel_atomic \
++       ((operation), (volatile void *) __memp, sizeof (*__memp), \
++	(uint32_t) (uintptr_t) (oldval), \
++	(uint32_t) (uintptr_t) (newval)); \
++     (__typeof (*__memp)) (uintptr_t) __observed; })
++
++#ifdef __x86_64__
++# define __HAVE_64B_ATOMICS		1
++# define SP_REG				"rsp"
++# define SEG_REG			"fs"
++# define BR_CONSTRAINT			"q"
++# define IBR_CONSTRAINT			"iq"
++#else
++/* Since the Pentium, i386 CPUs have supported 64-bit atomics, but the
++   i386 psABI supplement provides only 4-byte alignment for uint64_t
++   inside structs, so it is currently not possible to use 64-bit
++   atomics on this platform.  */
++# define __HAVE_64B_ATOMICS		0
++# define SP_REG				"esp"
++# define SEG_REG			"gs"
++# define BR_CONSTRAINT			"r"
++# define IBR_CONSTRAINT			"ir"
++#endif
++#define ATOMIC_EXCHANGE_USES_CAS	0
++
++#define atomic_compare_and_exchange_val_acq(mem, newval, oldval) \
++  __i386_kernel_atomic_val (mem, newval, oldval, I386_ATOMIC_CMPXCHG)
++#define atomic_compare_and_exchange_bool_acq(mem, newval, oldval) \
++  (atomic_compare_and_exchange_val_acq (mem, newval, oldval) != (oldval))
++
++
++#define __arch_c_compare_and_exchange_val_8_acq(mem, newval, oldval) \
++  __i386_kernel_atomic_val (mem, newval, oldval, I386_ATOMIC_CMPXCHG)
++
++#define __arch_c_compare_and_exchange_val_16_acq(mem, newval, oldval) \
++  __i386_kernel_atomic_val (mem, newval, oldval, I386_ATOMIC_CMPXCHG)
++
++#define __arch_c_compare_and_exchange_val_32_acq(mem, newval, oldval) \
++  __i386_kernel_atomic_val (mem, newval, oldval, I386_ATOMIC_CMPXCHG)
++
++#ifdef __x86_64__
++# define __arch_c_compare_and_exchange_val_64_acq(mem, newval, oldval) \
++  ({ __typeof (*mem) ret;						      \
++     __asm __volatile ("cmpl $0, %%fs:%P5\n\t"				      \
++		       "je 0f\n\t"					      \
++		       "lock\n"						      \
++		       "0:\tcmpxchgq %q2, %1"				      \
++		       : "=a" (ret), "=m" (*mem)			      \
++		       : "q" ((int64_t) cast_to_integer (newval)),	      \
++			 "m" (*mem),					      \
++			 "0" ((int64_t) cast_to_integer (oldval)),	      \
++			 "i" (offsetof (tcbhead_t, multiple_threads)));	      \
++     ret; })
++# define do_exchange_and_add_val_64_acq(pfx, mem, value) 0
++# define do_add_val_64_acq(pfx, mem, value) do { } while (0)
++#else
++/* XXX We do not really need 64-bit compare-and-exchange.  At least
++   not in the moment.  Using it would mean causing portability
++   problems since not many other 32-bit architectures have support for
++   such an operation.  So don't define any code for now.  If it is
++   really going to be used the code below can be used on Intel Pentium
++   and later, but NOT on i486.  */
++# define __arch_c_compare_and_exchange_val_64_acq(mem, newval, oldval) \
++  ({ __typeof (*mem) ret = *(mem);					      \
++     __atomic_link_error ();						      \
++     ret = (newval);							      \
++     ret = (oldval);							      \
++     ret; })
++
++# define __arch_compare_and_exchange_val_64_acq(mem, newval, oldval)	      \
++  ({ __typeof (*mem) ret = *(mem);					      \
++     __atomic_link_error ();						      \
++     ret = (newval);							      \
++     ret = (oldval);							      \
++     ret; })
++
++# define do_exchange_and_add_val_64_acq(pfx, mem, value) \
++  ({ __typeof (value) __addval = (value);				      \
++     __typeof (*mem) __result;						      \
++     __typeof (mem) __memp = (mem);					      \
++     __typeof (*mem) __tmpval;						      \
++     __result = *__memp;						      \
++     do									      \
++       __tmpval = __result;						      \
++     while ((__result = pfx##_compare_and_exchange_val_64_acq		      \
++	     (__memp, __result + __addval, __result)) == __tmpval);	      \
++     __result; })
++
++# define do_add_val_64_acq(pfx, mem, value) \
++  {									      \
++    __typeof (value) __addval = (value);				      \
++    __typeof (mem) __memp = (mem);					      \
++    __typeof (*mem) __oldval = *__memp;					      \
++    __typeof (*mem) __tmpval;						      \
++    do									      \
++      __tmpval = __oldval;						      \
++    while ((__oldval = pfx##_compare_and_exchange_val_64_acq		      \
++	    (__memp, __oldval + __addval, __oldval)) == __tmpval);	      \
++  }
++#endif
++
++
++/* Note that we need no lock prefix.  */
++#define atomic_exchange_acq(mem, newvalue) \
++  ({ __typeof (*mem) result;						      \
++     if (sizeof (*mem) == 1)						      \
++       __asm __volatile ("xchgb %b0, %1"				      \
++			 : "=q" (result), "=m" (*mem)			      \
++			 : "0" (newvalue), "m" (*mem));			      \
++     else if (sizeof (*mem) == 2)					      \
++       __asm __volatile ("xchgw %w0, %1"				      \
++			 : "=r" (result), "=m" (*mem)			      \
++			 : "0" (newvalue), "m" (*mem));			      \
++     else if (sizeof (*mem) == 4)					      \
++       __asm __volatile ("xchgl %0, %1"					      \
++			 : "=r" (result), "=m" (*mem)			      \
++			 : "0" (newvalue), "m" (*mem));			      \
++     else if (__HAVE_64B_ATOMICS)					      \
++       __asm __volatile ("xchgq %q0, %1"				      \
++			 : "=r" (result), "=m" (*mem)			      \
++			 : "0" ((int64_t) cast_to_integer (newvalue)),        \
++			   "m" (*mem));					      \
++     else								      \
++       {								      \
++	 result = 0;							      \
++	 __atomic_link_error ();					      \
++       }								      \
++     result; })
++
++
++#define __arch_exchange_and_add_body(lock, pfx, mem, value) \
++  ({ __typeof (mem) __memp = (mem); \
++     __typeof (*__memp) __addval = (value); \
++     __typeof (*__memp) __result; \
++     _Static_assert (sizeof (*__memp) <= 4, \
++		     "64-bit atomics are unavailable on i386"); \
++     __result = (__typeof (*__memp)) (uintptr_t) __i386_kernel_atomic \
++       (I386_ATOMIC_XADD, (volatile void *) __memp, sizeof (*__memp), 0, \
++	(uint32_t) (uintptr_t) __addval); \
++     __result; })
++
++#define atomic_exchange_and_add(mem, value) \
++  __arch_exchange_and_add_body (LOCK_PREFIX, __arch, mem, value)
++
++#define __arch_exchange_and_add_cprefix \
++  "cmpl $0, %%" SEG_REG ":%P4\n\tje 0f\n\tlock\n0:\t"
++
++#define catomic_exchange_and_add(mem, value) \
++  __arch_exchange_and_add_body (__arch_exchange_and_add_cprefix, __arch_c,    \
++				mem, value)
++
++
++#define __arch_add_body(lock, pfx, apfx, mem, value) \
++  do {									      \
++    if (__builtin_constant_p (value) && (value) == 1)			      \
++      pfx##_increment (mem);						      \
++    else if (__builtin_constant_p (value) && (value) == -1)		      \
++      pfx##_decrement (mem);						      \
++    else if (sizeof (*mem) == 1)					      \
++      __asm __volatile (lock "addb %b1, %0"				      \
++			: "=m" (*mem)					      \
++			: IBR_CONSTRAINT (value), "m" (*mem),		      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (sizeof (*mem) == 2)					      \
++      __asm __volatile (lock "addw %w1, %0"				      \
++			: "=m" (*mem)					      \
++			: "ir" (value), "m" (*mem),			      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (sizeof (*mem) == 4)					      \
++      __asm __volatile (lock "addl %1, %0"				      \
++			: "=m" (*mem)					      \
++			: "ir" (value), "m" (*mem),			      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (__HAVE_64B_ATOMICS)					      \
++      __asm __volatile (lock "addq %q1, %0"				      \
++			: "=m" (*mem)					      \
++			: "ir" ((int64_t) cast_to_integer (value)),	      \
++			  "m" (*mem),					      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else								      \
++      do_add_val_64_acq (apfx, (mem), (value));				      \
++  } while (0)
++
++# define atomic_add(mem, value) \
++  __arch_add_body (LOCK_PREFIX, atomic, __arch, mem, value)
++
++#define __arch_add_cprefix \
++  "cmpl $0, %%" SEG_REG ":%P3\n\tje 0f\n\tlock\n0:\t"
++
++#define catomic_add(mem, value) \
++  __arch_add_body (__arch_add_cprefix, atomic, __arch_c, mem, value)
++
++
++#define atomic_add_negative(mem, value) \
++  ({ unsigned char __result;						      \
++     if (sizeof (*mem) == 1)						      \
++       __asm __volatile (LOCK_PREFIX "addb %b2, %0; sets %1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : IBR_CONSTRAINT (value), "m" (*mem));		      \
++     else if (sizeof (*mem) == 2)					      \
++       __asm __volatile (LOCK_PREFIX "addw %w2, %0; sets %1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "ir" (value), "m" (*mem));			      \
++     else if (sizeof (*mem) == 4)					      \
++       __asm __volatile (LOCK_PREFIX "addl %2, %0; sets %1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "ir" (value), "m" (*mem));			      \
++     else if (__HAVE_64B_ATOMICS)					      \
++       __asm __volatile (LOCK_PREFIX "addq %q2, %0; sets %1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "ir" ((int64_t) cast_to_integer (value)),	      \
++			   "m" (*mem));					      \
++     else								      \
++       __atomic_link_error ();						      \
++     __result; })
++
++
++#define atomic_add_zero(mem, value) \
++  ({ unsigned char __result;						      \
++     if (sizeof (*mem) == 1)						      \
++       __asm __volatile (LOCK_PREFIX "addb %b2, %0; setz %1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : IBR_CONSTRAINT (value), "m" (*mem));		      \
++     else if (sizeof (*mem) == 2)					      \
++       __asm __volatile (LOCK_PREFIX "addw %w2, %0; setz %1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "ir" (value), "m" (*mem));			      \
++     else if (sizeof (*mem) == 4)					      \
++       __asm __volatile (LOCK_PREFIX "addl %2, %0; setz %1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "ir" (value), "m" (*mem));			      \
++     else if (__HAVE_64B_ATOMICS)					      \
++       __asm __volatile (LOCK_PREFIX "addq %q2, %0; setz %1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "ir" ((int64_t) cast_to_integer (value)),	      \
++			   "m" (*mem));					      \
++     else								      \
++       __atomic_link_error ();					      \
++     __result; })
++
++
++#define __arch_increment_body(lock, pfx, mem) \
++  do {									      \
++    if (sizeof (*mem) == 1)						      \
++      __asm __volatile (lock "incb %b0"					      \
++			: "=m" (*mem)					      \
++			: "m" (*mem),					      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (sizeof (*mem) == 2)					      \
++      __asm __volatile (lock "incw %w0"					      \
++			: "=m" (*mem)					      \
++			: "m" (*mem),					      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (sizeof (*mem) == 4)					      \
++      __asm __volatile (lock "incl %0"					      \
++			: "=m" (*mem)					      \
++			: "m" (*mem),					      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (__HAVE_64B_ATOMICS)					      \
++      __asm __volatile (lock "incq %q0"					      \
++			: "=m" (*mem)					      \
++			: "m" (*mem),					      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else								      \
++      do_add_val_64_acq (pfx, mem, 1);					      \
++  } while (0)
++
++#define atomic_increment(mem) __arch_increment_body (LOCK_PREFIX, __arch, mem)
++
++#define __arch_increment_cprefix \
++  "cmpl $0, %%" SEG_REG ":%P2\n\tje 0f\n\tlock\n0:\t"
++
++#define catomic_increment(mem) \
++  __arch_increment_body (__arch_increment_cprefix, __arch_c, mem)
++
++
++#define atomic_increment_and_test(mem) \
++  ({ unsigned char __result;						      \
++     if (sizeof (*mem) == 1)						      \
++       __asm __volatile (LOCK_PREFIX "incb %b0; sete %b1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "m" (*mem));					      \
++     else if (sizeof (*mem) == 2)					      \
++       __asm __volatile (LOCK_PREFIX "incw %w0; sete %w1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "m" (*mem));					      \
++     else if (sizeof (*mem) == 4)					      \
++       __asm __volatile (LOCK_PREFIX "incl %0; sete %1"			      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "m" (*mem));					      \
++     else if (__HAVE_64B_ATOMICS)					      \
++       __asm __volatile (LOCK_PREFIX "incq %q0; sete %1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "m" (*mem));					      \
++     else								      \
++       __atomic_link_error ();					      \
++     __result; })
++
++
++#define __arch_decrement_body(lock, pfx, mem) \
++  do {									      \
++    if (sizeof (*mem) == 1)						      \
++      __asm __volatile (lock "decb %b0"					      \
++			: "=m" (*mem)					      \
++			: "m" (*mem),					      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (sizeof (*mem) == 2)					      \
++      __asm __volatile (lock "decw %w0"					      \
++			: "=m" (*mem)					      \
++			: "m" (*mem),					      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (sizeof (*mem) == 4)					      \
++      __asm __volatile (lock "decl %0"					      \
++			: "=m" (*mem)					      \
++			: "m" (*mem),					      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (__HAVE_64B_ATOMICS)					      \
++      __asm __volatile (lock "decq %q0"					      \
++			: "=m" (*mem)					      \
++			: "m" (*mem),					      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else								      \
++      do_add_val_64_acq (pfx, mem, -1);					      \
++  } while (0)
++
++#define atomic_decrement(mem) __arch_decrement_body (LOCK_PREFIX, __arch, mem)
++
++#define __arch_decrement_cprefix \
++  "cmpl $0, %%" SEG_REG ":%P2\n\tje 0f\n\tlock\n0:\t"
++
++#define catomic_decrement(mem) \
++  __arch_decrement_body (__arch_decrement_cprefix, __arch_c, mem)
++
++
++#define atomic_decrement_and_test(mem) \
++  ({ unsigned char __result;						      \
++     if (sizeof (*mem) == 1)						      \
++       __asm __volatile (LOCK_PREFIX "decb %b0; sete %1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "m" (*mem));					      \
++     else if (sizeof (*mem) == 2)					      \
++       __asm __volatile (LOCK_PREFIX "decw %w0; sete %1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "m" (*mem));					      \
++     else if (sizeof (*mem) == 4)					      \
++       __asm __volatile (LOCK_PREFIX "decl %0; sete %1"			      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "m" (*mem));					      \
++     else								      \
++       __asm __volatile (LOCK_PREFIX "decq %q0; sete %1"		      \
++			 : "=m" (*mem), "=qm" (__result)		      \
++			 : "m" (*mem));					      \
++     __result; })
++
++
++#define atomic_bit_set(mem, bit) \
++  do {									      \
++    if (sizeof (*mem) == 1)						      \
++      __asm __volatile (LOCK_PREFIX "orb %b2, %0"			      \
++			: "=m" (*mem)					      \
++			: "m" (*mem), IBR_CONSTRAINT (1L << (bit)));	      \
++    else if (sizeof (*mem) == 2)					      \
++      __asm __volatile (LOCK_PREFIX "orw %w2, %0"			      \
++			: "=m" (*mem)					      \
++			: "m" (*mem), "ir" (1L << (bit)));		      \
++    else if (sizeof (*mem) == 4)					      \
++      __asm __volatile (LOCK_PREFIX "orl %2, %0"			      \
++			: "=m" (*mem)					      \
++			: "m" (*mem), "ir" (1L << (bit)));		      \
++    else if (__builtin_constant_p (bit) && (bit) < 32)			      \
++      __asm __volatile (LOCK_PREFIX "orq %2, %0"			      \
++			: "=m" (*mem)					      \
++			: "m" (*mem), "i" (1L << (bit)));		      \
++    else if (__HAVE_64B_ATOMICS)					      \
++      __asm __volatile (LOCK_PREFIX "orq %q2, %0"			      \
++			: "=m" (*mem)					      \
++			: "m" (*mem), "r" (1UL << (bit)));		      \
++    else								      \
++      __atomic_link_error ();						      \
++  } while (0)
++
++
++#define atomic_bit_test_set(mem, bit) \
++  ({ unsigned char __result;						      \
++     if (sizeof (*mem) == 1)						      \
++       __asm __volatile (LOCK_PREFIX "btsb %3, %1; setc %0"		      \
++			 : "=q" (__result), "=m" (*mem)			      \
++			 : "m" (*mem), IBR_CONSTRAINT (bit));		      \
++     else if (sizeof (*mem) == 2)					      \
++       __asm __volatile (LOCK_PREFIX "btsw %3, %1; setc %0"		      \
++			 : "=q" (__result), "=m" (*mem)			      \
++			 : "m" (*mem), "ir" (bit));			      \
++     else if (sizeof (*mem) == 4)					      \
++       __asm __volatile (LOCK_PREFIX "btsl %3, %1; setc %0"		      \
++			 : "=q" (__result), "=m" (*mem)			      \
++			 : "m" (*mem), "ir" (bit));			      \
++     else if (__HAVE_64B_ATOMICS)					      \
++       __asm __volatile (LOCK_PREFIX "btsq %3, %1; setc %0"		      \
++			 : "=q" (__result), "=m" (*mem)			      \
++			 : "m" (*mem), "ir" (bit));			      \
++     else							      	      \
++       __atomic_link_error ();					      \
++     __result; })
++
++
++#define __arch_and_body(lock, mem, mask) \
++  do {									      \
++    if (sizeof (*mem) == 1)						      \
++      __asm __volatile (lock "andb %b1, %0"				      \
++			: "=m" (*mem)					      \
++			: IBR_CONSTRAINT (mask), "m" (*mem),		      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (sizeof (*mem) == 2)					      \
++      __asm __volatile (lock "andw %w1, %0"				      \
++			: "=m" (*mem)					      \
++			: "ir" (mask), "m" (*mem),			      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (sizeof (*mem) == 4)					      \
++      __asm __volatile (lock "andl %1, %0"				      \
++			: "=m" (*mem)					      \
++			: "ir" (mask), "m" (*mem),			      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (__HAVE_64B_ATOMICS)					      \
++      __asm __volatile (lock "andq %q1, %0"				      \
++			: "=m" (*mem)					      \
++			: "ir" (mask), "m" (*mem),			      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else								      \
++      __atomic_link_error ();						      \
++  } while (0)
++
++#define __arch_cprefix \
++  "cmpl $0, %%" SEG_REG ":%P3\n\tje 0f\n\tlock\n0:\t"
++
++#define atomic_and(mem, mask) __arch_and_body (LOCK_PREFIX, mem, mask)
++
++#define catomic_and(mem, mask) __arch_and_body (__arch_cprefix, mem, mask)
++
++
++#define __arch_or_body(lock, mem, mask) \
++  do {									      \
++    if (sizeof (*mem) == 1)						      \
++      __asm __volatile (lock "orb %b1, %0"				      \
++			: "=m" (*mem)					      \
++			: IBR_CONSTRAINT (mask), "m" (*mem),		      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (sizeof (*mem) == 2)					      \
++      __asm __volatile (lock "orw %w1, %0"				      \
++			: "=m" (*mem)					      \
++			: "ir" (mask), "m" (*mem),			      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (sizeof (*mem) == 4)					      \
++      __asm __volatile (lock "orl %1, %0"				      \
++			: "=m" (*mem)					      \
++			: "ir" (mask), "m" (*mem),			      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else if (__HAVE_64B_ATOMICS)					      \
++      __asm __volatile (lock "orq %q1, %0"				      \
++			: "=m" (*mem)					      \
++			: "ir" (mask), "m" (*mem),			      \
++			  "i" (offsetof (tcbhead_t, multiple_threads)));      \
++    else								      \
++      __atomic_link_error ();						      \
++  } while (0)
++
++#define atomic_or(mem, mask) __arch_or_body (LOCK_PREFIX, mem, mask)
++
++#define catomic_or(mem, mask) __arch_or_body (__arch_cprefix, mem, mask)
++
++/* We don't use mfence because it is supposedly slower due to having to
++   provide stronger guarantees (e.g., regarding self-modifying code).  */
++#define atomic_full_barrier() \
++    __asm __volatile (LOCK_PREFIX "orl $0, (%%" SP_REG ")" ::: "memory")
++#define atomic_read_barrier() __asm ("" ::: "memory")
++#define atomic_write_barrier() __asm ("" ::: "memory")
++
++#define atomic_spin_nop() __asm __volatile ("" ::: "memory")
++
++#endif /* atomic-machine.h */
+diff --git a/sysdeps/x86/cpu-features.c b/sysdeps/x86/cpu-features.c
+index 27abaca8..505a7de1 100644
+--- a/sysdeps/x86/cpu-features.c
++++ b/sysdeps/x86/cpu-features.c
+@@ -764,11 +764,18 @@ init_cpu_features (struct cpu_features *cpu_features)
+ 
+   cpu_features->cachesize_non_temporal_divisor = 4;
+ #if !HAS_CPUID
++# ifdef HAVE_I386_KERNEL_ATOMICS
++  /* The exact-i386 port must not execute, or even decode speculatively,
++     CPUID on an 80386.  It also has no later x86 feature to discover.  */
++  kind = arch_kind_other;
++  goto no_cpuid;
++# else
+   if (__get_cpuid_max (0, 0) == 0)
+     {
+       kind = arch_kind_other;
+       goto no_cpuid;
+     }
++# endif
+ #endif
+ 
+   __cpuid (0, cpu_features->basic.max_cpuid, ebx, ecx, edx);
+@@ -1266,6 +1273,13 @@ no_cpuid:
+ 	       TUNABLE_CALLBACK (set_x86_shstk));
+ #endif
+ 
++#ifdef HAVE_I386_KERNEL_ATOMICS
++# ifdef SHARED
++  /* FNSAVE/FRSTOR are available on an 80386 with an x87.  The other TLS
++     descriptor variants contain instructions introduced after i386.  */
++  GLRO(dl_x86_tlsdesc_dynamic) = _dl_tlsdesc_dynamic_fnsave;
++# endif
++#else
+   if (MINIMUM_X86_ISA_LEVEL >= AVX_X86_ISA_LEVEL
+       || (GLRO(dl_x86_cpu_features).xsave_state_size != 0))
+     {
+@@ -1304,6 +1318,7 @@ no_cpuid:
+ # endif
+ #endif
+     }
++#endif
+ 
+ #ifdef SHARED
+ # ifdef __x86_64__
+diff --git a/sysdeps/x86/dl-diagnostics-cpu.c b/sysdeps/x86/dl-diagnostics-cpu.c
+index 7d037360..a633ee05 100644
+--- a/sysdeps/x86/dl-diagnostics-cpu.c
++++ b/sysdeps/x86/dl-diagnostics-cpu.c
+@@ -20,15 +20,20 @@
+ 
+ #include <array_length.h>
+ #include <cpu-features.h>
++#ifndef HAVE_I386_KERNEL_ATOMICS
+ #include <cpuid.h>
+ #include <dl-iterate_cpu.h>
++#endif
+ #include <ldsodefs.h>
+ #include <stdbool.h>
+ #include <string.h>
+ #include <sysdep.h>
+ 
+-/* The generic CPUID dumping code.  */
++/* The generic CPUID dumping code.  It is omitted entirely from the exact
++   i386 loader because executing CPUID raises #UD on an 80386.  */
++#ifndef HAVE_I386_KERNEL_ATOMICS
+ static void _dl_diagnostics_cpuid (void);
++#endif
+ 
+ static void
+ print_cpu_features_value (const char *label, uint64_t value)
+@@ -134,9 +139,12 @@ _dl_diagnostics_cpu (void)
+ 	  == sizeof (*cpu_features),
+       "last cpu_features field has been printed");
+ 
++#ifndef HAVE_I386_KERNEL_ATOMICS
+   _dl_diagnostics_cpuid ();
++#endif
+ }
+ 
++#ifndef HAVE_I386_KERNEL_ATOMICS
+ /* The following code implements a generic CPUID dumper that tries to
+    gather CPUID data without knowing about CPUID implementation
+    details.  */
+@@ -507,3 +515,4 @@ _dl_diagnostics_cpuid (void)
+          &ccd[!(dic.processor_index & 1)]);
+     }
+ }
++#endif /* !HAVE_I386_KERNEL_ATOMICS */
+diff --git a/sysdeps/x86/include/cpu-features.h b/sysdeps/x86/include/cpu-features.h
+index 9c485d38..73cecfd4 100644
+--- a/sysdeps/x86/include/cpu-features.h
++++ b/sysdeps/x86/include/cpu-features.h
+@@ -1011,6 +1011,10 @@ extern void _dl_cet_setup_features (unsigned int)
+ # define HAS_CPUID 0
+ # define HAS_I586 HAS_ARCH_FEATURE (I586)
+ # define HAS_I686 HAS_ARCH_FEATURE (I686)
++#elif defined HAVE_I386_KERNEL_ATOMICS
++# define HAS_CPUID 0
++# define HAS_I586 0
++# define HAS_I686 0
+ #else
+ # define HAS_CPUID 1
+ # define HAS_I586 1
+-- 
+2.47.3
+

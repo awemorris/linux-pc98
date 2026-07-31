@@ -1,0 +1,146 @@
+From 410070008e7aff409822045f911aeff3d5e1dac7 Mon Sep 17 00:00:00 2001
+From: hayao <shun819.mail@gmail.com>
+Date: Tue, 28 Jul 2026 00:31:46 +0900
+Subject: [PATCH 12/16] x86/pc9800: add the built-in IDE interface
+
+---
+ drivers/ata/Kconfig       | 11 +++++
+ drivers/ata/Makefile      |  1 +
+ drivers/ata/pata_pc9800.c | 91 +++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 103 insertions(+)
+ create mode 100644 drivers/ata/pata_pc9800.c
+
+diff --git a/drivers/ata/Kconfig b/drivers/ata/Kconfig
+index e00536b49552..0fb58c64e8d7 100644
+--- a/drivers/ata/Kconfig
++++ b/drivers/ata/Kconfig
+@@ -1100,6 +1100,17 @@ config PATA_PLATFORM
+ 
+ 	  If unsure, say N.
+ 
++config PATA_PC9800
++	bool "NEC PC-9800 built-in IDE support"
++	depends on X86_PC9800
++	select PATA_PLATFORM
++	default y
++	help
++	  This option enables the PC-9800's own IDE interface: the ATA taskfile
++	  at I/O 0x640 with the registers two bytes apart, control at 0x74C, and
++	  the interface-select register at 0x432. Say Y to boot from a real disk
++	  on a PC-9800.
++
+ config PATA_OF_PLATFORM
+ 	tristate "OpenFirmware platform device PATA support"
+ 	depends on OF
+diff --git a/drivers/ata/Makefile b/drivers/ata/Makefile
+index 20e6645ab737..9e275e490a2b 100644
+--- a/drivers/ata/Makefile
++++ b/drivers/ata/Makefile
+@@ -106,6 +106,7 @@ obj-$(CONFIG_PATA_NS87410)	+= pata_ns87410.o
+ obj-$(CONFIG_PATA_OPTI)		+= pata_opti.o
+ obj-$(CONFIG_PATA_PCMCIA)	+= pata_pcmcia.o
+ obj-$(CONFIG_PATA_PLATFORM)	+= pata_platform.o
++obj-$(CONFIG_PATA_PC9800)	+= pata_pc9800.o
+ obj-$(CONFIG_PATA_OF_PLATFORM)	+= pata_of_platform.o
+ obj-$(CONFIG_PATA_RB532)	+= pata_rb532_cf.o
+ obj-$(CONFIG_PATA_RZ1000)	+= pata_rz1000.o
+diff --git a/drivers/ata/pata_pc9800.c b/drivers/ata/pata_pc9800.c
+new file mode 100644
+index 000000000000..b5556adaf8db
+--- /dev/null
++++ b/drivers/ata/pata_pc9800.c
+@@ -0,0 +1,91 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * IDE (PATA) support for the NEC PC-9800's built-in interface.
++ *
++ * The taskfile is the usual ATA one, but at PC-98 addresses and with the
++ * registers two bytes apart: data 0x640, error/feature 0x642, ... command
++ * 0x64E, and device control / alternate status at 0x74C. Port 0x432 selects
++ * which of the two interfaces the taskfile window talks to; the built-in
++ * drives are on interface 0, so it is set once here.
++ *
++ * The data register is 16 bits wide only, hence use16bit — a 32-bit access
++ * would spill into the error register.
++ *
++ * Everything else is the generic platform PATA path, so this driver is just
++ * the PC-98 addressing plus that bank write.
++ */
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/io.h>
++#include <scsi/scsi_host.h>
++#include <linux/libata.h>
++#include <linux/platform_device.h>
++#include <linux/ata_platform.h>
++
++#define DRV_NAME	"pata_pc9800"
++
++#define PC98_IDE_BANK	0x432		/* interface select */
++#define PC98_IDE_CMD	0x640		/* taskfile base, registers 2 bytes apart */
++#define PC98_IDE_CTL	0x74c		/* device control / altstatus */
++#define PC98_IDE_IRQ	9
++
++static int poll;
++module_param(poll, int, 0);
++MODULE_PARM_DESC(poll, "Use PIO polling instead of IRQ 9");
++
++static const struct scsi_host_template pc9800_sht = {
++	ATA_PIO_SHT(DRV_NAME),
++};
++
++static struct resource pc9800_res[] = {
++	{ .start = PC98_IDE_CMD, .end = PC98_IDE_CMD + 15, .flags = IORESOURCE_IO },
++	{ .start = PC98_IDE_CTL, .end = PC98_IDE_CTL,      .flags = IORESOURCE_IO },
++	{ .start = PC98_IDE_IRQ, .end = PC98_IDE_IRQ,      .flags = IORESOURCE_IRQ },
++};
++
++static int pc9800_ide_probe(struct platform_device *pdev)
++{
++	outb(0, PC98_IDE_BANK);		/* talk to the built-in interface */
++
++	return __pata_platform_probe(&pdev->dev, &pc9800_res[0], &pc9800_res[1],
++				     poll ? NULL : &pc9800_res[2],
++				     1 /* registers are 2 bytes apart */,
++				     ATA_PIO4, &pc9800_sht, true /* 16-bit data */);
++}
++
++static struct platform_driver pc9800_ide_driver = {
++	.probe	= pc9800_ide_probe,
++	.driver	= {
++		.name = DRV_NAME,
++	},
++};
++
++static struct platform_device *pc9800_ide_pdev;
++
++static int __init pc9800_ide_init(void)
++{
++	int ret;
++
++	ret = platform_driver_register(&pc9800_ide_driver);
++	if (ret)
++		return ret;
++
++	pc9800_ide_pdev = platform_device_register_simple(DRV_NAME, -1, NULL, 0);
++	if (IS_ERR(pc9800_ide_pdev)) {
++		platform_driver_unregister(&pc9800_ide_driver);
++		return PTR_ERR(pc9800_ide_pdev);
++	}
++	return 0;
++}
++
++static void __exit pc9800_ide_exit(void)
++{
++	platform_device_unregister(pc9800_ide_pdev);
++	platform_driver_unregister(&pc9800_ide_driver);
++}
++
++module_init(pc9800_ide_init);
++module_exit(pc9800_ide_exit);
++
++MODULE_DESCRIPTION("NEC PC-9800 built-in IDE driver");
++MODULE_LICENSE("GPL");
+-- 
+2.54.0
+

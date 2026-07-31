@@ -1,0 +1,101 @@
+From dada5093d225f2ce152abbb875c5cea7e73916f2 Mon Sep 17 00:00:00 2001
+From: hayao <shun819.mail@gmail.com>
+Date: Mon, 27 Jul 2026 22:38:17 +0900
+Subject: [PATCH 08/16] x86/pc9800: pace serial TX on TxRDY so it works on real
+ hardware
+
+---
+ drivers/tty/serial/pc98_8251.c | 51 +++++++++++++++++++++++++++-------
+ 1 file changed, 41 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/tty/serial/pc98_8251.c b/drivers/tty/serial/pc98_8251.c
+index 0db7c58b19a6..dd99ecb6ef5f 100644
+--- a/drivers/tty/serial/pc98_8251.c
++++ b/drivers/tty/serial/pc98_8251.c
+@@ -8,12 +8,13 @@
+  * 0x75). RX interrupts would need the PC-98 sysport (0x35) and PIC gating; to
+  * keep bring-up simple and robust this driver polls RX with a timer instead.
+  *
+- * NP2kai quirk this driver is built around: its TxRDY status bit drops after
+- * the first transmitted byte and never returns (a write-success polarity bug
+- * in the emulator's pty backend), yet the byte still reaches the host. So TX
+- * never gates on TxRDY — it writes blind. RX polling only works once 8253
+- * ch2 has been programmed (that arms the emulator's receive pump), which
+- * set_termios does via the baud divisor.
++ * NP2kai quirk this driver copes with: its TxRDY status bit drops after the
++ * first transmitted byte and never returns (a write-success polarity bug in
++ * the emulator's pty backend), yet the byte still reaches the host. TX pings
++ * TxRDY with a bounded wait (correct pacing on real hardware, which has no TX
++ * FIFO); the first timeout latches polling off so NP2kai then writes blind.
++ * RX polling only works once 8253 ch2 has been programmed (that arms the
++ * emulator's receive pump), which set_termios does via the baud divisor.
+  */
+ #include <linux/console.h>
+ #include <linux/init.h>
+@@ -76,11 +77,37 @@ static void pc98_8251_init_chip(void)
+ 	     PC98_SIO_CMD);				/* command */
+ }
+ 
++/*
++ * Wait for TxRDY before loading the next byte. Real hardware needs this pacing
++ * (the uPD8251 has no TX FIFO; writing while busy drops the byte). NP2kai's
++ * TxRDY is stuck low after the first byte (write-success polarity bug), so the
++ * poll would never return there — the first timeout latches it off and every
++ * later byte goes out blind, which is what NP2kai wants anyway.
++ */
++static bool pc98_tx_poll_ok = true;
++
++static void pc98_8251_tx_wait(void)
++{
++	unsigned int timeout = 200000;
++
++	if (!pc98_tx_poll_ok)
++		return;
++	while (!(inb(PC98_SIO_CMD) & ST_TXRDY)) {
++		if (!--timeout) {
++			pc98_tx_poll_ok = false;	/* broken (NP2kai): go blind */
++			return;
++		}
++		cpu_relax();
++	}
++}
++
+ /* ---- uart_ops ---- */
+ 
+ static unsigned int pc98_8251_tx_empty(struct uart_port *port)
+ {
+-	return TIOCSER_TEMT;	/* blind TX: always claim drained */
++	if (pc98_tx_poll_ok)
++		return (inb(PC98_SIO_CMD) & ST_TXEMPTY) ? TIOCSER_TEMT : 0;
++	return TIOCSER_TEMT;	/* NP2kai: TxEMPTY unusable, claim drained */
+ }
+ 
+ static void pc98_8251_set_mctrl(struct uart_port *port, unsigned int mctrl)
+@@ -100,8 +127,9 @@ static void pc98_8251_tx_chars(struct uart_port *port)
+ {
+ 	u8 ch;
+ 
+-	/* Never gate on TxRDY (NP2kai quirk); push the whole fifo out. */
+-	uart_port_tx(port, ch, true, outb(ch, PC98_SIO_DATA));
++	/* Pace on TxRDY when it works (real HW); blind on NP2kai (see tx_wait). */
++	uart_port_tx(port, ch, true,
++		     ({ pc98_8251_tx_wait(); outb(ch, PC98_SIO_DATA); }));
+ }
+ 
+ static void pc98_8251_start_tx(struct uart_port *port)
+@@ -209,8 +237,11 @@ static const struct uart_ops pc98_8251_ops = {
+ 
+ static void pc98_8251_console_putchar(struct uart_port *port, unsigned char c)
+ {
+-	if (c == '\n')
++	if (c == '\n') {
++		pc98_8251_tx_wait();
+ 		outb('\r', PC98_SIO_DATA);
++	}
++	pc98_8251_tx_wait();
+ 	outb(c, PC98_SIO_DATA);
+ }
+ 
+-- 
+2.54.0
+

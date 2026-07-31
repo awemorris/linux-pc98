@@ -1,0 +1,56 @@
+From c28dbac41bf1d8fdb593ccbeed2d6d64f326461d Mon Sep 17 00:00:00 2001
+From: hayao <shun819.mail@gmail.com>
+Date: Mon, 27 Jul 2026 18:35:13 +0900
+Subject: [PATCH 04/16] x86/pc9800: put the 8259 PICs at their PC-9800 I/O
+ ports
+
+PC-9800's two 8259s are at I/O 0x00/0x02 and 0x08/0x0a with the slave
+cascaded into master IR7, not 0x20/0xa0 / IR2 as on the PC/AT. Without this
+init_8259A programs nonexistent ports, leaves the real PICs in their BIOS
+state, and the first local_irq_enable() in start_kernel takes a stray slave
+interrupt (vector 0x17) and panics before kmem_cache_init_late.
+---
+ arch/x86/include/asm/i8259.h | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/include/asm/i8259.h b/arch/x86/include/asm/i8259.h
+index c715097e92fd..b7ab3695e050 100644
+--- a/arch/x86/include/asm/i8259.h
++++ b/arch/x86/include/asm/i8259.h
+@@ -12,18 +12,31 @@ extern unsigned int cached_irq_mask;
+ #define cached_slave_mask	(__byte(1, cached_irq_mask))
+ 
+ /* i8259A PIC registers */
++#ifdef CONFIG_X86_PC9800
++/* NEC PC-9800: the two 8259s live at I/O 0x00/0x02 and 0x08/0x0a, and the
++ * slave cascades into master IR7 (not IR2 as on the PC/AT). */
++#define PIC_MASTER_CMD		0x00
++#define PIC_MASTER_IMR		0x02
++#define PIC_SLAVE_CMD		0x08
++#define PIC_SLAVE_IMR		0x0a
++#else
+ #define PIC_MASTER_CMD		0x20
+ #define PIC_MASTER_IMR		0x21
++#define PIC_SLAVE_CMD		0xa0
++#define PIC_SLAVE_IMR		0xa1
++#endif
+ #define PIC_MASTER_ISR		PIC_MASTER_CMD
+ #define PIC_MASTER_POLL		PIC_MASTER_ISR
+ #define PIC_MASTER_OCW3		PIC_MASTER_ISR
+-#define PIC_SLAVE_CMD		0xa0
+-#define PIC_SLAVE_IMR		0xa1
+ #define PIC_ELCR1		0x4d0
+ #define PIC_ELCR2		0x4d1
+ 
+ /* i8259A PIC related value */
++#ifdef CONFIG_X86_PC9800
++#define PIC_CASCADE_IR		7
++#else
+ #define PIC_CASCADE_IR		2
++#endif
+ #define MASTER_ICW4_DEFAULT	0x01
+ #define SLAVE_ICW4_DEFAULT	0x01
+ #define PIC_ICW4_AEOI		2
+-- 
+2.54.0
+

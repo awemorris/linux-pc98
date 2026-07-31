@@ -1,0 +1,37 @@
+From 88adb8497ba3aba7dc1fd292389936207e230377 Mon Sep 17 00:00:00 2001
+From: hayao <shun819.mail@gmail.com>
+Date: Mon, 27 Jul 2026 13:07:52 +0900
+Subject: [PATCH 01/16] x86/pc9800: add X86_PC9800 platform Kconfig symbol
+
+Compile-time NEC PC-9800 subarchitecture switch under the 32-bit extended
+platforms, depends on X86_32 and !SMP. No hardware support hangs off it yet;
+this is the anchor the rest of the port selects on.
+---
+ arch/x86/Kconfig | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
+index 7b9a7e8f39ac..7d71237729cc 100644
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
+@@ -608,6 +608,17 @@ config X86_GOLDFISH
+ 	  for Android development. Unless you are building for the Android
+ 	  Goldfish emulator say N here.
+ 
++config X86_PC9800
++	bool "NEC PC-9800 series"
++	depends on X86_EXTENDED_PLATFORM && X86_32 && !SMP
++	help
++	  Enable support for the NEC PC-9800 (PC-9801/PC-9821) series, a
++	  Japanese x86 architecture whose interrupt controller, timer, RTC,
++	  console and buses differ from the IBM PC/AT. This is a compile-time
++	  choice; a PC-9800 kernel does not boot on a PC/AT machine.
++
++	  If unsure, say N.
++
+ config X86_INTEL_CE
+ 	bool "CE4100 TV platform"
+ 	depends on PCI
+-- 
+2.54.0
+

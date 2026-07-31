@@ -1,0 +1,68 @@
+From ca0bfb0c199fa2e5f752f10cdcc1263e3cf27251 Mon Sep 17 00:00:00 2001
+From: hayao <shun819.mail@gmail.com>
+Date: Tue, 28 Jul 2026 01:31:50 +0900
+Subject: [PATCH 13/16] x86/pc9800: reset through I/O 0xF0
+
+---
+ arch/x86/kernel/Makefile |  1 +
+ arch/x86/kernel/pc9800.c | 36 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 37 insertions(+)
+ create mode 100644 arch/x86/kernel/pc9800.c
+
+diff --git a/arch/x86/kernel/Makefile b/arch/x86/kernel/Makefile
+index f7918980667a..7f4714dead05 100644
+--- a/arch/x86/kernel/Makefile
++++ b/arch/x86/kernel/Makefile
+@@ -85,6 +85,7 @@ obj-y				+= stacktrace.o
+ obj-y				+= cpu/
+ obj-y				+= acpi/
+ obj-y				+= reboot.o
++obj-$(CONFIG_X86_PC9800)	+= pc9800.o
+ obj-$(CONFIG_X86_MSR)		+= msr.o
+ obj-$(CONFIG_X86_CPUID)		+= cpuid.o
+ obj-$(CONFIG_PCI)		+= early-quirks.o
+diff --git a/arch/x86/kernel/pc9800.c b/arch/x86/kernel/pc9800.c
+new file mode 100644
+index 000000000000..dba14a5c1f0b
+--- /dev/null
++++ b/arch/x86/kernel/pc9800.c
+@@ -0,0 +1,36 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * NEC PC-9800 platform support.
++ *
++ * Reset: writing anything to I/O 0xF0 resets the CPU. None of the generic x86
++ * methods apply — 0x64 is not a keyboard controller here, there is no CF9
++ * register and no ACPI — so the restart hooks are replaced outright rather
++ * than added to the list native_machine_emergency_restart() walks.
++ */
++#include <linux/init.h>
++#include <linux/io.h>
++
++#include <asm/reboot.h>
++
++#define PC98_RESET_PORT	0xf0
++
++static void pc9800_emergency_restart(void)
++{
++	for (;;) {
++		outb(0, PC98_RESET_PORT);
++		native_halt();
++	}
++}
++
++static void pc9800_restart(char *cmd)
++{
++	pc9800_emergency_restart();
++}
++
++static int __init pc9800_reboot_init(void)
++{
++	machine_ops.restart = pc9800_restart;
++	machine_ops.emergency_restart = pc9800_emergency_restart;
++	return 0;
++}
++arch_initcall(pc9800_reboot_init);
+-- 
+2.54.0
+

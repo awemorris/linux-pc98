@@ -1,0 +1,110 @@
+From 493000834a320c5ba9711bbcbbf34c0c61fd6ae6 Mon Sep 17 00:00:00 2001
+From: hayao <shun819.mail@gmail.com>
+Date: Tue, 28 Jul 2026 01:31:51 +0900
+Subject: [PATCH 14/16] x86/pc9800: drive the GDC hardware cursor
+
+---
+ drivers/video/console/pc98con.c | 59 +++++++++++++++++++++++++++++++--
+ 1 file changed, 56 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/video/console/pc98con.c b/drivers/video/console/pc98con.c
+index 351a6756a6a6..063a74b0e23e 100644
+--- a/drivers/video/console/pc98con.c
++++ b/drivers/video/console/pc98con.c
+@@ -10,8 +10,10 @@
+  * bit7 G — so this driver keeps its own attribute encoding via con_build_attr
+  * and splits every VT cell across the two planes.
+  *
+- * The hardware cursor (master GDC CSRW) is not driven yet; the console is
+- * usable for output and, with the PC-98 keyboard driver, for a shell.
++ * The cursor is the master GDC's own: commands go to I/O 0x62, their parameters
++ * to 0x60. CSRW moves it, CSRFORM turns it on and off — and CSRFORM also
++ * carries the character cell height, which must be left alone or the whole text
++ * display changes shape, so it is taken from the BIOS work area.
+  */
+ #include <linux/console.h>
+ #include <linux/init.h>
+@@ -26,9 +28,20 @@
+ #define PC98_COLS	80
+ #define PC98_ROWS	25
+ 
++/* master (text) GDC */
++#define GDC_PARAM	0x60		/* command parameters */
++#define GDC_CMD		0x62		/* command / status */
++#define GDC_CSRW	0x49		/* set cursor address, 3 parameters */
++#define GDC_CSRFORM	0x4b		/* cursor shape/enable, 3 parameters */
++
++#define BIOS_CRT_RASTER	0x53b		/* BIOS work area: lines per row - 1 */
++
+ static u8 __iomem *pc98_cram;		/* char plane base (0xA0000) */
+ static u8 __iomem *pc98_aram;		/* attr plane base (0xA2000) */
+ static struct vc_data *pc98_display_fg;
++static u8 pc98_cursor_lr = 15;		/* lines per character row - 1 */
++static int pc98_cursor_on = -1;		/* -1 = never programmed */
++static unsigned int pc98_cursor_pos = ~0U;
+ 
+ static inline void pc98_put(unsigned int pos, u16 ca)
+ {
+@@ -52,8 +65,17 @@ static void pc98_fill(unsigned int pos, unsigned int count, u16 ca)
+ 
+ static const char *pc98con_startup(void)
+ {
++	u8 lr;
++
+ 	pc98_cram = (u8 __iomem *)(__ISA_IO_base + 0xa0000);
+ 	pc98_aram = (u8 __iomem *)(__ISA_IO_base + 0xa2000);
++
++	/* CSRFORM carries the cell height as well as the cursor shape, so reuse
++	 * whatever the firmware set up rather than imposing one. */
++	lr = readb((void __iomem *)(__ISA_IO_base + BIOS_CRT_RASTER)) & 0x1f;
++	if (lr >= 7)
++		pc98_cursor_lr = lr;
++
+ 	return "PC-98-TEXT";
+ }
+ 
+@@ -137,9 +159,40 @@ static bool pc98con_blank(struct vc_data *c, enum vesa_blank_mode blank,
+ 	return true;				/* console.c restores by redraw */
+ }
+ 
++static void pc98_gdc_cmd(u8 cmd, u8 p1, u8 p2, u8 p3)
++{
++	outb(cmd, GDC_CMD);
++	outb(p1, GDC_PARAM);
++	outb(p2, GDC_PARAM);
++	outb(p3, GDC_PARAM);
++}
++
++static void pc98_cursor_form(bool on)
++{
++	u8 lr = pc98_cursor_lr;
++
++	/* p1: display bit + lines per row, p2: blink rate low + top line,
++	 * p3: bottom line + blink rate high. A full-height blinking block. */
++	pc98_gdc_cmd(GDC_CSRFORM, (on ? 0x80 : 0x00) | lr, 0xc0, (lr << 3) | 0x03);
++}
++
++static void pc98_cursor_move(unsigned int pos)
++{
++	pc98_gdc_cmd(GDC_CSRW, pos & 0xff, (pos >> 8) & 0xff, (pos >> 16) & 0x03);
++}
++
+ static void pc98con_cursor(struct vc_data *c, bool enable)
+ {
+-	/* TODO: master GDC CSRW hardware cursor. */
++	unsigned int pos = c->state.y * PC98_COLS + c->state.x;
++
++	if (enable && pos != pc98_cursor_pos) {
++		pc98_cursor_move(pos);
++		pc98_cursor_pos = pos;
++	}
++	if (pc98_cursor_on != enable) {
++		pc98_cursor_form(enable);
++		pc98_cursor_on = enable;
++	}
+ }
+ 
+ static bool pc98con_scroll(struct vc_data *c, unsigned int t, unsigned int b,
+-- 
+2.54.0
+

@@ -1,0 +1,40 @@
+From 9f83322846b29caa185b14d22926f1235f67f23e Mon Sep 17 00:00:00 2001
+From: hayao <shun819.mail@gmail.com>
+Date: Mon, 27 Jul 2026 22:34:56 +0900
+Subject: [PATCH 07/16] x86/mm: don't free the low 1MB when the top-down PMD
+ probe fails
+
+---
+ arch/x86/mm/init.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/mm/init.c b/arch/x86/mm/init.c
+index eb503f53c319..1c6626666a5d 100644
+--- a/arch/x86/mm/init.c
++++ b/arch/x86/mm/init.c
+@@ -640,8 +640,20 @@ static void __init memory_map_top_down(unsigned long map_start,
+ 	 */
+ 	addr = memblock_phys_alloc_range(PMD_SIZE, PMD_SIZE, map_start,
+ 					 map_end);
+-	memblock_phys_free(addr, PMD_SIZE);
+-	real_end = addr + PMD_SIZE;
++	if (addr) {
++		memblock_phys_free(addr, PMD_SIZE);
++		real_end = addr + PMD_SIZE;
++	} else {
++		/*
++		 * No PMD_SIZE-aligned free block fits in [map_start, map_end)
++		 * (seen on tiny/fragmented low memory, e.g. an 8 MiB PC-9800).
++		 * Do NOT free the bogus addr 0 range: that would drop the
++		 * reserved low 1 MiB (incl. the read-only realmode trampoline),
++		 * which then gets handed to the allocator and faults on write.
++		 * Fall back to mapping the whole range with BRK page tables.
++		 */
++		real_end = map_start;
++	}
+ 
+ 	/* step_size need to be small so pgt_buf from BRK could cover it */
+ 	step_size = PMD_SIZE;
+-- 
+2.54.0
+

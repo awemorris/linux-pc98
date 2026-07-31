@@ -21,9 +21,11 @@ git submodule update --init --recursive
 
 | Path | Contents |
 | --- | --- |
+| `linux-2.6.7-pc98-original/` | Immutable last-complete upstream PC-9800 source snapshot from immediately before its 2004 removal |
 | `linux-6.12/` | Linux 6.12 source tree with the PC-98 port integrated |
 | `linux-7.0/` | Linux 7.0 source tree with the PC-98 port forward-ported |
 | `linux-7.1/` | Linux 7.1 source tree with the PC-98 port forward-ported |
+| `patches/linux-6.12-pc98/` | Recovered chronological 6.12 series and the complete current v6.12 delta |
 | `qemu-pc98/` | qemu-pc98 submodule used for i386 and PC-98 validation |
 | `toolchain/` | GCC, musl, and glibc submodules plus the versioned patch inventory |
 | `configs/` | Debian-derived i686 base and versioned PC-98 configurations |
@@ -40,6 +42,12 @@ Nix is not required. The build uses standard packages available on Debian 13.
 See `toolchain/README.md` for the exact source baselines, local-source
 integration, patch regeneration, update procedure, and automated patch
 replay check.
+
+The historical tree is reference material and is not used by the build.
+`LINUX-6.12-PORT.md` records its exact provenance and maps the original
+Linux/PC-98 implementation to the reconstructed Linux 6.12 platform and
+drivers. The corresponding forward-port records are `LINUX-7.0-PORT.md` and
+`LINUX-7.1-PORT.md`.
 
 ## Host requirements
 

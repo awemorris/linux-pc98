@@ -9,6 +9,142 @@
 #include <asm/rmwcc.h>
 #include <asm/barrier.h>
 
+#ifdef CONFIG_M386
+
+/*
+ * This header is reached while asm/irqflags.h is still being assembled
+ * through the paravirt include chain, so the generic atomic header cannot
+ * use the raw_local_irq_* wrappers here.  The native primitives are already
+ * defined at that point and provide the same untraced UP exclusion.
+ */
+#include <asm/irqflags.h>
+
+static __always_inline int arch_atomic_read(const atomic_t *v)
+{
+	return __READ_ONCE(v->counter);
+}
+#define arch_atomic_read arch_atomic_read
+
+static __always_inline void arch_atomic_set(atomic_t *v, int i)
+{
+	__WRITE_ONCE(v->counter, i);
+}
+#define arch_atomic_set arch_atomic_set
+
+#define M386_ATOMIC_OP(name, op)					\
+static __always_inline void arch_atomic_##name(int i, atomic_t *v)	\
+{									\
+	unsigned long flags = native_local_irq_save();			\
+	v->counter op i;						\
+	native_local_irq_restore(flags);					\
+}
+
+#define M386_ATOMIC_OP_RETURN(name, op)					\
+static __always_inline int arch_atomic_##name##_return(int i, atomic_t *v) \
+{									\
+	unsigned long flags = native_local_irq_save();			\
+	int ret = (v->counter op i);					\
+	native_local_irq_restore(flags);					\
+	return ret;							\
+}
+
+#define M386_ATOMIC_FETCH_OP(name, op)					\
+static __always_inline int arch_atomic_fetch_##name(int i, atomic_t *v)	\
+{									\
+	unsigned long flags = native_local_irq_save();			\
+	int ret = v->counter;						\
+	v->counter op i;						\
+	native_local_irq_restore(flags);					\
+	return ret;							\
+}
+
+M386_ATOMIC_OP(add, +=)
+M386_ATOMIC_OP(sub, -=)
+M386_ATOMIC_OP(and, &=)
+M386_ATOMIC_OP(or, |=)
+M386_ATOMIC_OP(xor, ^=)
+M386_ATOMIC_OP_RETURN(add, +=)
+M386_ATOMIC_OP_RETURN(sub, -=)
+M386_ATOMIC_FETCH_OP(add, +=)
+M386_ATOMIC_FETCH_OP(sub, -=)
+M386_ATOMIC_FETCH_OP(and, &=)
+M386_ATOMIC_FETCH_OP(or, |=)
+M386_ATOMIC_FETCH_OP(xor, ^=)
+
+#undef M386_ATOMIC_OP
+#undef M386_ATOMIC_OP_RETURN
+#undef M386_ATOMIC_FETCH_OP
+
+#define arch_atomic_add arch_atomic_add
+#define arch_atomic_sub arch_atomic_sub
+#define arch_atomic_and arch_atomic_and
+#define arch_atomic_or arch_atomic_or
+#define arch_atomic_xor arch_atomic_xor
+#define arch_atomic_add_return arch_atomic_add_return
+#define arch_atomic_sub_return arch_atomic_sub_return
+#define arch_atomic_fetch_add arch_atomic_fetch_add
+#define arch_atomic_fetch_sub arch_atomic_fetch_sub
+#define arch_atomic_fetch_and arch_atomic_fetch_and
+#define arch_atomic_fetch_or arch_atomic_fetch_or
+#define arch_atomic_fetch_xor arch_atomic_fetch_xor
+
+static __always_inline bool arch_atomic_sub_and_test(int i, atomic_t *v)
+{
+	return arch_atomic_sub_return(i, v) == 0;
+}
+#define arch_atomic_sub_and_test arch_atomic_sub_and_test
+
+static __always_inline void arch_atomic_inc(atomic_t *v)
+{
+	arch_atomic_add(1, v);
+}
+#define arch_atomic_inc arch_atomic_inc
+
+static __always_inline void arch_atomic_dec(atomic_t *v)
+{
+	arch_atomic_sub(1, v);
+}
+#define arch_atomic_dec arch_atomic_dec
+
+static __always_inline bool arch_atomic_dec_and_test(atomic_t *v)
+{
+	return arch_atomic_sub_return(1, v) == 0;
+}
+#define arch_atomic_dec_and_test arch_atomic_dec_and_test
+
+static __always_inline bool arch_atomic_inc_and_test(atomic_t *v)
+{
+	return arch_atomic_add_return(1, v) == 0;
+}
+#define arch_atomic_inc_and_test arch_atomic_inc_and_test
+
+static __always_inline bool arch_atomic_add_negative(int i, atomic_t *v)
+{
+	return arch_atomic_add_return(i, v) < 0;
+}
+#define arch_atomic_add_negative arch_atomic_add_negative
+
+static __always_inline int arch_atomic_cmpxchg(atomic_t *v, int old, int new)
+{
+	return arch_cmpxchg(&v->counter, old, new);
+}
+#define arch_atomic_cmpxchg arch_atomic_cmpxchg
+
+static __always_inline bool arch_atomic_try_cmpxchg(atomic_t *v, int *old,
+						    int new)
+{
+	return arch_try_cmpxchg(&v->counter, old, new);
+}
+#define arch_atomic_try_cmpxchg arch_atomic_try_cmpxchg
+
+static __always_inline int arch_atomic_xchg(atomic_t *v, int new)
+{
+	return arch_xchg(&v->counter, new);
+}
+#define arch_atomic_xchg arch_atomic_xchg
+
+#else /* !CONFIG_M386 */
+
 /*
  * Atomic operations that C can't guarantee us.  Useful for
  * resource counting etc..
@@ -167,6 +303,8 @@ static __always_inline int arch_atomic_fetch_xor(int i, atomic_t *v)
 	return val;
 }
 #define arch_atomic_fetch_xor arch_atomic_fetch_xor
+
+#endif /* CONFIG_M386 */
 
 #ifdef CONFIG_X86_32
 # include <asm/atomic64_32.h>

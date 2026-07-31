@@ -53,6 +53,7 @@
 #include <asm/vm86.h>
 #include <asm/resctrl.h>
 #include <asm/proto.h>
+#include <asm/stacktrace.h>
 
 #include "process.h"
 

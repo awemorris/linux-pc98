@@ -538,7 +538,9 @@ void cr4_init(void)
 static void __init setup_cr_pinning(void)
 {
 	cr4_pinned_bits = this_cpu_read(cpu_tlbstate.cr4) & cr4_pinned_mask;
+#ifndef CONFIG_M386
 	static_key_enable(&cr_pinning.key);
+#endif
 }
 
 static __init int x86_nofsgsbase_setup(char *arg)
@@ -2605,7 +2607,7 @@ void __init arch_cpu_finalize_init(void)
 		 * Check whether this is a real i386 which is not longer
 		 * supported and fixup the utsname.
 		 */
-		if (boot_cpu_data.x86 < 4)
+		if (boot_cpu_data.x86 < 4 && !IS_ENABLED(CONFIG_M386))
 			panic("Kernel requires i486+ for 'invlpg' and other features");
 
 		init_utsname()->machine[1] =

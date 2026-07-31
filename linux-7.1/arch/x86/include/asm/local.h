@@ -105,11 +105,21 @@ static inline bool local_add_negative(long i, local_t *l)
  */
 static inline long local_add_return(long i, local_t *l)
 {
+#ifdef CONFIG_M386
+	unsigned long flags;
+
+	flags = native_local_irq_save();
+	i += l->a.counter;
+	l->a.counter = i;
+	native_local_irq_restore(flags);
+	return i;
+#else
 	long __i = i;
 	asm volatile(_ASM_XADD "%0, %1"
 		     : "+r" (i), "+m" (l->a.counter)
 		     : : "memory");
 	return i + __i;
+#endif
 }
 
 static inline long local_sub_return(long i, local_t *l)

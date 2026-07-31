@@ -5,6 +5,7 @@
 #include <linux/types.h>
 #include <linux/compiler.h>
 
+#ifndef CONFIG_M386
 static inline __attribute_const__ __u32 __arch_swab32(__u32 val)
 {
 	asm("bswapl %0" : "=r" (val) : "0" (val));
@@ -33,5 +34,6 @@ static inline __attribute_const__ __u64 __arch_swab64(__u64 val)
 #endif
 }
 #define __arch_swab64 __arch_swab64
+#endif
 
 #endif /* _ASM_X86_SWAB_H */

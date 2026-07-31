@@ -30,8 +30,11 @@ if [ "$cpu_family" = 686 ]; then
 elif [ "$cpu_family" = 486 ]; then
 	default_output="$repo/configs/pc9800-i486-$kernel_version.config"
 	cpu_config=M486
+elif [ "$cpu_family" = 386 ]; then
+	default_output="$repo/configs/pc9800-i386-$kernel_version.config"
+	cpu_config=M386
 else
-	echo "Unsupported CPU_FAMILY: $cpu_family (expected 686 or 486)" >&2
+	echo "Unsupported CPU_FAMILY: $cpu_family (expected 686, 486, or 386)" >&2
 	exit 1
 fi
 output="${OUTPUT_CONFIG:-$default_output}"
@@ -52,6 +55,7 @@ make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 # PC-98 platform and the devices required before the root filesystem mounts.
 "$source/scripts/config" --file "$kernel_build/.config" \
 	--disable MGEODE_LX \
+	--disable M386 \
 	--disable M486SX \
 	--disable M486 \
 	--disable M686 \
@@ -86,6 +90,34 @@ make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 	--set-str CMDLINE \
 	"console=ttyS0 console=tty0 earlyprintk=pc9800 root=/dev/sda2 rootfstype=ext4 rw"
 "$source/scripts/config" --file "$kernel_build/.config" --enable "$cpu_config"
+
+if [ "$cpu_family" = 386 ]; then
+	# The first 80386 target is deliberately UP-only and uses the legacy
+	# PC-98 PIC/PIT.  Keep post-386 platform facilities out of the binary
+	# until each instruction path has been audited.
+	"$source/scripts/config" --file "$kernel_build/.config" \
+		--disable SMP \
+		--disable X86_LOCAL_APIC \
+		--disable X86_IO_APIC \
+		--disable PAE \
+		--disable HIGHMEM64G \
+		--disable MTRR \
+		--disable X86_PAT \
+		--disable PCI_MSI \
+		--disable KVM_GUEST \
+		--disable XEN \
+		--disable RANDOMIZE_BASE \
+		--disable CPU_MITIGATIONS \
+		--disable PAGE_TABLE_ISOLATION \
+		--disable STRICT_KERNEL_RWX \
+		--disable STRICT_MODULE_RWX \
+		--disable PREEMPT \
+		--disable PREEMPT_DYNAMIC \
+		--enable PREEMPT_NONE \
+		--enable MATH_EMULATION \
+		--set-str CMDLINE \
+		"no387 vdso=0 console=ttyS0 console=tty0 earlyprintk=pc9800 root=/dev/sda2 rootfstype=ext4 rw init=/sbin/i386-init"
+fi
 
 if [ "$device_profile" = pc98 ]; then
 	# Keep the PCI core used by pc9821 and the standard USB 1.x/2.0 host
@@ -166,6 +198,38 @@ if [ "$device_profile" = pc98 ]; then
 elif [ "$device_profile" != full ]; then
 	echo "Unsupported DEVICE_PROFILE: $device_profile (expected pc98 or full)" >&2
 	exit 1
+fi
+
+if [ "$cpu_family" = 386 ]; then
+	# The i386 milestone is a research image whose acceptance test is a
+	# freestanding static init.  Remove subsystems that either require
+	# post-386 lock-free user-memory primitives (futex PI) or add large
+	# tracing/BPF/module surfaces unrelated to that boot gate.
+	"$source/scripts/config" --file "$kernel_build/.config" \
+		--enable MODULES \
+		--disable PARAVIRT \
+		--disable KEXEC \
+		--disable KEXEC_FILE \
+		--disable KEXEC_CORE \
+		--disable PERF_EVENTS \
+		--disable X86_CPU_RESCTRL \
+		--disable KPROBES \
+		--disable FTRACE \
+		--disable FUNCTION_TRACER \
+		--disable TRACING \
+		--disable BPF \
+		--disable BPF_SYSCALL \
+		--disable BPF_JIT \
+		--disable AF_KCM \
+		--disable PROFILING \
+		--disable FUTEX \
+		--disable FUTEX_PI \
+		--disable SOCK_DIAG \
+		--disable USB_SUPPORT \
+		--disable USB \
+		--disable HID_SUPPORT \
+		--disable FB \
+		--disable PCI
 fi
 
 make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig

@@ -4,6 +4,12 @@ set -euo pipefail
 repo="$(cd "$(dirname "$0")" && pwd)"
 cpu_family="${CPU_FAMILY:-486}"
 case "$cpu_family" in
+	386)
+		cpu_name=i386
+		default_kernel_build="$repo/build/i386-port/kernel"
+		default_root_stage="$repo/build/i386-port/rootfs"
+		default_output="$repo/build/i386-port/linux-7.1-pc98-i386-static-init.img"
+		;;
 	486)
 		cpu_name=i486
 		default_kernel_build="$repo/build/kernel-7.1-i486"
@@ -17,7 +23,7 @@ case "$cpu_family" in
 		default_output="$repo/build/qemu-pc98-linux-7.1-i686-busybox.raw"
 		;;
 	*)
-		echo "Unsupported CPU_FAMILY: $cpu_family (expected 486 or 686)" >&2
+		echo "Unsupported CPU_FAMILY: $cpu_family (expected 386, 486, or 686)" >&2
 		exit 1
 		;;
 esac

@@ -708,6 +708,19 @@ static inline u32 get_ibs_caps(void) { return 0; }
 static inline int forward_event_to_ibs(struct perf_event *event) { return -ENOENT; }
 #endif
 
+/*
+ * This type is also consumed by the !CONFIG_PERF_EVENTS stub below.  Keep
+ * the definition outside the configuration guard so the stub remains a
+ * complete, type-safe no-op in minimal kernels.
+ */
+struct x86_pmu_lbr {
+	unsigned int	nr;
+	unsigned int	from;
+	unsigned int	to;
+	unsigned int	info;
+	bool		has_callstack;
+};
+
 #ifdef CONFIG_PERF_EVENTS
 extern void perf_events_lapic_init(void);
 
@@ -751,14 +764,6 @@ extern unsigned long perf_arch_guest_misc_flags(struct pt_regs *regs);
 struct perf_guest_switch_msr {
 	unsigned msr;
 	u64 host, guest;
-};
-
-struct x86_pmu_lbr {
-	unsigned int	nr;
-	unsigned int	from;
-	unsigned int	to;
-	unsigned int	info;
-	bool		has_callstack;
 };
 
 extern void perf_get_x86_pmu_capability(struct x86_pmu_capability *cap);

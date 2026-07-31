@@ -167,6 +167,31 @@ extern void __put_user_nocheck_8(void);
  * involved in the ptr expression (possibly implicitly generated due
  * to KASAN) from clobbering %ax.
  */
+#ifndef CONFIG_X86_WP_WORKS_OK
+
+/*
+ * A 386 ignores read-only PTEs for supervisor writes.  Resolve the user page
+ * with FOLL_WRITE before copying so COW and VMA write permissions are still
+ * enforced.  The out-of-line helper is shared with raw_copy_to_user().
+ */
+#define do_put_user_call(fn,x,ptr)					\
+({									\
+	int __ret_pu;							\
+	__typeof__(*(ptr)) __val_pu = (x);				\
+	__typeof__(ptr) __ptr_pu = (ptr);				\
+	__chk_user_ptr(__ptr_pu);					\
+	if (unlikely(!access_ok(__ptr_pu, sizeof(*__ptr_pu)) ||		\
+		     __copy_to_user_386(__ptr_pu, &__val_pu,		\
+					sizeof(__val_pu))))			\
+		__ret_pu = -EFAULT;					\
+	else								\
+		__ret_pu = 0;						\
+	instrument_put_user(__val_pu, __ptr_pu, sizeof(*__ptr_pu));	\
+	__ret_pu;							\
+})
+
+#else /* CONFIG_X86_WP_WORKS_OK */
+
 #define do_put_user_call(fn,x,ptr)					\
 ({									\
 	int __ret_pu;							\
@@ -187,6 +212,8 @@ extern void __put_user_nocheck_8(void);
 	instrument_put_user(__x, __ptr, sizeof(*(ptr)));		\
 	__builtin_expect(__ret_pu, 0);					\
 })
+
+#endif /* CONFIG_X86_WP_WORKS_OK */
 
 /**
  * put_user - Write a simple value into user space.
@@ -528,8 +555,20 @@ static __must_check __always_inline bool user_access_begin(const void __user *pt
 #define user_access_save()	smap_save()
 #define user_access_restore(x)	smap_restore(x)
 
+#ifndef CONFIG_X86_WP_WORKS_OK
+#define arch_unsafe_put_user(x, ptr, label)				\
+do {									\
+	__typeof__(*(ptr)) __val_pu = (x);				\
+	__typeof__(ptr) __ptr_pu = (ptr);				\
+	if (unlikely(__copy_to_user_386(__ptr_pu, &__val_pu,		\
+					sizeof(__val_pu))))			\
+		goto label;						\
+	instrument_put_user(__val_pu, __ptr_pu, sizeof(*__ptr_pu));	\
+} while (0)
+#else
 #define arch_unsafe_put_user(x, ptr, label)	\
 	__put_user_size((__typeof__(*(ptr)))(x), (ptr), sizeof(*(ptr)), label)
+#endif
 
 #ifdef CONFIG_CC_HAS_ASM_GOTO_OUTPUT
 #define arch_unsafe_get_user(x, ptr, err_label)					\
@@ -638,4 +677,3 @@ do {									\
 			sizeof(type), err_label)
 
 #endif /* _ASM_X86_UACCESS_H */
-

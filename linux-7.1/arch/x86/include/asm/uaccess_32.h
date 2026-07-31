@@ -11,13 +11,21 @@
 
 unsigned long __must_check __copy_user_ll
 		(void *to, const void *from, unsigned long n);
+#ifndef CONFIG_X86_WP_WORKS_OK
+unsigned long __must_check __copy_to_user_386
+		(void __user *to, const void *from, unsigned long n);
+#endif
 unsigned long __must_check __copy_from_user_ll_nocache_nozero
 		(void *to, const void __user *from, unsigned long n);
 
 static __always_inline unsigned long __must_check
 raw_copy_to_user(void __user *to, const void *from, unsigned long n)
 {
+#ifndef CONFIG_X86_WP_WORKS_OK
+	return __copy_to_user_386(to, from, n);
+#else
 	return __copy_user_ll((__force void *)to, from, n);
+#endif
 }
 
 static __always_inline unsigned long

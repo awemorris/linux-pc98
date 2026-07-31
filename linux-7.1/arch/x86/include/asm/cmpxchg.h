@@ -19,6 +19,21 @@ extern void __xadd_wrong_size(void)
 extern void __add_wrong_size(void)
 	__compiletime_error("Bad argument size for add");
 
+#ifdef CONFIG_M386
+/*
+ * A uniprocessor 80386 has no CMPXCHG or XADD.  Interrupt exclusion makes
+ * the corresponding load/modify/store sequences atomic with respect to the
+ * only other execution contexts which can touch normal kernel data.
+ *
+ * The helpers are deliberately out of line.  Apart from keeping text size
+ * under control, this ensures that no compiler transformation can split the
+ * interrupt-disabled critical section.
+ */
+extern unsigned long cmpxchg_386(volatile void *ptr, unsigned long old,
+				 unsigned long new, int size);
+extern unsigned long xadd_386(volatile void *ptr, unsigned long inc, int size);
+#endif
+
 /*
  * Constants for operation sizes. On 32-bit, the 64-bit size it set to
  * -1 because sizeof will never return -1, thereby making those switch
@@ -82,6 +97,17 @@ extern void __add_wrong_size(void)
  * store NEW in MEM.  Return the initial value in MEM.  Success is
  * indicated by comparing RETURN with OLD.
  */
+#ifdef CONFIG_M386
+#define __raw_cmpxchg(ptr, old, new, size, lock)			\
+({									\
+	__typeof__(*(ptr)) __ret;					\
+									\
+	__ret = (__typeof__(*(ptr)))cmpxchg_386(			\
+		(volatile void *)(ptr), (unsigned long)(old),		\
+		(unsigned long)(new), (size));				\
+	__ret;								\
+})
+#else
 #define __raw_cmpxchg(ptr, old, new, size, lock)			\
 ({									\
 	__typeof__(*(ptr)) __ret;					\
@@ -129,6 +155,7 @@ extern void __add_wrong_size(void)
 	}								\
 	__ret;								\
 })
+#endif
 
 #define __cmpxchg(ptr, old, new, size)					\
 	__raw_cmpxchg((ptr), (old), (new), (size), LOCK_PREFIX)
@@ -155,6 +182,22 @@ extern void __add_wrong_size(void)
 	__cmpxchg_local(ptr, old, new, sizeof(*(ptr)))
 
 
+#ifdef CONFIG_M386
+#define __raw_try_cmpxchg(_ptr, _pold, _new, size, lock)		\
+({									\
+	__typeof__(*(_ptr)) __old = *(_pold);				\
+	__typeof__(*(_ptr)) __observed;					\
+	bool __success;							\
+									\
+	__observed = (__typeof__(*(_ptr)))cmpxchg_386(			\
+		(volatile void *)(_ptr), (unsigned long)__old,		\
+		(unsigned long)(_new), (size));				\
+	__success = (__observed == __old);				\
+	if (unlikely(!__success))					\
+		*(_pold) = __observed;					\
+	likely(__success);						\
+})
+#else
 #define __raw_try_cmpxchg(_ptr, _pold, _new, size, lock)		\
 ({									\
 	bool success;							\
@@ -213,6 +256,7 @@ extern void __add_wrong_size(void)
 		*_old = __old;						\
 	likely(success);						\
 })
+#endif
 
 #define __try_cmpxchg(ptr, pold, new, size)				\
 	__raw_try_cmpxchg((ptr), (pold), (new), (size), LOCK_PREFIX)
@@ -238,7 +282,19 @@ extern void __add_wrong_size(void)
  *
  * xadd() is locked when multiple CPUs are online
  */
+#ifdef CONFIG_M386
+#define __xadd(ptr, inc, lock)						\
+({									\
+	__typeof__(*(ptr)) __ret;					\
+									\
+	__ret = (__typeof__(*(ptr)))xadd_386(				\
+		(volatile void *)(ptr), (unsigned long)(inc),		\
+		sizeof(*(ptr)));						\
+	__ret;								\
+})
+#else
 #define __xadd(ptr, inc, lock)	__xchg_op((ptr), (inc), xadd, lock)
+#endif
 #define xadd(ptr, inc)		__xadd((ptr), (inc), LOCK_PREFIX)
 
 #endif	/* ASM_X86_CMPXCHG_H */

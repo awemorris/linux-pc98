@@ -25,7 +25,18 @@ static inline void tlb_flush(struct mmu_gather *tlb)
 
 static inline void invlpg(unsigned long addr)
 {
+#ifdef CONFIG_M386
+	unsigned long cr3;
+
+	/*
+	 * 80386 has no INVLPG.  Reloading CR3 invalidates the complete TLB and
+	 * is the architecturally available (albeit slower) substitute.
+	 */
+	asm volatile("movl %%cr3, %0" : "=r" (cr3));
+	asm volatile("movl %0, %%cr3" : : "r" (cr3) : "memory");
+#else
 	asm volatile("invlpg (%0)" ::"r" (addr) : "memory");
+#endif
 }
 
 enum addr_stride {

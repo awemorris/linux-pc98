@@ -468,6 +468,8 @@ static int genregs_set(struct task_struct *target,
 	return ret;
 }
 
+#ifdef CONFIG_HAVE_HW_BREAKPOINT
+
 static void ptrace_triggered(struct perf_event *bp,
 			     struct perf_sample_data *data,
 			     struct pt_regs *regs)
@@ -685,6 +687,39 @@ static int ptrace_set_debugreg(struct task_struct *tsk, int n,
 	}
 	return rc;
 }
+
+#else /* !CONFIG_HAVE_HW_BREAKPOINT */
+
+/*
+ * The M386 research configuration deliberately omits perf/hw-breakpoint
+ * support.  Preserve the architecturally visible DR6 bookkeeping used by
+ * ptrace, but reject attempts to install breakpoints instead of depending
+ * on incomplete perf_event types.
+ */
+static unsigned long ptrace_get_debugreg(struct task_struct *tsk, int n)
+{
+	if (n == 6)
+		return tsk->thread.virtual_dr6 ^ DR6_RESERVED;
+
+	return 0;
+}
+
+static int ptrace_set_debugreg(struct task_struct *tsk, int n,
+			       unsigned long val)
+{
+	if (n == 6) {
+		tsk->thread.virtual_dr6 = val ^ DR6_RESERVED;
+		return 0;
+	}
+
+	/* Writing a disabled DR7 is harmless; no breakpoint can be armed. */
+	if (n == 7 && !val)
+		return 0;
+
+	return -EIO;
+}
+
+#endif /* CONFIG_HAVE_HW_BREAKPOINT */
 
 /*
  * These access the current or another (stopped) task's io permission

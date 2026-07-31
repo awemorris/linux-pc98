@@ -44,6 +44,16 @@
 #define X86_CAPABILITY	new_cpu_data+CPUINFO_x86_capability
 #define X86_VENDOR_ID	new_cpu_data+CPUINFO_x86_vendor_id
 
+#ifdef CONFIG_M386
+/*
+ * CR0.NE/WP/AM do not exist on 80386.  The 386-compatible startup state
+ * retains the protected-mode, monitor-coprocessor and paging controls only.
+ */
+#define EARLY_CR0_STATE	(X86_CR0_PE | X86_CR0_MP | X86_CR0_ET | X86_CR0_PG)
+#else
+#define EARLY_CR0_STATE	CR0_STATE
+#endif
+
 /*
  * Worst-case size of the kernel mapping we need to make:
  * a relocatable kernel can live anywhere in lowmem, so we need to be able
@@ -151,7 +161,7 @@ SYM_FUNC_START(startup_32_smp)
 	leal -__PAGE_OFFSET(%ecx),%esp
 
 .Ldefault_entry:
-	movl $(CR0_STATE & ~X86_CR0_PG),%eax
+	movl $(EARLY_CR0_STATE & ~X86_CR0_PG),%eax
 	movl %eax,%cr0
 
 /*
@@ -227,7 +237,7 @@ SYM_FUNC_START(startup_32_smp)
  */
 	movl $pa(initial_page_table), %eax
 	movl %eax,%cr3		/* set the page table pointer.. */
-	movl $CR0_STATE,%eax
+	movl $EARLY_CR0_STATE,%eax
 	movl %eax,%cr0		/* ..and set paging (PG) bit */
 	ljmp $__BOOT_CS,$1f	/* Clear prefetch and normalize %eip */
 1:
@@ -235,8 +245,25 @@ SYM_FUNC_START(startup_32_smp)
 	addl $__PAGE_OFFSET, %esp
 
 /*
- * Check if it is 486
+ * Distinguish a 386 from a pre-CPUID 486 by testing EFLAGS.AC.  Current
+ * kernels normally assume that the oldest no-CPUID processor is a 486.
  */
+#ifdef CONFIG_M386
+	movb $3,X86			# at least 386
+	pushfl
+	popl %eax
+	movl %eax,%ecx
+	xorl $X86_EFLAGS_AC,%eax
+	pushl %eax
+	popfl
+	pushfl
+	popl %eax
+	pushl %ecx
+	popfl
+	xorl %ecx,%eax
+	testl $X86_EFLAGS_AC,%eax
+	jz .Lis386
+#endif
 	movb $4,X86			# at least 486
 	cmpl $-1,X86_CPUID
 	je .Lis486
@@ -266,6 +293,12 @@ SYM_FUNC_START(startup_32_smp)
 
 .Lis486:
 	movl $0x50022,%ecx	# set AM, WP, NE and MP
+	jmp .Lset_cr0
+#ifdef CONFIG_M386
+.Lis386:
+	movl $2,%ecx		# set MP; 386 has no AM, WP or NE
+#endif
+.Lset_cr0:
 	movl %cr0,%eax
 	andl $0x80000011,%eax	# Save PG,PE,ET
 	orl %ecx,%eax

@@ -7,6 +7,9 @@
  * Copyright 1997 Linus Torvalds
  */
 #include <linux/export.h>
+#include <linux/highmem.h>
+#include <linux/mm.h>
+#include <linux/sched.h>
 #include <linux/uaccess.h>
 #include <asm/asm.h>
 
@@ -27,6 +30,72 @@ static inline int __movsl_is_ok(unsigned long a1, unsigned long a2, unsigned lon
 }
 #define movsl_is_ok(a1, a2, n) \
 	__movsl_is_ok((unsigned long)(a1), (unsigned long)(a2), (n))
+
+#ifndef CONFIG_X86_WP_WORKS_OK
+/*
+ * The 80386 has no functional CR0.WP bit: supervisor-mode stores ignore
+ * read-only PTEs and therefore cannot trigger COW or reject a read-only VMA.
+ * Resolve one destination page at a time with FOLL_WRITE, then copy through
+ * its kernel mapping while the mmap read lock keeps that mapping stable.
+ *
+ * This is the modern equivalent of Linux 3.6's i386
+ * __copy_to_user_ll() slow path.
+ */
+unsigned long __copy_to_user_386(void __user *to, const void *from,
+				 unsigned long n)
+{
+	if (unlikely(!current->mm || in_atomic() || pagefault_disabled()))
+		return n;
+
+	while (n) {
+		unsigned long address = (unsigned long)to;
+		unsigned long offset = offset_in_page(address);
+		unsigned long len = min(n, PAGE_SIZE - offset);
+		struct page *page;
+		void *mapping;
+		long pinned;
+
+		mmap_read_lock(current->mm);
+		pinned = get_user_pages(address, 1, FOLL_WRITE, &page);
+		if (pinned != 1) {
+			mmap_read_unlock(current->mm);
+			break;
+		}
+
+		mapping = kmap_local_page(page);
+		memcpy((char *)mapping + offset, from, len);
+		kunmap_local(mapping);
+		set_page_dirty_lock(page);
+		put_page(page);
+		mmap_read_unlock(current->mm);
+
+		to = (char __user *)to + len;
+		from = (const char *)from + len;
+		n -= len;
+	}
+
+	return n;
+}
+EXPORT_SYMBOL(__copy_to_user_386);
+
+static unsigned long clear_user_386(void __user *to, unsigned long n)
+{
+	static const char zeroes[64];
+
+	while (n) {
+		unsigned long len = min(n, (unsigned long)sizeof(zeroes));
+		unsigned long left = __copy_to_user_386(to, zeroes, len);
+		unsigned long done = len - left;
+
+		to = (char __user *)to + done;
+		n -= done;
+		if (left)
+			break;
+	}
+
+	return n;
+}
+#endif
 
 /*
  * Zero Userspace
@@ -62,8 +131,13 @@ unsigned long
 clear_user(void __user *to, unsigned long n)
 {
 	might_fault();
-	if (access_ok(to, n))
+	if (access_ok(to, n)) {
+#ifndef CONFIG_X86_WP_WORKS_OK
+		n = clear_user_386(to, n);
+#else
 		__do_clear_user(to, n);
+#endif
+	}
 	return n;
 }
 EXPORT_SYMBOL(clear_user);
@@ -82,7 +156,11 @@ EXPORT_SYMBOL(clear_user);
 unsigned long
 __clear_user(void __user *to, unsigned long n)
 {
+#ifndef CONFIG_X86_WP_WORKS_OK
+	n = clear_user_386(to, n);
+#else
 	__do_clear_user(to, n);
+#endif
 	return n;
 }
 EXPORT_SYMBOL(__clear_user);

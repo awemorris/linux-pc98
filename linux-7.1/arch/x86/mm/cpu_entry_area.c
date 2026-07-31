@@ -104,7 +104,7 @@ cea_map_percpu_pages(void *cea_vaddr, void *ptr, int pages, pgprot_t prot)
 
 static void __init percpu_setup_debug_store(unsigned int cpu)
 {
-#ifdef CONFIG_CPU_SUP_INTEL
+#if defined(CONFIG_CPU_SUP_INTEL) && defined(CONFIG_PERF_EVENTS)
 	unsigned int npages;
 	void *cea;
 

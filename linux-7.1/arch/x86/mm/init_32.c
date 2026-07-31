@@ -676,8 +676,13 @@ static void __init test_wp_bit(void)
 		return;
 	}
 
+	clear_fixmap(FIX_WP_TEST);
 	printk(KERN_CONT "No.\n");
+#ifdef CONFIG_X86_WP_WORKS_OK
 	panic("Linux doesn't support CPUs with broken WP.");
+#else
+	pr_info("Using software-validated user writes for 386 COW and VMA permissions.\n");
+#endif
 }
 
 void __init arch_mm_preinit(void)

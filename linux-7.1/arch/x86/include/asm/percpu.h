@@ -594,6 +594,35 @@ do {									\
 	 ? x86_this_cpu_constant_test_bit(_nr, _var)			\
 	 : x86_this_cpu_variable_test_bit(_nr, _var))
 
+#ifdef CONFIG_M386
+/*
+ * XADD and CMPXCHG are not 80386 instructions.  Leave these operations to
+ * asm-generic/percpu.h.  raw_cpu variants become plain UP accesses, while
+ * this_cpu variants use interrupt exclusion where a read/modify/write
+ * sequence must not be interrupted.
+ */
+#undef raw_cpu_add_return_1
+#undef raw_cpu_add_return_2
+#undef raw_cpu_add_return_4
+#undef raw_cpu_cmpxchg_1
+#undef raw_cpu_cmpxchg_2
+#undef raw_cpu_cmpxchg_4
+#undef raw_cpu_try_cmpxchg_1
+#undef raw_cpu_try_cmpxchg_2
+#undef raw_cpu_try_cmpxchg_4
+#undef this_cpu_add_return_1
+#undef this_cpu_add_return_2
+#undef this_cpu_add_return_4
+#undef this_cpu_xchg_1
+#undef this_cpu_xchg_2
+#undef this_cpu_xchg_4
+#undef this_cpu_cmpxchg_1
+#undef this_cpu_cmpxchg_2
+#undef this_cpu_cmpxchg_4
+#undef this_cpu_try_cmpxchg_1
+#undef this_cpu_try_cmpxchg_2
+#undef this_cpu_try_cmpxchg_4
+#endif
 
 #include <asm-generic/percpu.h>
 

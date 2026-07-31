@@ -35,6 +35,7 @@
 #include <asm/irq_stack.h>
 #include <asm/fred.h>
 #include <asm/sev.h>			/* snp_dump_hva_rmpentry()	*/
+#include <asm/stacktrace.h>		/* show_opcodes()		*/
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/exceptions.h>

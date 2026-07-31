@@ -11,6 +11,21 @@ archive="$work/buildroot-$version.tar.xz"
 url="https://buildroot.org/downloads/buildroot-$version.tar.xz"
 gcc_source="$repo/toolchain/gcc"
 musl_source="$repo/toolchain/musl"
+console_mode="${I386_CONSOLE:-dual}"
+
+case "$console_mode" in
+dual)
+	rootfs_overlay="$repo/rootfs/i386"
+	;;
+video)
+	rootfs_overlay="$repo/rootfs/i386-video"
+	;;
+*)
+	echo "unsupported I386_CONSOLE mode: $console_mode" >&2
+	echo "supported modes: dual, video" >&2
+	exit 1
+	;;
+esac
 
 mkdir -p "$work"
 if [ ! -f "$gcc_source/gcc/BASE-VER" ]; then
@@ -59,7 +74,7 @@ sed -i \
 	-e '/^# BR2_PACKAGE_BUSYBOX_CONFIG is not set/d' \
 	"$output/.config"
 printf 'BR2_ROOTFS_OVERLAY="%s"\nBR2_PACKAGE_BUSYBOX_CONFIG="%s"\n' \
-	"$repo/rootfs/i386" \
+	"$rootfs_overlay" \
 	"$repo/configs/busybox-pc98-i386.config" \
 	>> "$output/.config"
 make -C "$source" O="$output" olddefconfig
@@ -106,6 +121,7 @@ if [ "$lock_xchg_count" -eq 0 ]; then
 fi
 
 printf 'i386 BusyBox rootfs: %s\n' "$output/target"
+printf 'i386 console mode: %s\n' "$console_mode"
 du -sh "$output/target"
 file "$busybox"
 printf 'i386 test-and-set lock sites (LOCK XCHG): %s\n' "$lock_xchg_count"

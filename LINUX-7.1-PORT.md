@@ -152,6 +152,28 @@ make -C linux-7.1 O="$PWD/build/i386-busybox/kernel" \
 JOBS=32 ./build-i386-rootfs.sh
 ```
 
+The default `dual` console mode keeps both the GDC screen/keyboard console
+and the PC-98 serial console for debugging. A screen-and-keyboard-only
+kernel and root filesystem can be built without overwriting the default
+outputs:
+
+```sh
+I386_CONSOLE=video \
+I386_KERNEL_BUILD="$PWD/build/i386-video/kernel" \
+I386_CONFIG_OUTPUT="$PWD/build/i386-video/kernel.config" \
+  ./configure-i386-busybox.sh
+make -C linux-7.1 O="$PWD/build/i386-video/kernel" \
+  ARCH=i386 -j32 vmlinux
+I386_CONSOLE=video \
+I386_BUILDROOT_WORK="$PWD/build/i386-video/buildroot" \
+JOBS=32 ./build-i386-rootfs.sh
+```
+
+This mode uses only `console=tty0`, removes the PC-98 8251 serial driver
+from the kernel, and starts a BusyBox `askfirst` shell on `tty1`. The screen
+therefore displays an explicit request to press Enter before opening the
+shell.
+
 The root filesystem is generated without Nix by `build-i386-rootfs.sh`,
 using Buildroot 2026.05, musl 1.2.6, and a static BusyBox 1.38.0. This is an
 explicit single-process research profile and does not advertise pthread

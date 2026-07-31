@@ -1,4 +1,5 @@
-# Mirai98 Linux/PC-98
+Linux/pc98 Workspace
+====================
 
 This repository contains Linux 6.12, Linux 7.0, and Linux 7.1 ports for the
 NEC PC-9800 series, boot loaders, tools for building a Debian i386 userland,

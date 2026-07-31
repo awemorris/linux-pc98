@@ -39,8 +39,10 @@ fi
 KERNEL_VERSION=7.1 \
 CPU_FAMILY="$cpu_family" \
 KERNEL_BUILD="$kernel_build" \
-KERNEL_IMAGE="$kernel_build/arch/x86/boot/bzImage" \
+KERNEL_IMAGE="$kernel_build/vmlinux.boot" \
 ROOT_STAGE="$root_stage" \
-ROOT_MB="${ROOT_MB:-64}" \
+BOOT_MB="${BOOT_MB:-200}" \
+ROOT_MB="${ROOT_MB:-200}" \
+SMALL_EXT4="${SMALL_EXT4:-1}" \
 OUTPUT_IMAGE="$output" \
 	"$repo/build-images.sh"

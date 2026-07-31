@@ -65,7 +65,7 @@ def parse_partition(image, index):
     return start, end - start + 1
 
 
-def fat16_layout(total_sectors, reserved, sectors_per_cluster=2,
+def fat16_layout(total_sectors, reserved, sectors_per_cluster,
                  root_entries=512, fats=2,
                  logical_sector_size=PC98_DOS_SECTOR_SIZE):
     root_sectors = math.ceil(root_entries * 32 / logical_sector_size)
@@ -103,12 +103,18 @@ def write_fat16(image, start_lba, total_physical_sectors, kernel_path,
         raise RuntimeError("partition PBR must be exactly 512 bytes")
     kernel = read_file(kernel_path)
     reserved = 1
-    spc = 2
     fats = 2
     root_entries = 512
     total_sectors = total_physical_sectors // PC98_DOS_SECTOR_SCALE
-    spf, root_sectors, clusters = fat16_layout(
-        total_sectors, reserved, spc, root_entries, fats)
+    for spc in (1, 2, 4, 8, 16, 32, 64):
+        try:
+            spf, root_sectors, clusters = fat16_layout(
+                total_sectors, reserved, spc, root_entries, fats)
+            break
+        except RuntimeError:
+            continue
+    else:
+        raise RuntimeError("partition cannot be represented as FAT16")
 
     pbr[3:11] = b"NEC  5.0"
     struct.pack_into("<H", pbr, 0x0B, PC98_DOS_SECTOR_SIZE)
@@ -146,10 +152,10 @@ def write_fat16(image, start_lba, total_physical_sectors, kernel_path,
         struct.pack_into("<H", fat, cluster * 2, following)
 
     root = bytearray(root_sectors * PC98_DOS_SECTOR_SIZE)
-    if kernel.startswith(b"\x7fELF"):
-        root[0:11] = b"VMLINUX    "
-    else:
-        root[0:11] = b"BZIMAGE    "
+    if not kernel.startswith(b"\x7fELF"):
+        raise RuntimeError(
+            "kernel must be an uncompressed ELF vmlinux image")
+    root[0:11] = b"VMLINUX    "
     root[11] = 0x20
     struct.pack_into("<H", root, 26, first_cluster)
     struct.pack_into("<I", root, 28, len(kernel))
@@ -259,11 +265,15 @@ def create(args):
         raise RuntimeError("second-stage loader does not fit before partition 1")
     struct.pack_into("<H", ipl, IPL_LOADER_SECTORS, loader_sectors)
     struct.pack_into("<H", pbr, PBR_LOADER_SECTORS, loader_sectors)
-    if args.boot_cylinders < 64:
+    if args.boot_mb <= 0:
+        raise RuntimeError("boot partition size must be positive")
+    boot_cylinders = math.ceil(
+        args.boot_mb * 1024 * 1024 / (CYL_SECTORS * SECTOR_SIZE))
+    if boot_cylinders < 64:
         raise RuntimeError("boot partition is too small")
 
     p1_start_cyl = 1
-    p1_end_cyl = p1_start_cyl + args.boot_cylinders - 1
+    p1_end_cyl = p1_start_cyl + boot_cylinders - 1
     p2_start_cyl = p1_end_cyl + 1
     p2_cylinders = math.ceil(
         args.root_mb * 1024 * 1024 / (CYL_SECTORS * SECTOR_SIZE))
@@ -303,7 +313,7 @@ def create(args):
         image.write(table)
 
         p1_start = chs_lba(p1_start_cyl)
-        p1_sectors = args.boot_cylinders * CYL_SECTORS
+        p1_sectors = boot_cylinders * CYL_SECTORS
         fat_info = write_fat16(
             image, p1_start, p1_sectors, args.kernel, pbr)
         make_ext4(
@@ -375,8 +385,8 @@ def main():
     create_parser.add_argument("loader")
     create_parser.add_argument("kernel")
     create_parser.add_argument("root_stage")
-    create_parser.add_argument("--boot-cylinders", type=int, default=1024)
-    create_parser.add_argument("--root-mb", type=int, default=1024)
+    create_parser.add_argument("--boot-mb", type=int, default=200)
+    create_parser.add_argument("--root-mb", type=int, default=200)
     create_parser.add_argument("--swap-mb", type=int, default=0)
     create_parser.add_argument(
         "--small-ext4", action="store_true",

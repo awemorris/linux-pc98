@@ -35,6 +35,7 @@ git submodule update --init --recursive
 | `build-kernel.sh` | Configures and builds the kernel and modules |
 | `build-debian.sh` | Builds the Debian rootfs, kernel, modules, and disk image |
 | `build-i386-rootfs.sh` | Builds the experimental Linux 7.1/i386 static-musl root filesystem |
+| `build-i386-image.sh` | Builds the small Linux 7.1 i386 or i486 BusyBox image |
 | `build-i486-rootfs.sh` | Builds a static i486 or i686 musl/BusyBox root filesystem without Nix |
 | `build-i486-image.sh` | Builds a Linux 7.1/i486 or i686 BusyBox PC-98 disk image |
 
@@ -123,7 +124,7 @@ partitions.
 | LBA 0 | Disk IPL with the `IPL1` marker |
 | LBA 1 | PC-98 sixteen-entry partition table |
 | LBA 2 through 135 | FAT16-aware Linux second-stage loader |
-| Partition 1 | PC-98 DOS-compatible FAT16 containing `BZIMAGE` |
+| Partition 1 | 200 MiB PC-98 DOS-compatible FAT16 containing non-compressed `VMLINUX` |
 | Partition 2 | Debian i386 ext4 root filesystem, mounted as `/dev/sda2` |
 
 The LBA 0 IPL loads the Linux loader directly from LBA 2. Partition 1 also
@@ -139,7 +140,7 @@ HDD and panics. Device-order-independent root selection remains follow-up
 work; use this image as the first HDD for a complete boot.
 
 DOS may install its own PBR and filesystem in Partition 1. Reformatting it
-removes `BZIMAGE`, so restore the kernel afterwards if the partition is to
+removes `VMLINUX`, so restore the kernel afterwards if the partition is to
 remain Linux-bootable.
 
 The Linux port includes a PC-98 partition-table parser so both partitions are
@@ -147,17 +148,17 @@ reported through the normal Linux block-device interface.
 
 ## Updating only the kernel
 
-To update `BZIMAGE` in Partition 1 without rebuilding or modifying the
+To update `VMLINUX` in Partition 1 without rebuilding or modifying the
 Debian userland in Partition 2:
 
 ```sh
 ./update-kernel.sh
 ```
 
-An alternate raw image and bzImage can be supplied as arguments:
+An alternate raw image and stripped, non-compressed ELF vmlinux can be supplied as arguments:
 
 ```sh
-./update-kernel.sh path/to/disk.raw path/to/bzImage
+./update-kernel.sh path/to/disk.raw path/to/vmlinux.boot
 ```
 
 ## Build configuration
@@ -172,6 +173,7 @@ The main environment-variable overrides are:
 | `KERNEL_BUILD` | `build/kernel` for 6.12; otherwise `build/kernel-$KERNEL_VERSION` |
 | `CPU_FAMILY` | `686`; Linux 7.0 and 7.1 also retain the experimental `486` target |
 | `DEVICE_PROFILE` | Linux 7.1 defaults to `pc98`; use `full` for the full Debian driver catalogue |
+| `CONSOLE_MODE` | `video`; use `dual` only for a private GDC plus serial diagnostic build |
 | `INSTALL_MODULES` | `1`; set to `0` to skip `modules_install` |
 | `OUTPUT_IMAGE` | Version-specific raw image path |
 | `ROOT_STAGE` | `build/debian-i386-root` |
@@ -179,7 +181,8 @@ The main environment-variable overrides are:
 | `DEBIAN_MIRROR` | Official Debian mirror |
 | `DEBIAN_INCLUDE` | Comma-separated packages added to the rootfs |
 | `ROOT_PASSWORD` | Initial local test password; default `pc98` |
-| `ROOT_MB` | ext4 root partition size; default 1024 MiB |
+| `BOOT_MB` | FAT16 boot partition size; default 200 MiB |
+| `ROOT_MB` | ext4 root partition size; default 200 MiB |
 | `DIST_IMAGE_NAME` | Filename inside `dist/` before the `.xz` suffix |
 
 `build-debian-rootfs.sh` stops if `ROOT_STAGE` already exists, preventing an
@@ -242,29 +245,22 @@ The trimmed kernel and module set build successfully. The generated
 two-partition image boots under qemu-pc98 with TCG, mounts the Debian 13 ext4
 root filesystem, reaches the login prompt, and reports Linux 7.1.0 i686.
 
-To build and run the experimental i486 image:
+To build and run the small i486 image with the same PC-98-only profile and
+i386-compatible BusyBox used by the genuine-i386 image:
 
 ```sh
-KERNEL_VERSION=7.1 \
-CPU_FAMILY=486 \
-KERNEL_BUILD=build/kernel-7.1-i486 \
-LOCALVERSION=-i486 \
-DEVICE_PROFILE=pc98 \
-INSTALL_MODULES=0 \
-  ./build-kernel.sh
-./build-i486-rootfs.sh
-./build-i486-image.sh
+CPU_FAMILY=486 I386_CONSOLE=video ./build-i386-image.sh
 
 qemu-system-i386 \
-  -M pc9821 \
+  -M pc9801 \
   -cpu 486 \
-  -m 64 \
+  -m 16 \
   -accel tcg \
-  -drive if=ide,bus=0,unit=0,format=raw,file=build/qemu-pc98-linux-7.1-i486.raw
+  -drive if=ide,bus=0,unit=0,format=raw,file=build/i486-video/linux-7.1-pc98-i486-busybox.img
 ```
 
-The same scripts can build a Linux 7.1/i686 BusyBox image. The existing
-Linux 7.1 i686 kernel build is reused:
+The larger generic scripts can still build a Linux 7.1/i686 BusyBox
+development image, but Release images use the Debian 13 userland for i686:
 
 ```sh
 CPU_FAMILY=686 ./build-i486-rootfs.sh

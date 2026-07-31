@@ -29,6 +29,7 @@ root_stage="${ROOT_STAGE:-$default_root_stage}"
 gcc_version="${GCC_VERSION:-14.2.0}"
 musl_version="${MUSL_VERSION:-1.2.5}"
 busybox_version="${BUSYBOX_VERSION:-1.36.1}"
+console_mode="${CONSOLE_MODE:-video}"
 target="$cpu_name-linux-musl"
 prefix="$work/toolchain"
 xgcc="$prefix/bin/$target-gcc"
@@ -181,6 +182,17 @@ cp -a "$work/src/busybox-$busybox_version" "$busybox_build"
 		"$root_stage/var" \
 		"$root_stage/mnt"
 	cp -a "$repo/rootfs/i486/." "$root_stage/"
+	case "$console_mode" in
+	video)
+		sed -i '/^ttyS0::/d' "$root_stage/etc/inittab"
+		;;
+	dual)
+		;;
+	*)
+		echo "Unsupported CONSOLE_MODE: $console_mode" >&2
+		exit 1
+		;;
+	esac
 	chmod 0755 \
 		"$root_stage/sbin/net-up" \
 		"$root_stage/usr/share/udhcpc/default.script"
@@ -199,5 +211,6 @@ cp -a "$work/src/busybox-$busybox_version" "$busybox_build"
 )
 
 printf '%s rootfs: %s\n' "$cpu_name" "$root_stage"
+printf '%s console mode: %s\n' "$cpu_name" "$console_mode"
 du -sh "$root_stage"
 file "$root_stage/bin/busybox"

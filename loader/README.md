@@ -11,7 +11,7 @@ setup code is not executed.
 | 0             | `disk-ipl.bin`, with `IPL1` at offset 4            |
 | 1             | PC-98 partition table: sixteen 32-byte entries     |
 | 2 through 135 | `fat-loader.bin` followed by unused space          |
-| Partition 1   | PC-98 DOS-compatible FAT16 with `VMLINUX`/`BZIMAGE`|
+| Partition 1   | PC-98 DOS-compatible FAT16 with `VMLINUX`          |
 | Partition 2   | ext4 Debian root filesystem                        |
 
 The fixed BIOS geometry is eight heads and seventeen sectors per track.
@@ -40,8 +40,9 @@ afterwards if both uses are desired.
 ## FAT16 second stage
 
 `fat-loader.bin` reads 512- or 1024-byte logical-sector BPBs and the root
-directory from Partition 1, then searches for the 8.3 names `VMLINUX` and
-`BZIMAGE`. It follows the FAT16 cluster chain, so the kernel file may be
+directory from Partition 1, then searches for the 8.3 name `VMLINUX`. It
+also recognizes `BZIMAGE` on disks made before release 0.3.0. It follows the
+FAT16 cluster chain, so the kernel file may be
 fragmented.
 
 For a bzImage, the loader validates `setup_sects`, `syssize`, `HdrS`, and
@@ -89,4 +90,6 @@ make -C loader
 
 `update-kernel.sh` updates both boot records, the second-stage loader, and the
 FAT16 filesystem without modifying Partition 2. The image builder stores an
-ELF input as `VMLINUX` and any other Linux boot image as `BZIMAGE`.
+ELF input as `VMLINUX`. Image creation rejects compressed or other non-ELF
+kernel files; the older bzImage loader path remains only for compatibility
+with disks made before release 0.3.0.

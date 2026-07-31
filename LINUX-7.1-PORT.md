@@ -31,12 +31,14 @@ The resulting PC-98 delta relative to official v7.1 contains 32 files with
 Linux 7.1 has two validated PC-98 targets:
 
 - `CONFIG_M686=y` with a Debian 13 i386 userland
-- `CONFIG_M486=y` with a minimal static musl/BusyBox userland
-- `CONFIG_M386=y` with a static research init and an ext4 root filesystem
+- `CONFIG_M486=y` with the small PC-98-only kernel profile and a static
+  i386-compatible musl/BusyBox userland
+- `CONFIG_M386=y` with the same small profile, static musl/BusyBox, ext4,
+  and swap
 
-The i486 target is an experimental compatibility milestone rather than a
-Debian Release image. The i386 target is a low-memory research profile and
-does not attempt to run the Debian userland.
+The i386 and i486 Release images intentionally share one low-memory device
+and filesystem profile. The i686 Release image uses the Debian-derived
+kernel configuration and Debian 13 userland.
 
 Linux removed `M486`, `M486SX`, and `MELAN` in upstream commit
 `8b793a92d862c89055daa97ffa61a6929cf732f9`. The four affected x86
@@ -112,10 +114,12 @@ at `0x71` and `0x77`. This matters on an i486, where the absence of TSC makes
 the early kernel fall back to the PIT; using the PC/AT ports `0x40` and
 `0x43` caused an infinite early-boot loop.
 
-The second-stage loader keeps the GDC text display responsive during the
-relatively slow i486 bzImage load and decompression. Its first-row status
-shows total size, physical load address, a live byte count, and progress
-dots, followed by `Decompressing Linux...`. `earlyprintk=pc9800` then
+Release 0.3.0 uses a stripped, non-compressed ELF `VMLINUX` for i486 and
+i686 as well as i386. The second-stage loader streams each `PT_LOAD` segment
+directly to its physical address. Its first-row status shows total size,
+physical load address, a live byte count, and progress dots. No compressed
+input image, decompression workspace, or initramfs is retained in guest RAM.
+`earlyprintk=pc9800` then
 displays kernel messages from time zero until the normal PC-98 console takes
 over.
 
@@ -143,33 +147,24 @@ contents.
 an initrd. The kernel has 1,604,962 bytes of text, 455,532 bytes of data,
 and 208,896 bytes of BSS; the ELF file is 2,859,516 bytes.
 
-Build the kernel and root filesystem with:
+Build the kernel, root filesystem, and persistent image with:
 
 ```sh
-./configure-i386-busybox.sh
-make -C linux-7.1 O="$PWD/build/i386-busybox/kernel" \
-  ARCH=i386 -j32 vmlinux
-JOBS=32 ./build-i386-rootfs.sh
+JOBS=32 ./build-i386-image.sh
 ```
 
-The default `dual` console mode keeps both the GDC screen/keyboard console
-and the PC-98 serial console for debugging. A screen-and-keyboard-only
-kernel and root filesystem can be built without overwriting the default
-outputs:
+The default `video` console mode uses the GDC screen and PC-98 keyboard. A
+dual GDC/serial diagnostic image can be built without overwriting the
+default outputs:
 
 ```sh
-I386_CONSOLE=video \
-I386_KERNEL_BUILD="$PWD/build/i386-video/kernel" \
-I386_CONFIG_OUTPUT="$PWD/build/i386-video/kernel.config" \
-  ./configure-i386-busybox.sh
-make -C linux-7.1 O="$PWD/build/i386-video/kernel" \
-  ARCH=i386 -j32 vmlinux
-I386_CONSOLE=video \
-I386_BUILDROOT_WORK="$PWD/build/i386-video/buildroot" \
-JOBS=32 ./build-i386-rootfs.sh
+JOBS=32 I386_CONSOLE=dual ./build-i386-image.sh
 ```
 
-This mode uses only `console=tty0`, removes the PC-98 8251 serial driver
+Only the default `video` form is published. Dual-console images are private
+diagnostic artifacts used for automated serial-log capture.
+
+The default video mode uses only `console=tty0`, removes the PC-98 8251 serial driver
 from the kernel, and starts a BusyBox `askfirst` shell on `tty1`. The screen
 therefore displays an explicit request to press Enter before opening the
 shell.
@@ -194,9 +189,9 @@ Exact upstream versions, snapshot commits, patch order, and exported patch
 files are recorded in `toolchain/patchsets/`.
 
 The generated image
-`build/i386-busybox/linux-7.1-pc98-i386-busybox-swap.img` contains the
-direct-loaded kernel, a 16 MiB small-feature ext4 root, and a 32 MiB swap
-partition. It boots on qemu-pc98 with:
+`build/i386-busybox/linux-7.1-pc98-i386-busybox-swap.img` contains a
+200 MiB FAT16 `VMLINUX` partition, a 200 MiB small-feature ext4 root, and a
+32 MiB swap partition. It boots on qemu-pc98 with:
 
 ```sh
 qemu-system-i386 \
@@ -218,7 +213,7 @@ adaptation remains separate work.
 
 ## Validation
 
-- `CONFIG_M686=y` PC-98 `bzImage` build
+- `CONFIG_M686=y` PC-98 non-compressed ELF `VMLINUX` build
 - Complete full-profile module build before trimming
 - Trimmed PC-98 profile build and `modules_install` (23 modular Kconfig
   entries, 22 installed `.ko` files)

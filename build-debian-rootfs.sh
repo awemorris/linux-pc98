@@ -7,8 +7,14 @@ suite="${DEBIAN_SUITE:-trixie}"
 mirror="${DEBIAN_MIRROR:-https://deb.debian.org/debian}"
 include="${DEBIAN_INCLUDE:-sysvinit-core,e2fsprogs,kmod,udev,ifupdown,iproute2,dhcpcd-base,ca-certificates}"
 root_password="${ROOT_PASSWORD:-pc98}"
+slim_rootfs="${SLIM_ROOTFS:-1}"
+console_mode="${CONSOLE_MODE:-video}"
+debootstrap="${DEBOOTSTRAP:-$(command -v debootstrap 2>/dev/null || true)}"
+if [ -z "$debootstrap" ] && [ -x /usr/sbin/debootstrap ]; then
+	debootstrap=/usr/sbin/debootstrap
+fi
 
-if ! command -v debootstrap >/dev/null 2>&1; then
+if [ -z "$debootstrap" ] || [ ! -x "$debootstrap" ]; then
 	echo "debootstrap is required." >&2
 	echo "On Debian, install it with: sudo apt-get install debootstrap" >&2
 	exit 1
@@ -21,7 +27,7 @@ if [ -e "$stage" ]; then
 fi
 
 mkdir -p "$(dirname "$stage")"
-sudo debootstrap \
+sudo "$debootstrap" \
 	--arch=i386 \
 	--variant=minbase \
 	--include="$include" \
@@ -34,12 +40,22 @@ printf '%s\n' \
 	'sysfs /sys sysfs defaults 0 0' \
 	| sudo tee "$stage/etc/fstab" >/dev/null
 
-# Keep Debian's SysV init. Add a serial login for headless QEMU testing; the
-# package-provided tty1 login remains available on the PC-98 GDC console.
-printf '%s\n' \
-	'' \
-	'T0:23:respawn:/sbin/agetty -L ttyS0 9600 vt100' \
-	| sudo tee -a "$stage/etc/inittab" >/dev/null
+# Keep Debian's package-provided tty1 login on the PC-98 GDC console. A
+# serial getty is opt-in and is used only for private diagnostic images.
+case "$console_mode" in
+video)
+	;;
+dual)
+	printf '%s\n' \
+		'' \
+		'T0:23:respawn:/sbin/agetty -L ttyS0 9600 vt100' \
+		| sudo tee -a "$stage/etc/inittab" >/dev/null
+	;;
+*)
+	echo "Unsupported CONSOLE_MODE: $console_mode" >&2
+	exit 1
+	;;
+esac
 
 printf 'auto lo\niface lo inet loopback\n' \
 	| sudo tee "$stage/etc/network/interfaces" >/dev/null
@@ -51,5 +67,16 @@ sudo chroot "$stage" /bin/sh -c '
 	command -v dhcpcd >/dev/null ||
 		{ echo "dhcpcd-base installation did not provide dhcpcd" >&2; exit 1; }
 '
+
+if [ "$slim_rootfs" = 1 ]; then
+	# Keep dpkg/apt and package copyright files usable, while omitting data
+	# that can be downloaded again.  This lets the PC-98 live system fit in
+	# a 200 MiB ext4 partition without turning it into an initramfs.
+	sudo chroot "$stage" apt-get clean
+	sudo find "$stage/var/lib/apt/lists" -mindepth 1 -delete
+	sudo find "$stage/usr/share/man" -mindepth 1 -delete
+	sudo find "$stage/usr/share/info" -mindepth 1 -delete
+	sudo find "$stage/usr/share/locale" -mindepth 1 -delete
+fi
 
 echo "Debian $suite i386 rootfs staging tree: $stage"

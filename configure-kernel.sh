@@ -6,6 +6,19 @@ kernel_version="${KERNEL_VERSION:-6.12}"
 source="${KERNEL_SOURCE:-$repo/linux-$kernel_version}"
 cpu_family="${CPU_FAMILY:-686}"
 device_profile="${DEVICE_PROFILE:-}"
+console_mode="${CONSOLE_MODE:-video}"
+case "$console_mode" in
+video)
+	console_args="console=tty0"
+	;;
+dual)
+	console_args="console=ttyS0 console=tty0"
+	;;
+*)
+	echo "Unsupported CONSOLE_MODE: $console_mode (expected video or dual)" >&2
+	exit 1
+	;;
+esac
 if [ -z "$device_profile" ]; then
 	if [ "$kernel_version" = 7.1 ]; then
 		device_profile=pc98
@@ -70,9 +83,17 @@ make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 	--enable NEC98_PARTITION \
 	--enable KEYBOARD_PC98 \
 	--enable SERIAL_PC98_8251 \
-	--enable SERIAL_PC98_8251_CONSOLE \
+	--disable SERIAL_PC98_8251_CONSOLE \
 	--enable PC98_CONSOLE \
 	--enable EXT4_FS \
+	--disable BLK_DEV_INITRD \
+	--disable RD_GZIP \
+	--disable RD_BZIP2 \
+	--disable RD_LZMA \
+	--disable RD_XZ \
+	--disable RD_LZO \
+	--disable RD_LZ4 \
+	--disable RD_ZSTD \
 	--enable DEVTMPFS \
 	--enable DEVTMPFS_MOUNT \
 	--enable MODULES \
@@ -88,8 +109,12 @@ make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 	--enable CMDLINE_BOOL \
 	--enable CMDLINE_OVERRIDE \
 	--set-str CMDLINE \
-	"console=ttyS0 console=tty0 earlyprintk=pc9800 root=/dev/sda2 rootfstype=ext4 rw"
+	"$console_args earlyprintk=pc9800 root=/dev/sda2 rootfstype=ext4 rw"
 "$source/scripts/config" --file "$kernel_build/.config" --enable "$cpu_config"
+if [ "$console_mode" = dual ]; then
+	"$source/scripts/config" --file "$kernel_build/.config" \
+		--enable SERIAL_PC98_8251_CONSOLE
+fi
 
 if [ "$cpu_family" = 386 ]; then
 	# The first 80386 target is deliberately UP-only and uses the legacy
@@ -116,7 +141,7 @@ if [ "$cpu_family" = 386 ]; then
 		--enable PREEMPT_NONE \
 		--enable MATH_EMULATION \
 		--set-str CMDLINE \
-		"no387 vdso=0 console=ttyS0 console=tty0 earlyprintk=pc9800 root=/dev/sda2 rootfstype=ext4 rw init=/sbin/i386-init"
+		"no387 vdso=0 $console_args earlyprintk=pc9800 root=/dev/sda2 rootfstype=ext4 rw init=/sbin/i386-init"
 fi
 
 if [ "$device_profile" = pc98 ]; then

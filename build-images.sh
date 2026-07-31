@@ -12,9 +12,10 @@ else
 	default_output="$build/qemu-pc98-linux-$kernel_version.raw"
 fi
 kernel_build="${KERNEL_BUILD:-$default_kernel_build}"
-kernel_image="${KERNEL_IMAGE:-$kernel_build/arch/x86/boot/bzImage}"
+kernel_image="${KERNEL_IMAGE:-$kernel_build/vmlinux.boot}"
 root_stage="${ROOT_STAGE:-$build/debian-i386-root}"
-root_mb="${ROOT_MB:-1024}"
+boot_mb="${BOOT_MB:-200}"
+root_mb="${ROOT_MB:-200}"
 swap_mb="${SWAP_MB:-0}"
 small_ext4="${SMALL_EXT4:-0}"
 output="${OUTPUT_IMAGE:-$default_output}"
@@ -33,7 +34,7 @@ fi
 mkdir -p "$build"
 make -C "$repo/loader"
 
-image_options=(--root-mb "$root_mb" --swap-mb "$swap_mb")
+image_options=(--boot-mb "$boot_mb" --root-mb "$root_mb" --swap-mb "$swap_mb")
 if [ "$small_ext4" != 0 ]; then
 	image_options+=(--small-ext4)
 fi

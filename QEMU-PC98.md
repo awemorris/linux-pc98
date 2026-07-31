@@ -35,8 +35,10 @@ out of tree with:
 The QEMU build uses Debian's non-PAE i686 distribution configuration as its
 feature baseline, then overlays the PC-98 platform, built-in boot devices,
 ext4 root support and the PC-98 console. Build products are kept under
-`build/kernel`, leaving `linux-6.12/` as a source-only directory. The boot disk is
-sized from the resulting `bzImage`; it is not constrained to floppy capacity.
+`build/kernel`, leaving `linux-6.12/` as a source-only directory. The boot disk
+uses a stripped, non-compressed ELF `VMLINUX`. The symbol-rich `vmlinux`
+remains in the build directory for debugging, while `vmlinux.boot` is copied
+to the FAT16 partition without a decompression stage or initramfs.
 
 ## Debian i386 root
 
@@ -53,16 +55,18 @@ Build the QEMU disk:
 ./build-images.sh
 ```
 
-The image uses one IDE disk with two PC-98 partitions. The first is a normal
-DOS-compatible FAT16 volume containing `BZIMAGE`; the second is an ext4
+The image uses one IDE disk with two PC-98 partitions. The first is a 200 MiB
+DOS-compatible FAT16 volume containing `VMLINUX`; the second is a 200 MiB ext4
 filesystem mounted as `/dev/sda2`. LBA 2 through 135, before the first
 partition, contain the FAT-aware second-stage loader. No special PBR is
 required, so DOS may install its own PBR without disturbing the Linux IPL
 path. The root image boots `/sbin/init` from Debian's `sysvinit-core` package
-and provides login prompts on both the PC-98 console and `ttyS0`.
+and provides a login prompt on the PC-98 GDC console. Serial consoles are
+reserved for private diagnostic builds and are not enabled in Release images.
 The initial root password in this local emulator image is `pc98`.
-The default root image size is 1 GiB so the distribution-style kernel modules
-fit; override it with `ROOT_MB` when generating an image.
+Release images install only the PC-98 modules required by the selected
+profile. Both boot and root partitions default to 200 MiB; override them with
+`BOOT_MB` and `ROOT_MB` when generating an image.
 
 Update only the FAT16 kernel partition, preserving the ext4 userland:
 
@@ -133,7 +137,7 @@ BusyBox build instead of the Debian 13 userspace.
 ## Verified result
 
 The free compatibility BIOS loaded the `IPL1` disk, the LBA 2 second stage
-found `BZIMAGE` through its FAT16 cluster chain, and Linux 6.12 parsed both
+found `VMLINUX` through its FAT16 cluster chain, and Linux 6.12 parsed both
 PC-98 partitions. It mounted ext4 from `/dev/sda2` and reached the Debian 13
 `pc98 login:` prompt under qemu-pc98 TCG.
 The following commands completed using Debian's i386 userspace:

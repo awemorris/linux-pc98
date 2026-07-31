@@ -11,7 +11,7 @@ archive="$work/buildroot-$version.tar.xz"
 url="https://buildroot.org/downloads/buildroot-$version.tar.xz"
 gcc_source="$repo/toolchain/gcc"
 musl_source="$repo/toolchain/musl"
-console_mode="${I386_CONSOLE:-dual}"
+console_mode="${I386_CONSOLE:-video}"
 
 case "$console_mode" in
 dual)

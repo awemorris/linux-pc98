@@ -3,12 +3,27 @@ set -eu
 
 repo=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 source="$repo/linux-7.1"
-console_mode="${I386_CONSOLE:-dual}"
+console_mode="${I386_CONSOLE:-video}"
+cpu_family="${CPU_FAMILY:-386}"
 build="${I386_KERNEL_BUILD:-$repo/build/i386-busybox/kernel}"
 config="$build/.config"
 base="$repo/configs/pc9800-i386-4m6-7.1.config"
 output="${I386_CONFIG_OUTPUT:-$repo/configs/pc9800-i386-busybox-7.1.config}"
 sc="$source/scripts/config"
+
+case "$cpu_family" in
+386)
+	cpu_config=M386
+	;;
+486)
+	cpu_config=M486
+	;;
+*)
+	echo "unsupported minimal BusyBox CPU family: $cpu_family" >&2
+	echo "supported CPU families: 386, 486" >&2
+	exit 1
+	;;
+esac
 
 if [ ! -f "$base" ]; then
 	echo "missing base configuration: $base" >&2
@@ -17,6 +32,14 @@ fi
 
 mkdir -p "$build"
 cp "$base" "$config"
+
+# The i386 and i486 release kernels intentionally share the same small PC-98
+# device/filesystem profile.  Only the compiler CPU target differs.
+"$sc" --file "$config" \
+	--disable M386 \
+	--disable M486SX \
+	--disable M486 \
+	--enable "$cpu_config"
 
 case "$console_mode" in
 dual)
@@ -44,4 +67,5 @@ esac
 make -C "$source" O="$build" ARCH=i386 olddefconfig
 cp "$config" "$output"
 
-printf 'i386 BusyBox config (%s console): %s\n' "$console_mode" "$output"
+printf 'i%s BusyBox config (%s console): %s\n' \
+	"$cpu_family" "$console_mode" "$output"

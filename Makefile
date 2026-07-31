@@ -2,7 +2,7 @@ KERNEL_VERSION ?= 6.12
 KERNEL_BUILD ?= $(if $(filter 6.12,$(KERNEL_VERSION)),$(CURDIR)/build/kernel,$(CURDIR)/build/kernel-$(KERNEL_VERSION))
 export KERNEL_VERSION KERNEL_BUILD
 
-.PHONY: all configure kernel rootfs images dist busybox-i486 busybox-i686 update-kernel run clean
+.PHONY: all configure kernel rootfs images dist busybox-i386 busybox-i386-video busybox-i386-dual busybox-i486 busybox-i686 update-kernel run clean
 
 all:
 	./build-debian.sh
@@ -22,13 +22,17 @@ images:
 dist: images
 	./build-dist.sh
 
+busybox-i386:
+	I386_CONSOLE=video ./build-i386-image.sh
+
+busybox-i386-video:
+	I386_CONSOLE=video ./build-i386-image.sh
+
+busybox-i386-dual:
+	I386_CONSOLE=dual ./build-i386-image.sh
+
 busybox-i486:
-	KERNEL_VERSION=7.1 CPU_FAMILY=486 \
-		KERNEL_BUILD=$(CURDIR)/build/kernel-7.1-i486 \
-		LOCALVERSION=-i486 DEVICE_PROFILE=pc98 INSTALL_MODULES=0 \
-		./build-kernel.sh
-	CPU_FAMILY=486 ./build-i486-rootfs.sh
-	CPU_FAMILY=486 ./build-i486-image.sh
+	CPU_FAMILY=486 I386_CONSOLE=video ./build-i386-image.sh
 
 busybox-i686:
 	KERNEL_VERSION=7.1 CPU_FAMILY=686 \

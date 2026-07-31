@@ -11,7 +11,7 @@ else
 	default_image="$repo/build/qemu-pc98-linux-$kernel_version.raw"
 fi
 image="${1:-${OUTPUT_IMAGE:-$default_image}}"
-kernel_image="${2:-${KERNEL_IMAGE:-${KERNEL_BUILD:-$default_kernel_build}/arch/x86/boot/bzImage}}"
+kernel_image="${2:-${KERNEL_IMAGE:-${KERNEL_BUILD:-$default_kernel_build}/vmlinux.boot}}"
 
 if [ ! -f "$image" ]; then
 	echo "Disk image not found: $image" >&2

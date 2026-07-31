@@ -3,8 +3,8 @@
  * FAT16-aware Linux/x86 boot-protocol loader for NEC PC-9800.
  *
  * The partition PBR loads this stage from the FAT reserved area at
- * 1000:0000.  It follows the FAT16 cluster chain of BZIMAGE, prepares
- * boot_params, copies the protected-mode kernel to 1 MiB and enters it.
+ * 1000:0000.  It follows the FAT16 cluster chain of VMLINUX or BZIMAGE,
+ * prepares boot_params, loads the protected-mode kernel and enters it.
  */
 
 	.code16
@@ -91,7 +91,7 @@ _start:
 	addl	%edx, %eax
 	movl	%eax, data_lba
 
-	/* Locate BZIMAGE in the FAT root directory. */
+	/* Locate BZIMAGE or VMLINUX in the FAT root directory. */
 	movw	$BOUNCE_SEG, %ax
 	movw	%ax, %es
 	xorw	%bp, %bp
@@ -112,6 +112,14 @@ find_kernel:
 	pushw	%cx
 	pushw	%di
 	movw	$kernel_name, %si
+	movw	$11, %cx
+	repe cmpsb
+	popw	%di
+	popw	%cx
+	je	kernel_found
+	pushw	%cx
+	pushw	%di
+	movw	$vmlinux_name, %si
 	movw	$11, %cx
 	repe cmpsb
 	popw	%di
@@ -172,6 +180,9 @@ kernel_found:
 	call	stream_read_sector
 	jc	loader_failure
 
+	cmpl	$0x464c457f, %es:0	/* ELF magic */
+	je	load_elf
+
 	cmpw	$0xaa55, %es:0x1fe
 	jne	loader_failure
 	cmpl	$0x53726448, %es:0x202	/* "HdrS" */
@@ -209,13 +220,7 @@ kernel_found:
 	call	show_status
 
 	/* Clear boot_params and copy the setup header. */
-	movl	$BP_ADDR, %edi
-	movl	$1024, %ecx
-2:
-	movl	$0, %fs:(%edi)
-	addl	$4, %edi
-	decl	%ecx
-	jnz	2b
+	call	clear_boot_params
 	movw	$0x1f1, %si
 	movl	$(BP_ADDR + 0x1f1), %edi
 	movw	header_end, %cx
@@ -282,6 +287,7 @@ copy_next:
 
 copy_done:
 	call	update_load_status
+prepare_boot_params:
 	movl	$BP_ADDR, %edi
 	movb	$0xff, %fs:0x210(%edi)
 	movl	$CMDLINE, %fs:0x228(%edi)
@@ -323,7 +329,7 @@ copy_done:
 	movl	$CMDLINE, %ebx
 	movb	$0, %fs:(%ebx)
 
-	movw	$starting_message, %si
+	movw	starting_message_ptr, %si
 	call	show_status
 
 	cli
@@ -345,7 +351,212 @@ copy_done:
 	movw	%ax, %ds
 	movw	%ax, %es
 	movw	%ax, %ss
-	ljmpl	$BOOT_CS, $KDEST
+	ljmpl	*%cs:kernel_entry_ptr
+
+/*
+ * Load an ELF32/i386 vmlinux without keeping a compressed input image and
+ * decompression workspace in guest RAM.  Program headers must fit in the
+ * first 1024 bytes already held in the bounce buffer.  Up to four PT_LOAD
+ * segments are copied directly to their physical addresses.
+ */
+load_elf:
+	cmpb	$1, %es:4		/* ELFCLASS32 */
+	jne	loader_failure
+	cmpb	$1, %es:5		/* ELFDATA2LSB */
+	jne	loader_failure
+	cmpw	$3, %es:0x12		/* EM_386 */
+	jne	loader_failure
+	cmpw	$32, %es:0x2a		/* sizeof(Elf32_Phdr) */
+	jne	loader_failure
+	movzwl	%es:0x2c, %ecx
+	testl	%ecx, %ecx
+	jz	loader_failure
+	cmpl	$16, %ecx
+	ja	loader_failure
+	movl	%es:0x1c, %eax
+	movl	%eax, %edx
+	shll	$5, %ecx
+	addl	%ecx, %edx
+	cmpl	$1024, %edx
+	ja	loader_failure
+	movw	%ax, %di
+	movzwl	%es:0x2c, %ecx
+	movb	$0, elf_segment_count
+	movl	$0, elf_total_bytes
+
+elf_parse_phdr:
+	cmpl	$1, %es:(%di)		/* PT_LOAD */
+	jne	elf_next_phdr
+	cmpb	$4, elf_segment_count
+	jae	loader_failure
+	movl	%es:0x10(%di), %eax	/* p_filesz */
+	cmpl	%es:0x14(%di), %eax	/* p_memsz */
+	ja	loader_failure
+	movl	%es:4(%di), %edx	/* p_offset */
+	addl	%eax, %edx
+	jc	loader_failure
+	cmpl	file_size, %edx
+	ja	loader_failure
+	movzbl	elf_segment_count, %ebx
+	shll	$4, %ebx
+	addw	$elf_segments, %bx
+	movl	%es:4(%di), %eax
+	movl	%eax, (%bx)
+	movl	%es:0x0c(%di), %eax	/* p_paddr */
+	movl	%eax, 4(%bx)
+	movl	%es:0x10(%di), %eax
+	movl	%eax, 8(%bx)
+	addl	%eax, elf_total_bytes
+	movl	%es:0x14(%di), %eax
+	movl	%eax, 12(%bx)
+	incb	elf_segment_count
+elf_next_phdr:
+	addw	$32, %di
+	loop	elf_parse_phdr
+
+	cmpb	$0, elf_segment_count
+	je	loader_failure
+	movl	%es:0x18, %eax		/* e_entry is a physical address */
+	movl	%eax, kernel_entry_ptr
+	movw	$starting_direct_message, starting_message_ptr
+	call	clear_boot_params
+	movl	$0, loaded_bytes
+	movw	$load_count_field, %di
+	xorl	%eax, %eax
+	call	format_decimal8
+	movl	elf_total_bytes, %eax
+	movw	$load_total_field, %di
+	call	format_decimal8
+	movw	$load_status, %si
+	call	show_status
+	movw	$elf_segments, elf_segment_ptr
+	movb	elf_segment_count, %al
+	movb	%al, elf_segments_left
+
+elf_load_segment:
+	cmpb	$0, elf_segments_left
+	je	elf_load_done
+	movw	elf_segment_ptr, %si
+	movl	(%si), %eax		/* p_offset */
+	testl	$511, %eax
+	jnz	loader_failure
+	movl	8(%si), %edx		/* p_filesz */
+	testl	%edx, %edx
+	jz	elf_zero_segment
+	call	stream_reset
+	movl	(%si), %ecx
+	shrl	$9, %ecx
+elf_seek_segment:
+	testl	%ecx, %ecx
+	jz	elf_begin_segment
+	pushl	%ecx
+	movw	$BOUNCE_SEG, %ax
+	movw	%ax, %es
+	xorw	%bp, %bp
+	call	stream_read_sector
+	popl	%ecx
+	jc	loader_failure
+	decl	%ecx
+	jmp	elf_seek_segment
+
+elf_begin_segment:
+	movw	elf_segment_ptr, %si
+	movl	4(%si), %eax
+	movl	%eax, cur_dest
+	movl	8(%si), %eax
+	movl	%eax, remaining
+elf_copy_next:
+	cmpl	$0, remaining
+	je	elf_zero_segment
+	movw	$BOUNCE_SEG, %ax
+	movw	%ax, %es
+	xorw	%bp, %bp
+	call	stream_read_sector
+	jc	loader_failure
+	movl	$512, %edx
+	cmpl	%edx, remaining
+	jae	elf_copy_size_ready
+	movl	remaining, %edx
+elf_copy_size_ready:
+	movl	cur_dest, %edi
+	xorl	%esi, %esi
+	movl	%edx, %ecx
+	shrl	$2, %ecx
+	jz	elf_copy_tail
+elf_copy_dwords:
+	movl	%es:(%si), %eax
+	movl	%eax, %fs:(%edi)
+	addl	$4, %esi
+	addl	$4, %edi
+	decl	%ecx
+	jnz	elf_copy_dwords
+elf_copy_tail:
+	movl	%edx, %ecx
+	andl	$3, %ecx
+	jz	elf_copy_account
+elf_copy_bytes:
+	movb	%es:(%si), %al
+	movb	%al, %fs:(%edi)
+	incl	%esi
+	incl	%edi
+	decl	%ecx
+	jnz	elf_copy_bytes
+elf_copy_account:
+	addl	%edx, cur_dest
+	subl	%edx, remaining
+	addl	%edx, loaded_bytes
+	incw	progress_sectors
+	testb	$0xff, progress_sectors
+	jnz	elf_copy_next
+	call	update_load_status
+	jmp	elf_copy_next
+
+elf_zero_segment:
+	movw	elf_segment_ptr, %si
+	movl	12(%si), %ecx		/* p_memsz - p_filesz */
+	subl	8(%si), %ecx
+	movl	4(%si), %edi
+	addl	8(%si), %edi
+	movl	%ecx, %edx
+	shrl	$2, %ecx
+	jz	elf_zero_tail
+	xorl	%eax, %eax
+elf_zero_dwords:
+	movl	%eax, %fs:(%edi)
+	addl	$4, %edi
+	decl	%ecx
+	jnz	elf_zero_dwords
+elf_zero_tail:
+	movl	%edx, %ecx
+	andl	$3, %ecx
+	jz	elf_segment_done
+elf_zero_bytes:
+	movb	$0, %fs:(%edi)
+	incl	%edi
+	decl	%ecx
+	jnz	elf_zero_bytes
+elf_segment_done:
+	addw	$16, elf_segment_ptr
+	decb	elf_segments_left
+	jmp	elf_load_segment
+
+elf_load_done:
+	call	update_load_status
+	jmp	prepare_boot_params
+
+clear_boot_params:
+	pushl	%ecx
+	pushl	%edi
+	movl	$BP_ADDR, %edi
+	movl	$1024, %ecx
+1:
+	movl	$0, %fs:(%edi)
+	addl	$4, %edi
+	decl	%ecx
+	jnz	1b
+	popl	%edi
+	popl	%ecx
+	ret
 
 /*
  * Leave visible progress on the first 80-column GDC text row while the
@@ -579,6 +790,8 @@ gdt_desc:
 
 kernel_name:
 	.ascii	"BZIMAGE    "
+vmlinux_name:
+	.ascii	"VMLINUX    "
 partition_lba:
 	.long	0
 fat_lba:
@@ -617,14 +830,32 @@ progress_column:
 	.byte	0
 loaded_bytes:
 	.long	0
+kernel_entry_ptr:
+	.long	KDEST
+	.word	BOOT_CS
+starting_message_ptr:
+	.word	starting_message
+elf_total_bytes:
+	.long	0
+elf_segment_ptr:
+	.word	0
+elf_segment_count:
+	.byte	0
+elf_segments_left:
+	.byte	0
+	.balign 4
+elf_segments:
+	.fill	4 * 16, 1, 0
 read_flags:
 	.word	0
 loading_message:
-	.asciz	"Loading bzImage..."
+	.asciz	"Loading Linux kernel..."
 starting_message:
 	.asciz	"Decompressing Linux..."
+starting_direct_message:
+	.asciz	"Starting Linux..."
 load_status:
-	.ascii	"Loading bzImage @ 0x00100000: "
+	.ascii	"Loading kernel: "
 load_count_field:
 	.ascii	"00000000"
 	.ascii	" / "

@@ -12,12 +12,26 @@
 #ifdef CONFIG_M386
 
 /*
- * This header is reached while asm/irqflags.h is still being assembled
- * through the paravirt include chain, so the generic atomic header cannot
- * use the raw_local_irq_* wrappers here.  The native primitives are already
- * defined at that point and provide the same untraced UP exclusion.
+ * This header can be reached while asm/irqflags.h itself is being assembled
+ * through the nospec/static-key include chain.  Keep the 386 UP exclusion
+ * primitive local instead of depending on either irqflags header.
  */
-#include <asm/irqflags.h>
+static __always_inline unsigned long m386_atomic_irq_save(void)
+{
+	unsigned long flags;
+
+	asm volatile("pushfl; popl %0; cli"
+		     : "=rm" (flags)
+		     :
+		     : "memory");
+	return flags;
+}
+
+static __always_inline void m386_atomic_irq_restore(unsigned long flags)
+{
+	if (flags & (1UL << 9))	/* EFLAGS.IF */
+		asm volatile("sti" : : : "memory");
+}
 
 static __always_inline int arch_atomic_read(const atomic_t *v)
 {
@@ -34,27 +48,27 @@ static __always_inline void arch_atomic_set(atomic_t *v, int i)
 #define M386_ATOMIC_OP(name, op)					\
 static __always_inline void arch_atomic_##name(int i, atomic_t *v)	\
 {									\
-	unsigned long flags = native_local_irq_save();			\
+	unsigned long flags = m386_atomic_irq_save();			\
 	v->counter op i;						\
-	native_local_irq_restore(flags);					\
+	m386_atomic_irq_restore(flags);					\
 }
 
 #define M386_ATOMIC_OP_RETURN(name, op)					\
 static __always_inline int arch_atomic_##name##_return(int i, atomic_t *v) \
 {									\
-	unsigned long flags = native_local_irq_save();			\
+	unsigned long flags = m386_atomic_irq_save();			\
 	int ret = (v->counter op i);					\
-	native_local_irq_restore(flags);					\
+	m386_atomic_irq_restore(flags);					\
 	return ret;							\
 }
 
 #define M386_ATOMIC_FETCH_OP(name, op)					\
 static __always_inline int arch_atomic_fetch_##name(int i, atomic_t *v)	\
 {									\
-	unsigned long flags = native_local_irq_save();			\
+	unsigned long flags = m386_atomic_irq_save();			\
 	int ret = v->counter;						\
 	v->counter op i;						\
-	native_local_irq_restore(flags);					\
+	m386_atomic_irq_restore(flags);					\
 	return ret;							\
 }
 

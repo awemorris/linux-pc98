@@ -50,6 +50,20 @@ config BLK_DEV_FD_RAWCMD
 
 	  If unsure, say N.
 
+config BLK_DEV_PC98_IDE
+	bool "Minimal NEC PC-9800 IDE block driver"
+	depends on X86_PC9800
+	depends on !ATA
+	help
+	  Small polling PIO driver for the built-in NEC PC-9800 IDE interface.
+	  It exposes the master disk as /dev/hd98a without using libata or the
+	  SCSI core.  The driver supports 512-byte LBA28 reads, writes and cache
+	  flushes and is intended for low-memory i386 systems booting from CF.
+
+	  Use the libata PATA_PC9800 driver instead when ATAPI, slave drives,
+	  hotplug, detailed error recovery, or disks larger than 128 GiB are
+	  required.
+
 config AMIGA_FLOPPY
 	tristate "Amiga floppy support"
 	depends on AMIGA

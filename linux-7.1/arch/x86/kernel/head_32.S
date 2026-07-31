@@ -44,7 +44,7 @@
 #define X86_CAPABILITY	new_cpu_data+CPUINFO_x86_capability
 #define X86_VENDOR_ID	new_cpu_data+CPUINFO_x86_vendor_id
 
-#ifdef CONFIG_M386
+#if defined(CONFIG_M386) && defined(CONFIG_X86_PC9800)
 /*
  * CR0.NE/WP/AM do not exist on 80386.  The 386-compatible startup state
  * retains the protected-mode, monitor-coprocessor and paging controls only.
@@ -59,7 +59,16 @@
  * a relocatable kernel can live anywhere in lowmem, so we need to be able
  * to map all of lowmem.
  */
+#ifdef CONFIG_M386
+/*
+ * The PC-9801 i386 profile is intentionally capped at 32 MiB.  Reserving
+ * page tables for the generic 896 MiB LOWMEM ceiling consumes 1 MiB of BSS
+ * before the allocator starts, which is prohibitive on a 4.6-16 MiB system.
+ */
+KERNEL_PAGES = (32 * 1024 * 1024) / PAGE_SIZE
+#else
 KERNEL_PAGES = LOWMEM_PAGES
+#endif
 
 INIT_MAP_SIZE = PAGE_TABLE_SIZE(KERNEL_PAGES) * PAGE_SIZE
 RESERVE_BRK(pagetables, INIT_MAP_SIZE)

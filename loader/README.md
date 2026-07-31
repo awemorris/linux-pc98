@@ -11,7 +11,7 @@ setup code is not executed.
 | 0             | `disk-ipl.bin`, with `IPL1` at offset 4            |
 | 1             | PC-98 partition table: sixteen 32-byte entries     |
 | 2 through 135 | `fat-loader.bin` followed by unused space          |
-| Partition 1   | PC-98 DOS-compatible FAT16 containing `BZIMAGE`    |
+| Partition 1   | PC-98 DOS-compatible FAT16 with `VMLINUX`/`BZIMAGE`|
 | Partition 2   | ext4 Debian root filesystem                        |
 
 The fixed BIOS geometry is eight heads and seventeen sectors per track.
@@ -34,24 +34,32 @@ sectors over 512-byte physical IDE sectors. Its offsets `0x3e..0x45`
 contain the NEC DOS extension: absolute partition start, relative data
 start, and physical sector size. A DOS formatter or installer may replace
 the PBR and filesystem to turn the first partition into a DOS system
-partition; that also replaces `BZIMAGE`, so Linux must be restored
+partition; that also replaces the Linux kernel file, so Linux must be restored
 afterwards if both uses are desired.
 
 ## FAT16 second stage
 
 `fat-loader.bin` reads 512- or 1024-byte logical-sector BPBs and the root
-directory from Partition 1, then searches for the 8.3 name `BZIMAGE`. It
-follows the FAT16 cluster chain, so the kernel file may be fragmented. The
-loader validates the bzImage `setup_sects`, `syssize`, `HdrS`, and
-`LOADED_HIGH` fields before copying the protected-mode payload to physical
-address `0x100000`.
+directory from Partition 1, then searches for the 8.3 names `VMLINUX` and
+`BZIMAGE`. It follows the FAT16 cluster chain, so the kernel file may be
+fragmented.
 
-The loader writes BSD-style progress directly to the first GDC text row. It
-shows the bzImage size, the `0x00100000` protected-mode load address, a live
-loaded-byte count, and one dot per 128 KiB. It changes the line to
-`Decompressing Linux...` before entering the compressed kernel. The kernel
-command line enables `earlyprintk=pc9800`, which takes over immediately after
-decompression and unregisters when the normal PC-98 console becomes ready.
+For a bzImage, the loader validates `setup_sects`, `syssize`, `HdrS`, and
+`LOADED_HIGH` before copying the protected-mode payload to physical address
+`0x100000`. It writes BSD-style progress directly to the first GDC text row:
+total size, load address, a live byte count, and progress dots. It changes the
+line to `Decompressing Linux...` before entering the compressed kernel.
+
+For an ELF32/i386 `vmlinux`, the loader validates the ELF header and the
+program-header table held in the first 1024 bytes. It accepts up to four
+`PT_LOAD` segments, streams their file contents directly to each segment's
+physical address, clears the file-to-memory tail, and jumps to `e_entry`.
+This avoids retaining a compressed input image and a decompression workspace
+in guest RAM. It is the preferred path for memory-constrained i386 PC-98
+systems, where CF storage capacity is less important than RAM.
+
+The kernel command line enables `earlyprintk=pc9800`, which takes over as soon
+as the kernel starts and unregisters when the normal PC-98 console is ready.
 
 ## Memory layout
 
@@ -63,7 +71,7 @@ decompression and unregisters when the normal PC-98 console becomes ready.
 | `0x00021000`     | Kernel command line                                |
 | `0x00028000`     | BPB and FAT read buffer                            |
 | `0x00030000`     | Directory and kernel read buffer                   |
-| `0x00100000`     | bzImage protected-mode payload                     |
+| `0x00100000`     | bzImage payload, or first ELF `PT_LOAD` segment    |
 
 The second stage obtains the memory sizes used for the e820 map from the
 PC-98 BIOS work area. It enables A20 and uses a flat unreal-mode segment to
@@ -79,6 +87,6 @@ make -C loader
 ./update-kernel.sh
 ```
 
-`update-kernel.sh` updates both boot records, the second-stage loader, the
-FAT16 filesystem, and `BZIMAGE` without modifying the Debian userland in
-Partition 2.
+`update-kernel.sh` updates both boot records, the second-stage loader, and the
+FAT16 filesystem without modifying Partition 2. The image builder stores an
+ELF input as `VMLINUX` and any other Linux boot image as `BZIMAGE`.

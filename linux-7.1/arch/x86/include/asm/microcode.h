@@ -61,7 +61,11 @@ static inline int intel_microcode_get_datasize(struct microcode_header_intel *hd
 	return hdr->datasize ? : DEFAULT_UCODE_DATASIZE;
 }
 
+#ifdef CONFIG_MICROCODE
 extern u32 intel_get_platform_id(void);
+#else
+static inline u32 intel_get_platform_id(void) { return 0; }
+#endif
 
 static inline u32 intel_get_microcode_revision(void)
 {

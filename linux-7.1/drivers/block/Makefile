@@ -12,6 +12,7 @@ ccflags-y				+= -I$(src)
 obj-$(CONFIG_MAC_FLOPPY)	+= swim3.o
 obj-$(CONFIG_BLK_DEV_SWIM)	+= swim_mod.o
 obj-$(CONFIG_BLK_DEV_FD)	+= floppy.o
+obj-$(CONFIG_BLK_DEV_PC98_IDE)	+= pc98_ide.o
 obj-$(CONFIG_AMIGA_FLOPPY)	+= amiflop.o
 obj-$(CONFIG_PS3_DISK)		+= ps3disk.o
 obj-$(CONFIG_PS3_VRAM)		+= ps3vram.o

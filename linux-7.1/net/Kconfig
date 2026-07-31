@@ -350,6 +350,7 @@ config CGROUP_NET_CLASSID
 
 config NET_RX_BUSY_POLL
 	bool
+	depends on !M386
 	default y if !PREEMPT_RT || (PREEMPT_RT && !NETCONSOLE)
 
 config BQL

@@ -15,6 +15,8 @@ kernel_build="${KERNEL_BUILD:-$default_kernel_build}"
 kernel_image="${KERNEL_IMAGE:-$kernel_build/arch/x86/boot/bzImage}"
 root_stage="${ROOT_STAGE:-$build/debian-i386-root}"
 root_mb="${ROOT_MB:-1024}"
+swap_mb="${SWAP_MB:-0}"
+small_ext4="${SMALL_EXT4:-0}"
 output="${OUTPUT_IMAGE:-$default_output}"
 
 if [ ! -f "$kernel_image" ]; then
@@ -31,6 +33,11 @@ fi
 mkdir -p "$build"
 make -C "$repo/loader"
 
+image_options=(--root-mb "$root_mb" --swap-mb "$swap_mb")
+if [ "$small_ext4" != 0 ]; then
+	image_options+=(--small-ext4)
+fi
+
 sudo python3 "$repo/tools/mk-pc98-linux-disk.py" create \
 	"$output" \
 	"$repo/loader/disk-ipl.bin" \
@@ -38,7 +45,7 @@ sudo python3 "$repo/tools/mk-pc98-linux-disk.py" create \
 	"$repo/loader/fat-loader.bin" \
 	"$kernel_image" \
 	"$root_stage" \
-	--root-mb "$root_mb"
+	"${image_options[@]}"
 sudo chown "$(id -u):$(id -g)" "$output"
 
 printf 'QEMU PC-98 Linux disk: %s\n' "$output"

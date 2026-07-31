@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build or update a two-partition PC-98 Linux raw disk image."""
+"""Build or update a PC-98 Linux raw disk image."""
 
 import argparse
 import math
@@ -146,7 +146,10 @@ def write_fat16(image, start_lba, total_physical_sectors, kernel_path,
         struct.pack_into("<H", fat, cluster * 2, following)
 
     root = bytearray(root_sectors * PC98_DOS_SECTOR_SIZE)
-    root[0:11] = b"BZIMAGE    "
+    if kernel.startswith(b"\x7fELF"):
+        root[0:11] = b"VMLINUX    "
+    else:
+        root[0:11] = b"BZIMAGE    "
     root[11] = 0x20
     struct.pack_into("<H", root, 26, first_cluster)
     struct.pack_into("<I", root, 28, len(kernel))
@@ -194,24 +197,53 @@ def copy_sparse(source_path, destination, destination_offset):
                 destination.write(chunk)
 
 
-def make_ext4(image, start_lba, total_sectors, root_stage):
+def make_ext4(image, start_lba, total_sectors, root_stage, small):
     byte_size = total_sectors * SECTOR_SIZE
     with tempfile.NamedTemporaryFile(
             prefix="mirai98-root-", suffix=".ext4", delete=False) as temp:
         root_image = temp.name
         temp.truncate(byte_size)
     try:
+        command = [
+            "mke2fs", "-q", "-F", "-t", "ext4", "-b", "1024",
+        ]
+        if small:
+            command += [
+                "-m", "0",
+                "-J", "size=1",
+                "-O",
+                "^64bit,^resize_inode,^orphan_file,^huge_file,"
+                "^dir_nlink,^flex_bg",
+            ]
+        command += [
+            "-E", "lazy_itable_init=0,lazy_journal_init=0",
+            "-d", root_stage, root_image,
+        ]
         subprocess.run(
-            [
-                "mke2fs", "-q", "-F", "-t", "ext4", "-b", "1024",
-                "-E", "lazy_itable_init=0,lazy_journal_init=0",
-                "-d", root_stage, root_image,
-            ],
+            command,
             check=True,
         )
         copy_sparse(root_image, image, start_lba * SECTOR_SIZE)
     finally:
         os.unlink(root_image)
+
+
+def make_swap(image, start_lba, total_sectors):
+    byte_size = total_sectors * SECTOR_SIZE
+    with tempfile.NamedTemporaryFile(
+            prefix="pc98-swap-", suffix=".swap", delete=False) as temp:
+        swap_image = temp.name
+        temp.truncate(byte_size)
+    try:
+        subprocess.run(
+            [
+                "mkswap", "--quiet", "--label", "PC98SWAP", swap_image,
+            ],
+            check=True,
+        )
+        copy_sparse(swap_image, image, start_lba * SECTOR_SIZE)
+    finally:
+        os.unlink(swap_image)
 
 
 def create(args):
@@ -236,10 +268,21 @@ def create(args):
     p2_cylinders = math.ceil(
         args.root_mb * 1024 * 1024 / (CYL_SECTORS * SECTOR_SIZE))
     p2_end_cyl = p2_start_cyl + p2_cylinders - 1
-    if p2_end_cyl > 0xFFFF:
+    if args.swap_mb < 0:
+        raise RuntimeError("swap partition size must not be negative")
+    if args.swap_mb:
+        p3_start_cyl = p2_end_cyl + 1
+        p3_cylinders = math.ceil(
+            args.swap_mb * 1024 * 1024 / (CYL_SECTORS * SECTOR_SIZE))
+        p3_end_cyl = p3_start_cyl + p3_cylinders - 1
+    else:
+        p3_start_cyl = 0
+        p3_cylinders = 0
+        p3_end_cyl = p2_end_cyl
+    if p3_end_cyl > 0xFFFF:
         raise RuntimeError("disk exceeds PC-98 CHS cylinder range")
 
-    total_sectors = (p2_end_cyl + 1) * CYL_SECTORS
+    total_sectors = (p3_end_cyl + 1) * CYL_SECTORS
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, "w+b") as image:
         image.truncate(total_sectors * SECTOR_SIZE)
@@ -253,6 +296,9 @@ def create(args):
             0xA1, 0x81, p1_start_cyl, p1_end_cyl, "LINUXBOOT")
         table[32:64] = partition_entry(
             0x21, 0x83, p2_start_cyl, p2_end_cyl, "LINUXROOT")
+        if args.swap_mb:
+            table[64:96] = partition_entry(
+                0x21, 0x82, p3_start_cyl, p3_end_cyl, "LINUXSWAP")
         image.seek(SECTOR_SIZE)
         image.write(table)
 
@@ -262,15 +308,25 @@ def create(args):
             image, p1_start, p1_sectors, args.kernel, pbr)
         make_ext4(
             image, chs_lba(p2_start_cyl),
-            p2_cylinders * CYL_SECTORS, args.root_stage)
+            p2_cylinders * CYL_SECTORS, args.root_stage,
+            args.small_ext4)
+        if args.swap_mb:
+            make_swap(
+                image, chs_lba(p3_start_cyl),
+                p3_cylinders * CYL_SECTORS)
         image.truncate(total_sectors * SECTOR_SIZE)
 
-    print(
+    summary = (
         f"wrote {args.output}: {total_sectors * SECTOR_SIZE} bytes; "
         f"p1 FAT16 LBA {p1_start}+{p1_sectors}, "
         f"p2 ext4 LBA {chs_lba(p2_start_cyl)}+"
         f"{p2_cylinders * CYL_SECTORS}; "
         f"kernel {fat_info['kernel_bytes']} bytes")
+    if args.swap_mb:
+        summary += (
+            f"; p3 swap LBA {chs_lba(p3_start_cyl)}+"
+            f"{p3_cylinders * CYL_SECTORS}")
+    print(summary)
 
 
 def update_kernel(args):
@@ -321,6 +377,10 @@ def main():
     create_parser.add_argument("root_stage")
     create_parser.add_argument("--boot-cylinders", type=int, default=1024)
     create_parser.add_argument("--root-mb", type=int, default=1024)
+    create_parser.add_argument("--swap-mb", type=int, default=0)
+    create_parser.add_argument(
+        "--small-ext4", action="store_true",
+        help="use a 1 MiB journal and omit large-filesystem ext4 features")
     create_parser.set_defaults(function=create)
 
     update_parser = subparsers.add_parser("update-kernel")

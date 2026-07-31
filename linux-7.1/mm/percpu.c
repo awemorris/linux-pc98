@@ -3341,6 +3341,13 @@ void __init setup_per_cpu_areas(void)
 
 	ai = pcpu_alloc_alloc_info(1, 1);
 	fc = memblock_alloc_from(unit_size, PAGE_SIZE, __pa(MAX_DMA_ADDRESS));
+	/*
+	 * A small legacy machine can have no RAM above MAX_DMA_ADDRESS at all.
+	 * Preserving DMA-zone memory is then impossible, but the UP percpu area
+	 * is still required to boot.  Fall back to any memblock range.
+	 */
+	if (!fc)
+		fc = memblock_alloc(unit_size, PAGE_SIZE);
 	if (!ai || !fc)
 		panic("Failed to allocate memory for percpu areas.");
 	/* kmemleak tracks the percpu allocations separately */

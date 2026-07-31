@@ -1,0 +1,174 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: PC-98 Linux maintainers <noreply@example.com>
+Date: Thu, 31 Jul 2026 13:00:00 +0900
+Subject: [PATCH] i386: use test-and-set for internal locks
+
+The original i386 atomic backend assumes i486 CMPXCHG, XADD and PAUSE
+instructions. A real i386 can implement exclusion directly with the memory
+form of XCHG, which is an atomic bus-locked operation on x86.
+
+Use a three-state test-and-set lock for musl's internal LOCK/UNLOCK
+abstraction:
+
+  0  unlocked
+  1  locked, no known waiter
+  2  locked, one or more possible waiters
+
+This is a lock implementation, not a compare-and-exchange emulation.
+Contended waiters publish state 2 before sleeping on the futex, and the
+unlocking thread wakes one waiter when it observes that state.
+
+The exit serialization lock has no data protected after acquisition and can
+use a one-bit test-and-set lock directly. Concurrent and recursive exit are
+already outside the defined C/POSIX behavior.
+
+Also remove PAUSE from the i386 spin hint. The remaining compare-and-
+exchange based pthread primitives are intentionally not rewritten by this
+patch and must not be linked into the single-thread PC-98 BusyBox image.
+---
+ arch/i386/atomic_arch.h |  4 ++--
+ src/exit/exit.c         | 10 +++-------
+ src/thread/__lock.c     | 63 +++++++++++++++++++------------------------
+ 3 files changed, 32 insertions(+), 45 deletions(-)
+
+diff --git a/arch/i386/atomic_arch.h b/arch/i386/atomic_arch.h
+index 047fb68e..ba7f6f24 100644
+--- a/arch/i386/atomic_arch.h
++++ b/arch/i386/atomic_arch.h
+@@ -11,6 +11,6 @@ static inline int a_swap(volatile int *p, int v)
+ {
+ 	__asm__ __volatile__(
+-		"xchg %0, %1"
++		"lock ; xchg %0, %1"
+ 		: "=r"(v), "=m"(*p) : "0"(v) : "memory" );
+ 	return v;
+ }
+@@ -61,7 +61,7 @@ static inline void a_barrier()
+ #define a_spin a_spin
+ static inline void a_spin()
+ {
+-	__asm__ __volatile__( "pause" : : : "memory" );
++	__asm__ __volatile__( "" : : : "memory" );
+ }
+ 
+ #define a_crash a_crash
+diff --git a/src/exit/exit.c b/src/exit/exit.c
+index 09dc3fe3..ee0f9ac6 100644
+--- a/src/exit/exit.c
++++ b/src/exit/exit.c
+@@ -30,16 +30,12 @@ weak_alias(libc_exit_fini, __libc_exit_fini);
+ 
+ _Noreturn void exit(int code)
+ {
+-	/* Handle potentially concurrent or recursive calls to exit,
+-	 * whose behaviors have traditionally been undefined by the
+-	 * standards. Using a custom lock here avoids pulling in lock
+-	 * machinery and lets us trap recursive calls while supporting
+-	 * multiple threads contending to be the one to exit(). */
++	/* Serialize exit without requiring compare-and-exchange. Concurrent
++	 * and recursive calls are outside the defined interface; the first
++	 * caller exits and all contenders remain stopped here. */
+ 	static volatile int exit_lock[1];
+-	int tid =  __pthread_self()->tid;
+-	int prev = a_cas(exit_lock, 0, tid);
+-	if (prev == tid) a_crash();
+-	else if (prev) for (;;) __sys_pause();
++	if (a_swap(exit_lock, 1))
++		for (;;) __sys_pause();
+ 
+ 	__funcs_on_exit();
+ 	__libc_exit_fini();
+diff --git a/src/thread/__lock.c b/src/thread/__lock.c
+index 45557c8a..c6f7dd90 100644
+--- a/src/thread/__lock.c
++++ b/src/thread/__lock.c
+@@ -1,62 +1,43 @@
+ #include "pthread_impl.h"
+ 
+-/* This lock primitive combines a flag (in the sign bit) and a
+- * congestion count (= threads inside the critical section, CS) in a
+- * single int that is accessed through atomic operations. The states
+- * of the int for value x are:
++/*
++ * i386 test-and-set lock states:
+  *
+- * x == 0: unlocked and no thread inside the critical section
+- *
+- * x < 0: locked with a congestion of x-INT_MIN, including the thread
+- * that holds the lock
+- *
+- * x > 0: unlocked with a congestion of x
+- *
+- * or in an equivalent formulation x is the congestion count or'ed
+- * with INT_MIN as a lock flag.
++ *   0  unlocked
++ *   1  locked, no known waiter
++ *   2  locked, one or more possible waiters
++ *
++ * a_swap is implemented with memory XCHG, which is atomic on an i386.
++ * A waiter changes state 1 to state 2 before sleeping so that unlock
++ * cannot miss the required wakeup.
+  */
+ 
+ void __lock(volatile int *l)
+ {
+ 	int need_locks = libc.need_locks;
+ 	if (!need_locks) return;
+-	/* fast path: INT_MIN for the lock, +1 for the congestion */
+-	int current = a_cas(l, 0, INT_MIN + 1);
++
++	int current = a_swap(l, 1);
+ 	if (need_locks < 0) libc.need_locks = 0;
+ 	if (!current) return;
+-	/* A first spin loop, for medium congestion. */
+-	for (unsigned i = 0; i < 10; ++i) {
+-		if (current < 0) current -= INT_MIN + 1;
+-		// assertion: current >= 0
+-		int val = a_cas(l, current, INT_MIN + (current + 1));
+-		if (val == current) return;
+-		current = val;
+-	}
+-	// Spinning failed, so mark ourselves as being inside the CS.
+-	current = a_fetch_add(l, 1) + 1;
+-	/* The main lock acquisition loop for heavy congestion. The only
+-	 * change to the value performed inside that loop is a successful
+-	 * lock via the CAS that acquires the lock. */
++
+ 	for (;;) {
+-		/* We can only go into wait, if we know that somebody holds the
+-		 * lock and will eventually wake us up, again. */
+-		if (current < 0) {
+-			__futexwait(l, current, 1);
+-			current -= INT_MIN + 1;
+-		}
+-		/* assertion: current > 0, the count includes us already. */
+-		int val = a_cas(l, current, INT_MIN + current);
+-		if (val == current) return;
+-		current = val;
++		/*
++		 * XCHG both tests the old value and publishes the waiter state.
++		 * If it observes zero, the lock is now held in state 2; keeping
++		 * state 2 permits a later unlock to hand off to another waiter.
++		 */
++		current = a_swap(l, 2);
++		if (!current) return;
++
++		/* The futex comparison closes the race with an unlock that
++		 * happens between the XCHG and the wait system call. */
++		__futexwait(l, 2, 1);
+ 	}
+ }
+ 
+ void __unlock(volatile int *l)
+ {
+-	/* Check l[0] to see if we are multi-threaded. */
+-	if (l[0] < 0) {
+-		if (a_fetch_add(l, -(INT_MIN + 1)) != (INT_MIN + 1)) {
+-			__wake(l, 1, 1);
+-		}
+-	}
++	if (a_swap(l, 0) == 2)
++		__wake(l, 1, 1);
+ }
+-- 
+2.47.0

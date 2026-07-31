@@ -1,0 +1,327 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: PC-98 Linux maintainers <noreply@example.com>
+Date: Thu, 31 Jul 2026 13:10:00 +0900
+Subject: [PATCH] i386: add the PC-98 single-thread static profile
+
+The PC-98 i386 root filesystem contains one static BusyBox process and does
+not provide pthreads. Make that restriction explicit instead of pretending
+to provide compare-and-exchange based threading primitives on an i386.
+
+Keep stdio ownership and recursive locking semantics, but serialize updates
+to the owner word with musl's test-and-set internal lock. A plain mutex is
+also sufficient for the fork/thread-create exclusion lock; it is stronger
+than the original reader/writer lock but preserves the required ordering.
+
+Avoid the vDSO function-pointer cache so clock_gettime goes directly through
+the syscall path. The target has no floating-point requirement, so reject
+floating-point printf conversion specifiers and omit the floating formatter.
+Integer, pointer, character, and string formatting remain available.
+
+Finally, reduce synccall to a direct callback in this explicitly
+single-thread profile. This patch does not claim to make musl pthread APIs
+i386-safe; those APIs are outside this root filesystem profile.
+---
+ arch/i386/syscall_arch.h |  2 ++
+ src/stdio/__lockfile.c   | 37 ++++++++++++++++++++++++++-----------
+ src/stdio/getc.h         |  5 ++---
+ src/stdio/putc.h         |  5 ++---
+ src/stdio/vfprintf.c     | 12 ++++++++++++
+ src/stdio/vfscanf.c      | 10 ++++++++++
+ src/thread/lock_ptc.c    | 15 ++++++++++-----
+ src/thread/synccall.c    | 12 ++++++++++++
+ 8 files changed, 76 insertions(+), 22 deletions(-)
+
+diff --git a/arch/i386/syscall_arch.h b/arch/i386/syscall_arch.h
+index f92b7aa..ea83bda 100644
+--- a/arch/i386/syscall_arch.h
++++ b/arch/i386/syscall_arch.h
+@@ -83,7 +83,9 @@ static inline long __syscall6(long n, long a1, long a2, long a3, long a4, long a
+ }
+ 
+ #define VDSO_USEFUL
++#ifndef MUSL_I386_SINGLE_THREAD
+ #define VDSO_CGT32_SYM "__vdso_clock_gettime"
+ #define VDSO_CGT32_VER "LINUX_2.6"
+ #define VDSO_CGT_SYM "__vdso_clock_gettime64"
+ #define VDSO_CGT_VER "LINUX_2.6"
++#endif
+diff --git a/src/stdio/__lockfile.c b/src/stdio/__lockfile.c
+index 0f60a14..6731181 100644
+--- a/src/stdio/__lockfile.c
++++ b/src/stdio/__lockfile.c
+@@ -1,23 +1,38 @@
+ #include "stdio_impl.h"
+ #include "pthread_impl.h"
++#include "lock.h"
++
++static volatile int file_lock_guard[1];
+ 
+ int __lockfile(FILE *f)
+ {
+-	int owner = f->lock, tid = __pthread_self()->tid;
+-	if ((owner & ~MAYBE_WAITERS) == tid)
+-		return 0;
+-	owner = a_cas(&f->lock, 0, tid);
+-	if (!owner) return 1;
+-	while ((owner = a_cas(&f->lock, 0, tid|MAYBE_WAITERS))) {
+-		if ((owner & MAYBE_WAITERS) ||
+-		    a_cas(&f->lock, owner, owner|MAYBE_WAITERS)==owner)
+-			__futexwait(&f->lock, owner|MAYBE_WAITERS, 1);
++	int tid = __pthread_self()->tid;
++
++	for (;;) {
++		LOCK(file_lock_guard);
++		int owner = f->lock;
++		if ((owner & ~MAYBE_WAITERS) == tid) {
++			UNLOCK(file_lock_guard);
++			return 0;
++		}
++		if (owner < 0) owner = f->lock = 0;
++		if (!owner) {
++			f->lock = tid;
++			UNLOCK(file_lock_guard);
++			return 1;
++		}
++		owner = f->lock = owner | MAYBE_WAITERS;
++		UNLOCK(file_lock_guard);
++		__futexwait(&f->lock, owner, 1);
+ 	}
+-	return 1;
+ }
+ 
+ void __unlockfile(FILE *f)
+ {
+-	if (a_swap(&f->lock, 0) & MAYBE_WAITERS)
++	LOCK(file_lock_guard);
++	int owner = f->lock;
++	f->lock = 0;
++	UNLOCK(file_lock_guard);
++	if (owner & MAYBE_WAITERS)
+ 		__wake(&f->lock, 1, 1);
+ }
+diff --git a/src/stdio/getc.h b/src/stdio/getc.h
+index e24f990..f60413c 100644
+--- a/src/stdio/getc.h
++++ b/src/stdio/getc.h
+@@ -6,10 +6,9 @@ __attribute__((__noinline__))
+ #endif
+ static int locking_getc(FILE *f)
+ {
+-	if (a_cas(&f->lock, 0, MAYBE_WAITERS-1)) __lockfile(f);
++	int unlock = __lockfile(f);
+ 	int c = getc_unlocked(f);
+-	if (a_swap(&f->lock, 0) & MAYBE_WAITERS)
+-		__wake(&f->lock, 1, 1);
++	if (unlock) __unlockfile(f);
+ 	return c;
+ }
+ 
+diff --git a/src/stdio/putc.h b/src/stdio/putc.h
+index 2014c4e..935257b 100644
+--- a/src/stdio/putc.h
++++ b/src/stdio/putc.h
+@@ -6,10 +6,9 @@ __attribute__((__noinline__))
+ #endif
+ static int locking_putc(int c, FILE *f)
+ {
+-	if (a_cas(&f->lock, 0, MAYBE_WAITERS-1)) __lockfile(f);
++	int unlock = __lockfile(f);
+ 	c = putc_unlocked(c, f);
+-	if (a_swap(&f->lock, 0) & MAYBE_WAITERS)
+-		__wake(&f->lock, 1, 1);
++	if (unlock) __unlockfile(f);
+ 	return c;
+ }
+ 
+diff --git a/src/stdio/vfprintf.c b/src/stdio/vfprintf.c
+index 514a44d..01a1532 100644
+--- a/src/stdio/vfprintf.c
++++ b/src/stdio/vfprintf.c
+@@ -50,8 +50,10 @@ static const unsigned char states[]['z'-'A'+1] = {
+ 	{ /* 0: bare types */
+ 		S('d') = INT, S('i') = INT,
+ 		S('o') = UINT, S('u') = UINT, S('x') = UINT, S('X') = UINT,
++#ifndef MUSL_NO_FLOAT
+ 		S('e') = DBL, S('f') = DBL, S('g') = DBL, S('a') = DBL,
+ 		S('E') = DBL, S('F') = DBL, S('G') = DBL, S('A') = DBL,
++#endif
+ 		S('c') = INT, S('C') = UINT,
+ 		S('s') = PTR, S('S') = PTR, S('p') = UIPTR, S('n') = PTR,
+ 		S('m') = NOARG,
+@@ -60,8 +62,10 @@ static const unsigned char states[]['z'-'A'+1] = {
+ 	}, { /* 1: l-prefixed */
+ 		S('d') = LONG, S('i') = LONG,
+ 		S('o') = ULONG, S('u') = ULONG, S('x') = ULONG, S('X') = ULONG,
++#ifndef MUSL_NO_FLOAT
+ 		S('e') = DBL, S('f') = DBL, S('g') = DBL, S('a') = DBL,
+ 		S('E') = DBL, S('F') = DBL, S('G') = DBL, S('A') = DBL,
++#endif
+ 		S('c') = UINT, S('s') = PTR, S('n') = PTR,
+ 		S('l') = LLPRE,
+ 	}, { /* 2: ll-prefixed */
+@@ -81,8 +85,10 @@ static const unsigned char states[]['z'-'A'+1] = {
+ 		S('x') = UCHAR, S('X') = UCHAR,
+ 		S('n') = PTR,
+ 	}, { /* 5: L-prefixed */
++#ifndef MUSL_NO_FLOAT
+ 		S('e') = LDBL, S('f') = LDBL, S('g') = LDBL, S('a') = LDBL,
+ 		S('E') = LDBL, S('F') = LDBL, S('G') = LDBL, S('A') = LDBL,
++#endif
+ 		S('n') = PTR,
+ 	}, { /* 6: z- or t-prefixed (assumed to be same size) */
+ 		S('d') = PDIFF, S('i') = PDIFF,
+@@ -125,8 +131,10 @@ static void pop_arg(union arg *arg, int type, va_list *ap)
+ 	break; case UMAX:	arg->i = va_arg(*ap, uintmax_t);
+ 	break; case PDIFF:	arg->i = va_arg(*ap, ptrdiff_t);
+ 	break; case UIPTR:	arg->i = (uintptr_t)va_arg(*ap, void *);
++#ifndef MUSL_NO_FLOAT
+ 	break; case DBL:	arg->f = va_arg(*ap, double);
+ 	break; case LDBL:	arg->f = va_arg(*ap, long double);
++#endif
+ 	}
+ }
+ 
+@@ -171,6 +179,7 @@ static char *fmt_u(uintmax_t x, char *s)
+ 	return s;
+ }
+ 
++#ifndef MUSL_NO_FLOAT
+ /* Do not override this check. The floating point printing code below
+  * depends on the float.h constants being right. If they are wrong, it
+  * may overflow the stack. */
+@@ -417,6 +426,7 @@ static int fmt_fp(FILE *f, long double y, int w, int p, int fl, int t, int ps)
+ 
+ 	return MAX(w, pl+l);
+ }
++#endif
+ 
+ static int getint(char **s) {
+ 	int i;
+@@ -621,12 +631,14 @@ static int printf_core(FILE *f, const char *fmt, va_list *ap, union arg *nl_arg,
+ 			pad(f, ' ', w, p, fl^LEFT_ADJ);
+ 			l = w>p ? w : p;
+ 			continue;
++#ifndef MUSL_NO_FLOAT
+ 		case 'e': case 'f': case 'g': case 'a':
+ 		case 'E': case 'F': case 'G': case 'A':
+ 			if (xp && p<0) goto overflow;
+ 			l = fmt_fp(f, arg.f, w, p, fl, t, ps);
+ 			if (l<0) goto overflow;
+ 			continue;
++#endif
+ 		}
+ 
+		if (p < z-a) p = z-a;
+diff --git a/src/stdio/vfscanf.c b/src/stdio/vfscanf.c
+index b78a374..8de99eb 100644
+--- a/src/stdio/vfscanf.c
++++ b/src/stdio/vfscanf.c
+@@ -10,7 +10,9 @@
+ #include "stdio_impl.h"
+ #include "shgetc.h"
+ #include "intscan.h"
++#ifndef MUSL_NO_FLOAT
+ #include "floatscan.h"
++#endif
+ 
+ #define SIZE_hh -2
+ #define SIZE_h  -1
+@@ -68,7 +70,9 @@ int vfscanf(FILE *restrict f, const char *restrict fmt, va_list ap)
+ 	int invert;
+ 	int matches=0;
+ 	unsigned long long x;
++#ifndef MUSL_NO_FLOAT
+ 	long double y;
++#endif
+ 	off_t pos = 0;
+ 	unsigned char scanset[257];
+ 	size_t i, k;
+@@ -151,8 +155,12 @@ int vfscanf(FILE *restrict f, const char *restrict fmt, va_list ap)
+ 			size = SIZE_L;
+ 			break;
+ 		case 'd': case 'i': case 'o': case 'u': case 'x':
++#ifndef MUSL_NO_FLOAT
+ 		case 'a': case 'e': case 'f': case 'g':
+ 		case 'A': case 'E': case 'F': case 'G': case 'X':
++#else
++		case 'X':
++#endif
+ 		case 's': case 'c': case '[':
+ 		case 'S': case 'C':
+ 		case 'p': case 'n':
+@@ -298,6 +306,7 @@ int vfscanf(FILE *restrict f, const char *restrict fmt, va_list ap)
+ 			if (t=='p' && dest) *(void **)dest = (void *)(uintptr_t)x;
+ 			else store_int(dest, size, x);
+ 			break;
++#ifndef MUSL_NO_FLOAT
+ 		case 'a': case 'A':
+ 		case 'e': case 'E':
+ 		case 'f': case 'F':
+@@ -316,6 +325,7 @@ int vfscanf(FILE *restrict f, const char *restrict fmt, va_list ap)
+ 				break;
+ 			}
+ 			break;
++#endif
+ 		}
+ 
+ 		pos += shcnt(f);
+diff --git a/src/thread/lock_ptc.c b/src/thread/lock_ptc.c
+index 7adedab..d4affe4 100644
+--- a/src/thread/lock_ptc.c
++++ b/src/thread/lock_ptc.c
+@@ -1,18 +1,23 @@
+-#include <pthread.h>
++#include "pthread_impl.h"
++#include "lock.h"
+ 
+-static pthread_rwlock_t lock = PTHREAD_RWLOCK_INITIALIZER;
++/*
++ * A mutex is stronger than the original reader/writer lock, but preserves
++ * the required exclusion between fork and thread creation without CAS.
++ */
++static volatile int lock[1];
+ 
+ void __inhibit_ptc()
+ {
+-	pthread_rwlock_wrlock(&lock);
++	LOCK(lock);
+ }
+ 
+ void __acquire_ptc()
+ {
+-	pthread_rwlock_rdlock(&lock);
++	LOCK(lock);
+ }
+ 
+ void __release_ptc()
+ {
+-	pthread_rwlock_unlock(&lock);
++	UNLOCK(lock);
+ }
+diff --git a/src/thread/synccall.c b/src/thread/synccall.c
+index 3859725..9512933 100644
+--- a/src/thread/synccall.c
++++ b/src/thread/synccall.c
+@@ -1,4 +1,14 @@
+ #include "pthread_impl.h"
++
++#ifdef MUSL_I386_SINGLE_THREAD
++
++void __synccall(void (*func)(void *), void *ctx)
++{
++	func(ctx);
++}
++
++#else
++
+ #include <semaphore.h>
+ #include <string.h>
+ 
+@@ -120,3 +130,5 @@ single_threaded:
+ 	__tl_unlock();
+ 	__restore_sigs(&oldmask);
+ }
++
++#endif
+-- 
+2.47.0

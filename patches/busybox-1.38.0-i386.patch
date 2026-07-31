@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: PC-98 Linux maintainers <noreply@example.com>
+Date: Thu, 31 Jul 2026 12:15:00 +0900
+Subject: [PATCH] i386: do not require i486 instructions
+
+BusyBox intentionally raises its generic 32-bit x86 baseline to i486 in
+order to use BSWAP.  Restore a real i386 baseline for the PC-98 research
+root filesystem.  GCC expands byte swaps to XCHG/ROL when compiling for
+i386.
+
+The dump formatter contains one explicit BSWAP which bypasses the compiler
+target.  Keep its fast path for x86-64 and i486-or-newer builds, and use the
+existing portable fallback on i386.
+---
+ arch/i386/Makefile | 6 +++---
+ libbb/dump.c       | 5 ++++-
+ 2 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/arch/i386/Makefile b/arch/i386/Makefile
+index 1c9601c6a..b5d7dd700 100644
+--- a/arch/i386/Makefile
++++ b/arch/i386/Makefile
+@@ -2,9 +2,9 @@
+ # Build system
+ # ==========================================================================
+ 
+-# Allow i486 insns (basically, bswap insn)
+-# Do not try to tune for 486+ (might add padding)
+-CFLAGS += $(call cc-option,-march=i486 -mtune=i386,)
++# Preserve a true i386 instruction baseline.
++# Do not try to tune for 486+ (it might add padding).
++CFLAGS += $(call cc-option,-march=i386 -mtune=i386,)
+ 
+ ifeq ($(CONFIG_STACK_OPTIMIZATION_386),y)
+ # -mpreferred-stack-boundary=2 is essential in preventing gcc 4.2.x
+diff --git a/libbb/dump.c b/libbb/dump.c
+index 984b2eb6b..bf35f15fc 100644
+--- a/libbb/dump.c
++++ b/libbb/dump.c
+@@ -495,7 +495,10 @@ static void conv_c(PR *pr, unsigned char *p)
+ 		*pr->cchar = 'c';
+ 		printf(pr->fmt, *p);
+ 	} else {
+-#if defined(__i386__) || defined(__x86_64__)
++#if defined(__x86_64__) \
++ || defined(__i486__) || defined(__i586__) || defined(__i686__) \
++ || defined(__pentium__) || defined(__pentiumpro__) \
++ || defined(__pentium4__)
+ 		/* Abuse partial register operations */
+ 		uint32_t buf;
+ 		unsigned n = *p;
+-- 
+2.47.0

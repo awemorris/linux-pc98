@@ -1,0 +1,119 @@
+diff --git a/Config.in.legacy b/Config.in.legacy
+index a7f09c03..0172ed27 100644
+--- a/Config.in.legacy
++++ b/Config.in.legacy
+@@ -6398,13 +6398,6 @@ config BR2_TOOLCHAIN_EXTERNAL_CODESOURCERY_POWERPC_E500V2
+ 	  maintained, and causing numerous build failures with modern
+ 	  userspace packages.
+ 
+-config BR2_x86_i386
+-	bool "x86 i386 support removed"
+-	select BR2_LEGACY
+-	help
+-	  The support for the i386 processors of the x86 architecture
+-	  has been removed.
+-
+ config BR2_PACKAGE_QT5QUICK1
+ 	bool "qt5quick1 package removed"
+ 	select BR2_LEGACY
+diff --git a/arch/Config.in.x86 b/arch/Config.in.x86
+index 3c4a7253..2f37649a 100644
+--- a/arch/Config.in.x86
++++ b/arch/Config.in.x86
+@@ -40,6 +40,11 @@ choice
+ 	help
+ 	  Specific CPU variant to use
+ 
++config BR2_x86_i386
++	bool "i386"
++	depends on !BR2_HIDE_SECONDARY_TARGET_OPTIONS
++	depends on !BR2_x86_64
++
+ config BR2_x86_i486
+ 	bool "i486"
+ 	depends on !BR2_HIDE_SECONDARY_TARGET_OPTIONS
+@@ -710,6 +715,7 @@ config BR2_x86_winchip2
+ endchoice
+ 
+ config BR2_ARCH
++	default "i386"		if BR2_x86_i386
+ 	default "i486"		if BR2_x86_i486
+ 	default "i586"		if BR2_x86_i586
+ 	default "i586"		if BR2_x86_x1000
+@@ -735,6 +741,7 @@ config BR2_ENDIAN
+ 	default "LITTLE"
+ 
+ config BR2_GCC_TARGET_ARCH
++	default "i386"		if BR2_x86_i386
+ 	default "i486"		if BR2_x86_i486
+ 	default "i586"		if BR2_x86_i586
+ 	default "i586"		if BR2_x86_x1000
+diff --git a/package/musl/musl.mk b/package/musl/musl.mk
+index af9e7e7a..e1cf4025 100644
+--- a/package/musl/musl.mk
++++ b/package/musl/musl.mk
+@@ -39,6 +39,15 @@ ifeq ($(BR2_ARM_INSTRUCTIONS_THUMB),y)
+ MUSL_EXTRA_CFLAGS += -marm
+ endif
+ 
++# mallocng uses compare-and-exchange directly.  The older allocator uses
++# musl's internal lock abstraction, which has an i386 TAS implementation.
++ifeq ($(BR2_x86_i386),y)
++MUSL_CONF_OPTS += --with-malloc=oldmalloc
++MUSL_EXTRA_CFLAGS += -march=i386 -mtune=i386
++MUSL_EXTRA_CFLAGS += -fno-isolate-erroneous-paths-dereference
++MUSL_EXTRA_CFLAGS += -DMUSL_I386_SINGLE_THREAD -DMUSL_NO_FLOAT
++endif
++
+ define MUSL_CONFIGURE_CMDS
+ 	(cd $(@D); \
+ 		$(TARGET_CONFIGURE_OPTS) \
+@@ -57,6 +64,7 @@ define MUSL_CONFIGURE_CMDS
+ 			--libdir=/lib \
+ 			--disable-gcc-wrapper \
+ 			--enable-static \
++			$(MUSL_CONF_OPTS) \
+ 			$(if $(BR2_STATIC_LIBS),--disable-shared,--enable-shared))
+ endef
+ 
+diff --git a/toolchain/Config.in b/toolchain/Config.in
+index 910cd103..840e8c15 100644
+--- a/toolchain/Config.in
++++ b/toolchain/Config.in
+@@ -29,9 +29,9 @@ config BR2_TOOLCHAIN_USES_MUSL
+ 	bool
+ 	select BR2_USE_WCHAR
+ 	select BR2_ENABLE_LOCALE
+-	select BR2_TOOLCHAIN_HAS_THREADS
+-	select BR2_TOOLCHAIN_HAS_THREADS_DEBUG
+-	select BR2_TOOLCHAIN_HAS_THREADS_NPTL
++	select BR2_TOOLCHAIN_HAS_THREADS if !BR2_x86_i386
++	select BR2_TOOLCHAIN_HAS_THREADS_DEBUG if !BR2_x86_i386
++	select BR2_TOOLCHAIN_HAS_THREADS_NPTL if !BR2_x86_i386
+ 	select BR2_TOOLCHAIN_SUPPORTS_PIE if !BR2_STATIC_LIBS
+ 
+ choice
+@@ -878,6 +878,7 @@ config BR2_TOOLCHAIN_HAS_MNAN_OPTION
+ config BR2_TOOLCHAIN_HAS_SYNC_1
+ 	bool
+ 	default y
++	depends on !BR2_x86_i386
+ 	depends on !BR2_m68k_cf
+ 	depends on !BR2_microblaze
+ 	depends on !BR2_sparc
+@@ -890,6 +891,7 @@ config BR2_TOOLCHAIN_HAS_SYNC_2
+ config BR2_TOOLCHAIN_HAS_SYNC_4
+ 	bool
+ 	default y
++	depends on !BR2_x86_i386
+ 	depends on !BR2_m68k_cf
+ 	depends on !BR2_sparc
+ 	depends on !(BR2_arc && !BR2_ARC_ATOMIC_EXT)
+@@ -923,6 +925,7 @@ config BR2_TOOLCHAIN_X86_HAS_SYNC_8
+ 	bool
+ 	default y
+ 	depends on BR2_i386
++	depends on !BR2_x86_i386
+ 	depends on !BR2_x86_i486
+ 	depends on !BR2_x86_c3
+ 	depends on !BR2_x86_winchip_c6

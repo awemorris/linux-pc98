@@ -11,7 +11,7 @@ git submodule update --init --recursive
 |---|---|---|---|
 | `gcc/` | `awemorris/gcc-i386` | GCC 14.3.0 | Known-working i386 compiler baseline; no functional source patch yet |
 | `musl/` | `awemorris/musl-i386` | musl 1.2.6 | TAS internal locks and the static low-memory profile |
-| `glibc/` | `awemorris/glibc-i386` | glibc 2.43 | Pristine research baseline; the genuine i386 port has not started |
+| `glibc/` | `awemorris/glibc-i386` | glibc 2.41 | Working genuine-i386 port on `port/glibc-2.41-i386`; submodule commit and patch export pending review |
 
 qemu-pc98 is a separate top-level submodule at `../qemu-pc98/`.
 
@@ -37,9 +37,40 @@ MUSL_OVERRIDE_SRCDIR = /path/to/linux-pc98/toolchain/musl
 ```
 
 Buildroot copies these sources into its build directory and skips the normal
-GCC and musl download, extraction, and patch phases. glibc is not part of the
-current static-musl root filesystem. Binutils remains an official release
-tarball managed by Buildroot.
+GCC and musl download, extraction, and patch phases. The release BusyBox
+rootfs remains the bootstrap/static-musl environment. The glibc validation
+scripts reuse its compiler and BusyBox applet configuration, then link a
+separate dynamic BusyBox against glibc 2.41. Binutils remains an official
+release tarball managed by Buildroot.
+
+## glibc 2.41 genuine-i386 validation
+
+The glibc port depends on the versioned atomic service in this repository's
+Linux 7.1 tree. It is deliberately enabled only for an exact i386 build;
+i486 uses the normal glibc code and native CPU atomics.
+
+```sh
+./build-glibc.sh i386
+./build-glibc-tests.sh i386
+./build-glibc-busybox.sh i386
+./check-glibc-i386-opcodes.sh
+
+./build-glibc.sh i486
+./build-glibc-tests.sh i486
+./build-glibc-busybox.sh i486
+```
+
+The current qemu-pc98 validation passed with both `-cpu 386` and `-cpu 486`.
+On i386, dynamic loading, malloc, TLS, pthread mutexes, fork, process-shared
+robust mutexes, COW/read-only fault containment, and the 12-test atomic UAPI
+selftest all pass. A dynamically glibc-linked BusyBox also runs as
+`/sbin/init`. See `../GLIBC-2.41-I386-PORT-PLAN.md`, section 22, for the
+implemented design, test matrix, and remaining Debian packaging gates.
+
+The glibc working tree is not yet committed. Commit it in the submodule
+before updating the superproject gitlink or exporting
+`patchsets/glibc/2.41/*.patch`; otherwise the implementation itself will be
+missing from the recorded revision.
 
 ## Updating a component
 

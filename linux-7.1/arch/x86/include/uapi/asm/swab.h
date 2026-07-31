@@ -5,7 +5,16 @@
 #include <linux/types.h>
 #include <linux/compiler.h>
 
-#ifndef CONFIG_M386
+/*
+ * BSWAP was introduced with the i486.  UAPI headers must not depend on a
+ * kernel CONFIG_* symbol, because that would make an installed header select
+ * code according to the kernel build rather than the userspace target ISA.
+ * GCC and Clang define the processor-specific macros below when the matching
+ * -march target (or a later one) is selected.  With an exact i386 target,
+ * leave __arch_swab* undefined so linux/swab.h uses its portable fallback.
+ */
+#if !defined(__i386__) || defined(__i486__) || defined(__i586__) || \
+	defined(__i686__)
 static inline __attribute_const__ __u32 __arch_swab32(__u32 val)
 {
 	asm("bswapl %0" : "=r" (val) : "0" (val));
@@ -34,6 +43,6 @@ static inline __attribute_const__ __u64 __arch_swab64(__u64 val)
 #endif
 }
 #define __arch_swab64 __arch_swab64
-#endif
+#endif /* bswap-capable userspace ISA */
 
 #endif /* _ASM_X86_SWAB_H */

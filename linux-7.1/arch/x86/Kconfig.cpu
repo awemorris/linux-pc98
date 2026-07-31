@@ -252,6 +252,16 @@ config MATOM
 
 endchoice
 
+config X86_USER_ATOMIC_386
+	bool "Genuine i386 userspace atomic service"
+	depends on M386
+	default y
+	help
+	  Provide the versioned i386_atomic system call used by a genuine
+	  Intel 80386 glibc.  The 80386 has no CMPXCHG or XADD instruction,
+	  so modern process-shared pthread state machines need a small kernel
+	  service.  This option is restricted to the uniprocessor M386 build.
+
 config CC_HAS_MARCH_NATIVE
 	# This flag might not be available in cross-compilers:
 	def_bool $(cc-option, -march=native)

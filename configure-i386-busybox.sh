@@ -39,7 +39,9 @@ cp "$base" "$config"
 	--disable M386 \
 	--disable M486SX \
 	--disable M486 \
-	--enable "$cpu_config"
+	--enable "$cpu_config" \
+	--enable FUTEX \
+	--enable COMPAT_32BIT_TIME
 
 case "$console_mode" in
 dual)

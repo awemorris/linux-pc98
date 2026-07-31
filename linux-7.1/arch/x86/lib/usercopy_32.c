@@ -36,7 +36,8 @@ static inline int __movsl_is_ok(unsigned long a1, unsigned long a2, unsigned lon
  * The 80386 has no functional CR0.WP bit: supervisor-mode stores ignore
  * read-only PTEs and therefore cannot trigger COW or reject a read-only VMA.
  * Resolve one destination page at a time with FOLL_WRITE, then copy through
- * its kernel mapping while the mmap read lock keeps that mapping stable.
+ * its pinned kernel mapping.  The fast GUP path avoids recursively acquiring
+ * mmap_lock and falls back to the full fault path when COW must be resolved.
  *
  * This is the modern equivalent of Linux 3.6's i386
  * __copy_to_user_ll() slow path.
@@ -55,10 +56,8 @@ unsigned long __copy_to_user_386(void __user *to, const void *from,
 		void *mapping;
 		long pinned;
 
-		mmap_read_lock(current->mm);
-		pinned = get_user_pages(address, 1, FOLL_WRITE, &page);
+		pinned = get_user_pages_fast(address, 1, FOLL_WRITE, &page);
 		if (pinned != 1) {
-			mmap_read_unlock(current->mm);
 			break;
 		}
 
@@ -67,7 +66,6 @@ unsigned long __copy_to_user_386(void __user *to, const void *from,
 		kunmap_local(mapping);
 		set_page_dirty_lock(page);
 		put_page(page);
-		mmap_read_unlock(current->mm);
 
 		to = (char __user *)to + len;
 		from = (const char *)from + len;

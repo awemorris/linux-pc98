@@ -11,6 +11,10 @@
 #include <asm/errno.h>
 #include <asm/processor.h>
 #include <asm/smap.h>
+#ifdef CONFIG_X86_USER_ATOMIC_386
+#include <asm/i386_user_atomic.h>
+#include <uapi/asm/i386_atomic.h>
+#endif
 
 #define unsafe_atomic_op1(insn, oval, uaddr, oparg, label)	\
 do {								\
@@ -48,6 +52,39 @@ do {								\
 static __always_inline int arch_futex_atomic_op_inuser(int op, int oparg, int *oval,
 						       u32 __user *uaddr)
 {
+#ifdef CONFIG_X86_USER_ATOMIC_386
+	u32 atomic_op;
+	u32 value = oparg;
+	u32 observed;
+	int ret;
+
+	switch (op) {
+	case FUTEX_OP_SET:
+		atomic_op = I386_ATOMIC_XCHG;
+		break;
+	case FUTEX_OP_ADD:
+		atomic_op = I386_ATOMIC_XADD;
+		break;
+	case FUTEX_OP_OR:
+		atomic_op = I386_ATOMIC_OR;
+		break;
+	case FUTEX_OP_ANDN:
+		atomic_op = I386_ATOMIC_AND;
+		value = ~oparg;
+		break;
+	case FUTEX_OP_XOR:
+		atomic_op = I386_ATOMIC_XOR;
+		break;
+	default:
+		return -ENOSYS;
+	}
+
+	ret = i386_user_atomic_op_inuser(atomic_op, uaddr, 0, value,
+					  sizeof(*uaddr), &observed);
+	if (!ret)
+		*oval = observed;
+	return ret;
+#else
 	scoped_user_rw_access(uaddr, Efault) {
 		switch (op) {
 		case FUTEX_OP_SET:
@@ -72,11 +109,17 @@ static __always_inline int arch_futex_atomic_op_inuser(int op, int oparg, int *o
 	return 0;
 Efault:
 	return -EFAULT;
+#endif
 }
 
 static inline int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
 						u32 oldval, u32 newval)
 {
+#ifdef CONFIG_X86_USER_ATOMIC_386
+	return i386_user_atomic_op_inuser(I386_ATOMIC_CMPXCHG, uaddr,
+					  oldval, newval, sizeof(*uaddr),
+					  uval);
+#else
 	int ret = 0;
 
 	scoped_user_rw_access(uaddr, Efault) {
@@ -92,6 +135,7 @@ static inline int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
 	return ret;
 Efault:
 	return -EFAULT;
+#endif
 }
 
 #endif

@@ -38,6 +38,9 @@ git submodule update --init --recursive
 | `build-i386-image.sh` | Builds the small Linux 7.1 i386 or i486 BusyBox image |
 | `build-i486-rootfs.sh` | Builds a static i486 or i686 musl/BusyBox root filesystem without Nix |
 | `build-i486-image.sh` | Builds a Linux 7.1/i486 or i686 BusyBox PC-98 disk image |
+| `build-glibc.sh` | Builds and stages glibc 2.41 for exact i386 or i486 |
+| `build-glibc-validation-image.sh` | Builds a dynamic-glibc BusyBox validation disk |
+| `test-glibc-qemu.sh` | Boots the validation disk under qemu-pc98 and checks its serial result |
 
 Nix is not required. The build uses standard packages available on Debian 13.
 See `toolchain/README.md` for the exact source baselines, local-source
@@ -49,6 +52,35 @@ The historical tree is reference material and is not used by the build.
 Linux/PC-98 implementation to the reconstructed Linux 6.12 platform and
 drivers. The corresponding forward-port records are `LINUX-7.0-PORT.md` and
 `LINUX-7.1-PORT.md`.
+
+## Experimental glibc 2.41 i386 port
+
+The Linux 7.1 genuine-i386 kernel and the `toolchain/glibc` submodule now
+have a working first glibc 2.41 port. The exact-i386 build depends on a
+versioned kernel atomic syscall because the original 80386 lacks `CMPXCHG`
+and `XADD`. i486 continues to use glibc's ordinary native-atomic code.
+
+After the static-musl i386 Buildroot toolchain has been built, the complete
+validation workflow is:
+
+```sh
+./build-glibc.sh i386
+./build-glibc-tests.sh i386
+./build-glibc-busybox.sh i386
+./check-glibc-i386-opcodes.sh
+./build-glibc-validation-image.sh i386
+./test-glibc-qemu.sh i386
+```
+
+Replace `i386` with `i486` for the regression build (the opcode scanner is
+specific to exact i386). The validation image runs a dynamically
+glibc-linked BusyBox as `/sbin/init`. On i386 it exercises malloc, dynamic
+loading, TLS, pthreads, fork, robust/process-shared mutexes, and a 12-test
+kernel atomic suite including read-only and fork-COW protection.
+
+See `GLIBC-2.41-I386-PORT-PLAN.md` for the implementation record, security
+constraints, validation matrix, and remaining Debian packaging work. This is
+an executable port milestone; it is not yet a Debian archive-ready libc.
 
 ## Host requirements
 

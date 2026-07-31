@@ -1,0 +1,12 @@
+[submodule "toolchain/musl"]
+	path = toolchain/musl
+	url = https://github.com/awemorris/musl-i386.git
+[submodule "toolchain/gcc"]
+	path = toolchain/gcc
+	url = https://github.com/awemorris/gcc-i386.git
+[submodule "toolchain/glibc"]
+	path = toolchain/glibc
+	url = https://github.com/awemorris/glibc-i386.git
+[submodule "qemu-pc98"]
+	path = qemu-pc98
+	url = https://github.com/awemorris/qemu-pc98.git

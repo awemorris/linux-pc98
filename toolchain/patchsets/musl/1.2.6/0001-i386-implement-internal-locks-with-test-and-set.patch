@@ -1,41 +1,20 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: PC-98 Linux maintainers <noreply@example.com>
-Date: Thu, 31 Jul 2026 13:00:00 +0900
-Subject: [PATCH] i386: use test-and-set for internal locks
+From 2e134dbec7c34159315179a7bd27bb5a358ca733 Mon Sep 17 00:00:00 2001
+From: Awe Morris <awe@noctvm.io>
+Date: Fri, 31 Jul 2026 14:09:17 +0900
+Subject: [PATCH 1/3] i386: implement internal locks with test-and-set
 
-The original i386 atomic backend assumes i486 CMPXCHG, XADD and PAUSE
-instructions. A real i386 can implement exclusion directly with the memory
-form of XCHG, which is an atomic bus-locked operation on x86.
-
-Use a three-state test-and-set lock for musl's internal LOCK/UNLOCK
-abstraction:
-
-  0  unlocked
-  1  locked, no known waiter
-  2  locked, one or more possible waiters
-
-This is a lock implementation, not a compare-and-exchange emulation.
-Contended waiters publish state 2 before sleeping on the futex, and the
-unlocking thread wakes one waiter when it observes that state.
-
-The exit serialization lock has no data protected after acquisition and can
-use a one-bit test-and-set lock directly. Concurrent and recursive exit are
-already outside the defined C/POSIX behavior.
-
-Also remove PAUSE from the i386 spin hint. The remaining compare-and-
-exchange based pthread primitives are intentionally not rewritten by this
-patch and must not be linked into the single-thread PC-98 BusyBox image.
 ---
- arch/i386/atomic_arch.h |  4 ++--
- src/exit/exit.c         | 10 +++-------
- src/thread/__lock.c     | 63 +++++++++++++++++++------------------------
- 3 files changed, 32 insertions(+), 45 deletions(-)
+ arch/i386/atomic_arch.h |  4 +--
+ src/exit/exit.c         | 14 +++------
+ src/thread/__lock.c     | 67 +++++++++++++++--------------------------
+ 3 files changed, 31 insertions(+), 54 deletions(-)
 
 diff --git a/arch/i386/atomic_arch.h b/arch/i386/atomic_arch.h
-index 047fb68e..ba7f6f24 100644
+index 047fb68..f068e4f 100644
 --- a/arch/i386/atomic_arch.h
 +++ b/arch/i386/atomic_arch.h
-@@ -11,6 +11,6 @@ static inline int a_swap(volatile int *p, int v)
+@@ -11,7 +11,7 @@ static inline int a_cas(volatile int *p, int t, int s)
+ static inline int a_swap(volatile int *p, int v)
  {
  	__asm__ __volatile__(
 -		"xchg %0, %1"
@@ -43,7 +22,7 @@ index 047fb68e..ba7f6f24 100644
  		: "=r"(v), "=m"(*p) : "0"(v) : "memory" );
  	return v;
  }
-@@ -61,7 +61,7 @@ static inline void a_barrier()
+@@ -74,7 +74,7 @@ static inline void a_barrier()
  #define a_spin a_spin
  static inline void a_spin()
  {
@@ -53,10 +32,10 @@ index 047fb68e..ba7f6f24 100644
  
  #define a_crash a_crash
 diff --git a/src/exit/exit.c b/src/exit/exit.c
-index 09dc3fe3..ee0f9ac6 100644
+index 17b33cc..0240062 100644
 --- a/src/exit/exit.c
 +++ b/src/exit/exit.c
-@@ -30,16 +30,12 @@ weak_alias(libc_exit_fini, __libc_exit_fini);
+@@ -29,16 +29,12 @@ weak_alias(libc_exit_fini, __libc_exit_fini);
  
  _Noreturn void exit(int code)
  {
@@ -79,7 +58,7 @@ index 09dc3fe3..ee0f9ac6 100644
  	__funcs_on_exit();
  	__libc_exit_fini();
 diff --git a/src/thread/__lock.c b/src/thread/__lock.c
-index 45557c8a..c6f7dd90 100644
+index 60eece4..fbf9c62 100644
 --- a/src/thread/__lock.c
 +++ b/src/thread/__lock.c
 @@ -1,62 +1,43 @@
@@ -93,7 +72,10 @@ index 45557c8a..c6f7dd90 100644
 + * i386 test-and-set lock states:
   *
 - * x == 0: unlocked and no thread inside the critical section
-- *
++ *   0  unlocked
++ *   1  locked, no known waiter
++ *   2  locked, one or more possible waiters
+  *
 - * x < 0: locked with a congestion of x-INT_MIN, including the thread
 - * that holds the lock
 - *
@@ -101,10 +83,6 @@ index 45557c8a..c6f7dd90 100644
 - *
 - * or in an equivalent formulation x is the congestion count or'ed
 - * with INT_MIN as a lock flag.
-+ *   0  unlocked
-+ *   1  locked, no known waiter
-+ *   2  locked, one or more possible waiters
-+ *
 + * a_swap is implemented with memory XCHG, which is atomic on an i386.
 + * A waiter changes state 1 to state 2 before sleeping so that unlock
 + * cannot miss the required wakeup.
@@ -171,4 +149,5 @@ index 45557c8a..c6f7dd90 100644
 +		__wake(l, 1, 1);
  }
 -- 
-2.47.0
+2.47.3
+

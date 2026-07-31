@@ -1,36 +1,76 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: PC-98 Linux maintainers <noreply@example.com>
-Date: Thu, 31 Jul 2026 13:10:00 +0900
-Subject: [PATCH] i386: add the PC-98 single-thread static profile
+From 0ba82adca3bed9a8142c16fd841f9c653b389fea Mon Sep 17 00:00:00 2001
+From: Awe Morris <awe@noctvm.io>
+Date: Fri, 31 Jul 2026 14:09:17 +0900
+Subject: [PATCH 2/3] i386: add static low-memory profile
 
-The PC-98 i386 root filesystem contains one static BusyBox process and does
-not provide pthreads. Make that restriction explicit instead of pretending
-to provide compare-and-exchange based threading primitives on an i386.
-
-Keep stdio ownership and recursive locking semantics, but serialize updates
-to the owner word with musl's test-and-set internal lock. A plain mutex is
-also sufficient for the fork/thread-create exclusion lock; it is stronger
-than the original reader/writer lock but preserves the required ordering.
-
-Avoid the vDSO function-pointer cache so clock_gettime goes directly through
-the syscall path. The target has no floating-point requirement, so reject
-floating-point printf conversion specifiers and omit the floating formatter.
-Integer, pointer, character, and string formatting remain available.
-
-Finally, reduce synccall to a direct callback in this explicitly
-single-thread profile. This patch does not claim to make musl pthread APIs
-i386-safe; those APIs are outside this root filesystem profile.
 ---
+ PC98-PORT.md             | 49 ++++++++++++++++++++++++++++++++++++++++
  arch/i386/syscall_arch.h |  2 ++
- src/stdio/__lockfile.c   | 37 ++++++++++++++++++++++++++-----------
- src/stdio/getc.h         |  5 ++---
- src/stdio/putc.h         |  5 ++---
- src/stdio/vfprintf.c     | 12 ++++++++++++
- src/stdio/vfscanf.c      | 10 ++++++++++
- src/thread/lock_ptc.c    | 15 ++++++++++-----
- src/thread/synccall.c    | 12 ++++++++++++
- 8 files changed, 76 insertions(+), 22 deletions(-)
+ src/stdio/__lockfile.c   | 37 +++++++++++++++++++++---------
+ src/stdio/getc.h         |  5 ++--
+ src/stdio/putc.h         |  5 ++--
+ src/stdio/vfprintf.c     | 12 ++++++++++
+ src/stdio/vfscanf.c      | 10 ++++++++
+ src/thread/lock_ptc.c    | 15 ++++++++----
+ src/thread/synccall.c    | 12 ++++++++++
+ 9 files changed, 125 insertions(+), 22 deletions(-)
+ create mode 100644 PC98-PORT.md
 
+diff --git a/PC98-PORT.md b/PC98-PORT.md
+new file mode 100644
+index 0000000..b579765
+--- /dev/null
++++ b/PC98-PORT.md
+@@ -0,0 +1,49 @@
++# Legacy i386 maintenance notes
++
++## Upstream base
++
++- Project: musl libc
++- Release: 1.2.6
++- Source: `https://musl.libc.org/releases/musl-1.2.6.tar.gz`
++- SHA-256:
++  `d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a`
++
++The upstream release was imported without generated build files. The local
++source changes represented by the initial import are also preserved as:
++
++- `patches/musl-1.2.6-i386-tas-lock.patch`
++- `patches/musl-1.2.6-i386-static-profile.patch`
++
++Those patches are provenance records only. The source in this directory is
++the build input and the authoritative maintained version.
++
++## Local scope
++
++The i386 internal lock uses a three-state test-and-set implementation based
++on memory `LOCK XCHG` and futex wait/wake. It implements the locking
++contract directly and is not a compare-and-exchange emulation.
++
++The `MUSL_I386_SINGLE_THREAD` and `MUSL_NO_FLOAT` macros select the
++low-memory static BusyBox profile. They avoid linking unsupported pthread
++atomic paths and floating-point stdio into that image. They are not a claim
++that the complete musl pthread API has been ported to an i386.
++
++## Updating from upstream
++
++For a new musl release:
++
++1. Record the release URL, version, SHA-256, and upstream tag or commit.
++2. Import the pristine release separately from local changes so the
++   upstream delta remains reviewable.
++3. Merge the upstream changes into this directory; do not reapply the old
++   1.2.6 patch files blindly.
++4. Build both the normal upstream-compatible configuration and the PC-98
++   low-memory profile.
++5. Scan the final i386 binary for post-i386 instructions.
++6. Boot qemu-pc98 with `-cpu 386`, mount ext4, enable swap, and reach the
++   static BusyBox shell.
++7. Run the test-and-set contention test and confirm its final counter and
++   lock state.
++
++Preserve the upstream `COPYRIGHT` file and document every local behavioral
++change here.
 diff --git a/arch/i386/syscall_arch.h b/arch/i386/syscall_arch.h
 index f92b7aa..ea83bda 100644
 --- a/arch/i386/syscall_arch.h
@@ -211,7 +251,7 @@ index 514a44d..01a1532 100644
 +#endif
  		}
  
-		if (p < z-a) p = z-a;
+ 		if (p < z-a) p = z-a;
 diff --git a/src/stdio/vfscanf.c b/src/stdio/vfscanf.c
 index b78a374..8de99eb 100644
 --- a/src/stdio/vfscanf.c
@@ -266,7 +306,7 @@ index b78a374..8de99eb 100644
  
  		pos += shcnt(f);
 diff --git a/src/thread/lock_ptc.c b/src/thread/lock_ptc.c
-index 7adedab..d4affe4 100644
+index 7adedab..dfcdd07 100644
 --- a/src/thread/lock_ptc.c
 +++ b/src/thread/lock_ptc.c
 @@ -1,18 +1,23 @@
@@ -324,4 +364,5 @@ index 3859725..9512933 100644
 +
 +#endif
 -- 
-2.47.0
+2.47.3
+

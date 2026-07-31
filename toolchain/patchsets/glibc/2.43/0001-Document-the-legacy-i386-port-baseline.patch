@@ -1,0 +1,47 @@
+From 2a728b1560b217bfc14bd6c316d41f3276cbbbea Mon Sep 17 00:00:00 2001
+From: Awe Morris <awe@noctvm.io>
+Date: Fri, 31 Jul 2026 14:13:36 +0900
+Subject: [PATCH] Document the legacy i386 port baseline
+
+---
+ I386-PORT.md | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+ create mode 100644 I386-PORT.md
+
+diff --git a/I386-PORT.md b/I386-PORT.md
+new file mode 100644
+index 00000000..ec963e50
+--- /dev/null
++++ b/I386-PORT.md
+@@ -0,0 +1,28 @@
++# Legacy i386 port notes
++
++## Upstream base
++
++- Project: GNU C Library
++- Release: 2.43
++- Source: `https://ftp.gnu.org/gnu/glibc/glibc-2.43.tar.xz`
++- SHA-256:
++  `d9c86c6b5dbddb43a3e08270c5844fc5177d19442cf5b8df4be7c07cd5fa3831`
++- Local upstream snapshot tag: `upstream-2.43`
++
++The `upstream` branch records pristine stable-release snapshots. Legacy
++i386 changes belong on `main` as separate reviewable commits.
++
++## Current status
++
++This repository is the source baseline for a future genuine i386 glibc
++port. No PC-98 or legacy-i386 source changes have been applied yet, and the
++current tree is not claimed to run on an Intel 80386.
++
++The first implementation phase must identify the current minimum CPU
++assumptions, atomic operations, TLS and pthread requirements, compiler
++runtime dependencies, and generated multiarch code before changing the
++public ABI.
++
++PC-98-specific device or firmware behavior must stay in the kernel and
++loader. Changes here should be useful to other legacy i386 Linux systems,
++including future FM TOWNS ports.
+-- 
+2.47.3
+

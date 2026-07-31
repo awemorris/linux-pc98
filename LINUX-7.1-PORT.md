@@ -160,6 +160,17 @@ test-and-set lock using i386 `LOCK XCHG` plus futex wait/wake. It is not a
 CAS emulation. The final unstripped BusyBox contains 28 `LOCK XCHG` sites
 and no `CMPXCHG`, `XADD`, x87, SIMD, or post-i386 instruction.
 
+The GCC and patched musl sources are maintained as the `toolchain/gcc/` and
+`toolchain/musl/` submodules. Buildroot uses them through
+`GCC_INITIAL_OVERRIDE_SRCDIR`, `GCC_FINAL_OVERRIDE_SRCDIR`, and
+`MUSL_OVERRIDE_SRCDIR`; it does not download or patch separate GCC or musl
+tarballs. `toolchain/glibc/` is a future i386 research baseline and is not
+used by this static-musl image. Binutils remains an unmodified
+release-tarball download managed by Buildroot.
+
+Exact upstream versions, snapshot commits, patch order, and exported patch
+files are recorded in `toolchain/patchsets/`.
+
 The generated image
 `build/i386-busybox/linux-7.1-pc98-i386-busybox-swap.img` contains the
 direct-loaded kernel, a 16 MiB small-feature ext4 root, and a 32 MiB swap

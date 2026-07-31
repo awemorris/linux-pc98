@@ -9,8 +9,20 @@ source="$work/buildroot-$version"
 output="$work/output"
 archive="$work/buildroot-$version.tar.xz"
 url="https://buildroot.org/downloads/buildroot-$version.tar.xz"
+gcc_source="$repo/toolchain/gcc"
+musl_source="$repo/toolchain/musl"
 
 mkdir -p "$work"
+if [ ! -f "$gcc_source/gcc/BASE-VER" ]; then
+	echo "GCC submodule is missing: $gcc_source" >&2
+	echo "run: git submodule update --init --recursive" >&2
+	exit 1
+fi
+if [ ! -f "$musl_source/VERSION" ]; then
+	echo "musl submodule is missing: $musl_source" >&2
+	echo "run: git submodule update --init --recursive" >&2
+	exit 1
+fi
 if [ ! -f "$archive" ]; then
 	curl --fail --location --retry 3 --output "$archive" "$url"
 fi
@@ -22,12 +34,17 @@ fi
 install -m 0644 \
 	"$repo/patches/busybox-1.38.0-i386.patch" \
 	"$source/package/busybox/0012-i386-do-not-require-i486-instructions.patch"
-install -m 0644 \
-	"$repo/patches/musl-1.2.6-i386-tas-lock.patch" \
-	"$source/package/musl/0007-i386-use-test-and-set-for-internal-locks.patch"
-install -m 0644 \
-	"$repo/patches/musl-1.2.6-i386-static-profile.patch" \
-	"$source/package/musl/0008-i386-add-static-single-thread-profile.patch"
+
+# Buildroot's override mechanism copies the repository-managed GCC and musl
+# submodules to output/build/*-custom. It therefore does not download,
+# extract, or patch separate GCC or musl release tarballs.
+mkdir -p "$output"
+printf 'GCC_INITIAL_OVERRIDE_SRCDIR = %s\n' "$gcc_source" \
+	> "$output/local.mk"
+printf 'GCC_FINAL_OVERRIDE_SRCDIR = %s\n' "$gcc_source" \
+	>> "$output/local.mk"
+printf 'MUSL_OVERRIDE_SRCDIR = %s\n' "$musl_source" \
+	>> "$output/local.mk"
 
 make -C "$source" O="$output" \
 	BR2_DEFCONFIG="$repo/configs/buildroot-pc98-i386-busybox.defconfig" \

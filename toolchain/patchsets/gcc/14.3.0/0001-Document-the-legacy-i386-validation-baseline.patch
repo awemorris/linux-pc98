@@ -1,0 +1,47 @@
+From a0e5e713daa14252912d420a2aaa3107fc874a80 Mon Sep 17 00:00:00 2001
+From: Awe Morris <awe@noctvm.io>
+Date: Fri, 31 Jul 2026 14:11:06 +0900
+Subject: [PATCH] Document the legacy i386 validation baseline
+
+---
+ I386-PORT.md | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+ create mode 100644 I386-PORT.md
+
+diff --git a/I386-PORT.md b/I386-PORT.md
+new file mode 100644
+index 000000000..2cdaed361
+--- /dev/null
++++ b/I386-PORT.md
+@@ -0,0 +1,28 @@
++# Legacy i386 maintenance notes
++
++## Upstream base
++
++- Project: GNU Compiler Collection
++- Release: 14.3.0
++- Source: `https://gcc.gnu.org/pub/gcc/releases/gcc-14.3.0/`
++- Local upstream snapshot tag: `upstream-14.3.0`
++
++This is the compiler version used by the first validated Linux 7.1/i386
++PC-98 Buildroot toolchain. The initial source snapshot has no local GCC code
++changes. Buildroot selects the upstream i386 backend with `-march=i386` and
++`-mtune=i386`.
++
++The `upstream` branch records pristine release snapshots. Local legacy-i386
++changes belong on `main` as separate reviewable commits.
++
++## Validation baseline
++
++- Build an ELF32 static musl/BusyBox root filesystem.
++- Reject `CMPXCHG`, `XADD`, x87, SIMD, and post-i386 instructions in the
++  final BusyBox executable.
++- Require the expected `LOCK XCHG` test-and-set operations.
++- Boot qemu-pc98 with `-M pc9801 -cpu 386 -m 4736K`.
++- Mount the ext4 root, enable swap, and reach the BusyBox shell.
++
++GCC 14.4 is a follow-up upstream update and must be merged and validated
++separately from this known-working 14.3.0 baseline.
+-- 
+2.47.3
+

@@ -1,0 +1,44 @@
+From 78c0972e439e7473f8660655fed5c24db5a929d5 Mon Sep 17 00:00:00 2001
+From: Awe Morris <awe@noctvm.io>
+Date: Fri, 31 Jul 2026 14:32:22 +0900
+Subject: [PATCH 3/3] Document patch export location
+
+---
+ PC98-PORT.md | 18 ++++++++++++------
+ 1 file changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/PC98-PORT.md b/PC98-PORT.md
+index b579765..a736ef0 100644
+--- a/PC98-PORT.md
++++ b/PC98-PORT.md
+@@ -7,15 +7,21 @@
+ - Source: `https://musl.libc.org/releases/musl-1.2.6.tar.gz`
+ - SHA-256:
+   `d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a`
++- Pristine snapshot tag: `upstream-1.2.6`
++- Pristine snapshot commit:
++  `0170a66e2ddab6e1622fd728dc6388567226d228`
+ 
+-The upstream release was imported without generated build files. The local
+-source changes represented by the initial import are also preserved as:
++The upstream release and the local legacy-i386 changes are separate commits.
++The two functional commits after `upstream-1.2.6` are:
+ 
+-- `patches/musl-1.2.6-i386-tas-lock.patch`
+-- `patches/musl-1.2.6-i386-static-profile.patch`
++- `i386: implement internal locks with test-and-set`
++- `i386: add static low-memory profile`
+ 
+-Those patches are provenance records only. The source in this directory is
+-the build input and the authoritative maintained version.
++This repository's commit history is the authoritative maintained source.
++The parent `linux-pc98` repository also keeps exact `git format-patch`
++exports under `toolchain/patchsets/musl/1.2.6/`. Those exports are the
++portable provenance and review record; there is intentionally no second
++patch copy in this repository.
+ 
+ ## Local scope
+ 
+-- 
+2.47.3
+

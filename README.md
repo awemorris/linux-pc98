@@ -4,6 +4,18 @@ This repository contains Linux 6.12, Linux 7.0, and Linux 7.1 ports for the
 NEC PC-9800 series, boot loaders, tools for building a Debian i386 userland,
 and a raw disk image builder for qemu-pc98.
 
+Clone it with its maintained toolchain and emulator sources:
+
+```sh
+git clone --recurse-submodules https://github.com/awemorris/linux-pc98.git
+```
+
+For an existing checkout, initialize the same sources with:
+
+```sh
+git submodule update --init --recursive
+```
+
 ## Repository layout
 
 | Path | Contents |
@@ -11,16 +23,22 @@ and a raw disk image builder for qemu-pc98.
 | `linux-6.12/` | Linux 6.12 source tree with the PC-98 port integrated |
 | `linux-7.0/` | Linux 7.0 source tree with the PC-98 port forward-ported |
 | `linux-7.1/` | Linux 7.1 source tree with the PC-98 port forward-ported |
+| `qemu-pc98/` | qemu-pc98 submodule used for i386 and PC-98 validation |
+| `toolchain/` | GCC, musl, and glibc submodules plus the versioned patch inventory |
 | `configs/` | Debian-derived i686 base and versioned PC-98 configurations |
 | `loader/` | PC-98 disk IPL and FAT16-aware Linux second-stage loader |
 | `tools/` | Two-partition PC-98 raw disk image builder and helper tools |
 | `build/` | Generated kernel, rootfs, logs, and disk images; ignored by Git |
 | `build-kernel.sh` | Configures and builds the kernel and modules |
 | `build-debian.sh` | Builds the Debian rootfs, kernel, modules, and disk image |
+| `build-i386-rootfs.sh` | Builds the experimental Linux 7.1/i386 static-musl root filesystem |
 | `build-i486-rootfs.sh` | Builds a static i486 or i686 musl/BusyBox root filesystem without Nix |
 | `build-i486-image.sh` | Builds a Linux 7.1/i486 or i686 BusyBox PC-98 disk image |
 
 Nix is not required. The build uses standard packages available on Debian 13.
+See `toolchain/README.md` for the exact source baselines, local-source
+integration, patch regeneration, update procedure, and automated patch
+replay check.
 
 ## Host requirements
 

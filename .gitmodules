@@ -10,3 +10,6 @@
 [submodule "qemu-pc98"]
 	path = qemu-pc98
 	url = https://github.com/awemorris/qemu-pc98.git
+[submodule "debian-i486"]
+	path = debian-i486
+	url = git@github.com:awemorris/debian-i486.git

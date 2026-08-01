@@ -275,9 +275,24 @@ static const struct consw pc98_con = {
 	.con_build_attr	= pc98con_build_attr,
 };
 
+/*
+ * Select the native GDC console before vt's con_init().  Registering only
+ * through module_init() leaves tty0 bound to dummy_con for most of early boot:
+ * the early PC-98 boot console is then disabled before this driver can redraw
+ * the VT buffer.  Apart from hiding useful diagnostics, a machine that stops
+ * during CPU initialization appears to have hung at the console hand-off.
+ */
+void __init pc98con_register_screen(void)
+{
+	conswitchp = &pc98_con;
+}
+
 static int __init pc98con_console_init(void)
 {
 	int err;
+
+	if (conswitchp == &pc98_con)
+		return 0;
 
 	console_lock();
 	err = do_take_over_console(&pc98_con, 0, MAX_NR_CONSOLES - 1, 1);

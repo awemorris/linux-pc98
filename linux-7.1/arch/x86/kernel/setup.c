@@ -1259,8 +1259,14 @@ void __init setup_arch(char **cmdline_p)
 	e820__setup_pci_gap();
 
 #ifdef CONFIG_VT
+#if defined(CONFIG_PC98_CONSOLE)
+	if (IS_ENABLED(CONFIG_X86_PC9800))
+		pc98con_register_screen();
+#endif
 #if defined(CONFIG_VGA_CONSOLE)
-	if (!efi_enabled(EFI_BOOT) || (efi_mem_type(0xa0000) != EFI_CONVENTIONAL_MEMORY))
+	if (!IS_ENABLED(CONFIG_X86_PC9800) &&
+	    (!efi_enabled(EFI_BOOT) ||
+	     (efi_mem_type(0xa0000) != EFI_CONVENTIONAL_MEMORY)))
 		vgacon_register_screen(&sysfb_primary_display.screen);
 #endif
 #endif

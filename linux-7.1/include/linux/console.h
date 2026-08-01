@@ -132,6 +132,12 @@ void vgacon_register_screen(struct screen_info *si);
 static inline void vgacon_register_screen(struct screen_info *si) { }
 #endif
 
+#ifdef CONFIG_PC98_CONSOLE
+void pc98con_register_screen(void);
+#else
+static inline void pc98con_register_screen(void) { }
+#endif
+
 int con_is_bound(const struct consw *csw);
 int do_unregister_con_driver(const struct consw *csw);
 int do_take_over_console(const struct consw *sw, int first, int last, int deflt);

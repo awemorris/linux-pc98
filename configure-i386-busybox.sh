@@ -40,6 +40,8 @@ cp "$base" "$config"
 	--disable M486SX \
 	--disable M486 \
 	--enable "$cpu_config" \
+	--enable MODIFY_LDT_SYSCALL \
+	--enable MATH_EMULATION \
 	--enable FUTEX \
 	--enable COMPAT_32BIT_TIME
 

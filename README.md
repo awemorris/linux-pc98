@@ -1,9 +1,18 @@
 Linux/pc98 Workspace
 ====================
 
-This repository contains Linux 6.12, Linux 7.0, and Linux 7.1 ports for the
-NEC PC-9800 series, boot loaders, tools for building a Debian i386 userland,
-and a raw disk image builder for qemu-pc98.
+This repository contains:
+
+- Linux: 7.1/7.0/6.12, i386SX/DX and i486SX/DX port, with NEC PC-9800 machine support
+- Debian: 13 "trixie", i486DX port, with NEC PC-9800 utils
+- glibc: 2.41, i486DX port
+- BusyBox: i386SX port
+- qemu: 11.0, NEC PC-9800 support with compatible BIOS
+- pc98boot: NEC PC-9800 HDD-IPL and FAT16 bootloader
+
+Each component is reusable for other retro PCs.
+
+## How to start
 
 Clone it with its maintained toolchain and emulator sources:
 
@@ -17,6 +26,32 @@ For an existing checkout, initialize the same sources with:
 git submodule update --init --recursive
 ```
 
+## Supported PC-98 CPU generations
+
+32-bit PC-98 systems were sold with i386SX, i386DX, i486SX, i486DX, Pentium,
+Pentium MMX, Pentium II, and Pentium-II-class Celeron processors. Linux/PC-98
+has been ported to the i386SX, i386DX, i486SX, i486DX, and i686 execution
+classes needed to cover these machines.
+
+| Physical CPU | Linux build | Userland | Packages | Minimum RAM |
+| --- | --- | --- | --- | ---: |
+| i386SX or i386DX | PC-98 i386 | i386SX-compatible static musl/BusyBox | included in the CF image | 5 MiB |
+| i486SX | PC-98 i486 with software floating point | static musl/BusyBox | included in the CF image | 5 MiB |
+| i486DX, Pentium, or Pentium MMX | PC-98 i486 | Debian 13/i486DX with the maintained glibc i486 port | project-built repository; publication pending | 64 MiB |
+| Pentium II or Pentium-II-class Celeron | PC-98 i686 | Debian 13/i686 | official Debian packages | 64 MiB |
+
+The i386 release image uses the i386SX baseline and therefore also runs on
+i386DX systems. The custom Debian port deliberately uses i486DX, including
+its hardware floating-point unit, as its minimum ABI. It is also the Debian
+choice for Pentium and Pentium MMX systems, which do not satisfy the i686
+baseline used by current official Debian packages. Pentium II systems can
+run the official Debian userland unchanged with the PC-98 i686 kernel.
+
+The custom i486 package repository is not public yet. Publishing its packages
+is the next distribution milestone. Testing has established that both Debian
+variants require at least 64 MiB of physical RAM for a reliable login; the
+smaller BusyBox systems are the supported choice below that threshold.
+
 ## Repository layout
 
 | Path | Contents |
@@ -28,17 +63,18 @@ git submodule update --init --recursive
 | `patches/linux-6.12-pc98/` | Recovered chronological 6.12 series and the complete current v6.12 delta |
 | `qemu-pc98/` | qemu-pc98 submodule used for i386 and PC-98 validation |
 | `toolchain/` | GCC, musl, and glibc submodules plus the versioned patch inventory |
+| `debian-i486/` | Framework and patch database for the Debian 13/i486DX package port |
 | `configs/` | Debian-derived i686 base and versioned PC-98 configurations |
 | `loader/` | PC-98 disk IPL and FAT16-aware Linux second-stage loader |
 | `tools/` | Two-partition PC-98 raw disk image builder and helper tools |
 | `build/` | Generated kernel, rootfs, logs, and disk images; ignored by Git |
 | `build-kernel.sh` | Configures and builds the kernel and modules |
 | `build-debian.sh` | Builds the Debian rootfs, kernel, modules, and disk image |
-| `build-i386-rootfs.sh` | Builds the experimental Linux 7.1/i386 static-musl root filesystem |
+| `build-i386-rootfs.sh` | Builds the i386SX-compatible Linux 7.1 static-musl root filesystem |
 | `build-i386-image.sh` | Builds the small Linux 7.1 i386 or i486 BusyBox image |
 | `build-i486-rootfs.sh` | Builds a static i486 or i686 musl/BusyBox root filesystem without Nix |
 | `build-i486-image.sh` | Builds a Linux 7.1/i486 or i686 BusyBox PC-98 disk image |
-| `build-glibc.sh` | Builds and stages glibc 2.41 for exact i386 or i486 |
+| `build-glibc.sh` | Builds and stages the maintained glibc 2.41 i486DX port or the exact-i386 research target |
 | `build-glibc-validation-image.sh` | Builds a dynamic-glibc BusyBox validation disk |
 | `test-glibc-qemu.sh` | Boots the validation disk under qemu-pc98 and checks its serial result |
 
@@ -53,34 +89,35 @@ Linux/PC-98 implementation to the reconstructed Linux 6.12 platform and
 drivers. The corresponding forward-port records are `LINUX-7.0-PORT.md` and
 `LINUX-7.1-PORT.md`.
 
-## Experimental glibc 2.41 i386 port
+## glibc 2.41 ports
 
-The Linux 7.1 genuine-i386 kernel and the `toolchain/glibc` submodule now
-have a working first glibc 2.41 port. The exact-i386 build depends on a
-versioned kernel atomic syscall because the original 80386 lacks `CMPXCHG`
-and `XADD`. i486 continues to use glibc's ordinary native-atomic code.
+The supported Debian target is the glibc 2.41 i486DX port maintained in the
+`toolchain/glibc` submodule. It uses the i486 native atomic instructions and
+serves i486DX, Pentium, and Pentium MMX machines. An exact-i386 glibc research
+target also passes its dedicated validation suite, but it is not a Debian
+distribution target. It depends on a versioned kernel atomic syscall because
+the original 80386 lacks `CMPXCHG` and `XADD`.
 
 After the static-musl i386 Buildroot toolchain has been built, the complete
 validation workflow is:
 
 ```sh
-./build-glibc.sh i386
-./build-glibc-tests.sh i386
-./build-glibc-busybox.sh i386
-./check-glibc-i386-opcodes.sh
-./build-glibc-validation-image.sh i386
-./test-glibc-qemu.sh i386
+./build-glibc.sh i486
+./build-glibc-tests.sh i486
+./build-glibc-busybox.sh i486
+./build-glibc-validation-image.sh i486
+./test-glibc-qemu.sh i486
 ```
 
-Replace `i386` with `i486` for the regression build (the opcode scanner is
-specific to exact i386). The validation image runs a dynamically
-glibc-linked BusyBox as `/sbin/init`. On i386 it exercises malloc, dynamic
-loading, TLS, pthreads, fork, robust/process-shared mutexes, and a 12-test
-kernel atomic suite including read-only and fork-COW protection.
+For exact-i386 research, replace `i486` with `i386` and additionally run
+`check-glibc-i386-opcodes.sh`. The validation image runs a dynamically
+glibc-linked BusyBox as `/sbin/init` and exercises malloc, dynamic loading,
+TLS, pthreads, fork, and robust/process-shared mutexes. The i386-only path
+also runs the kernel atomic suite.
 
 See `GLIBC-2.41-I386-PORT-PLAN.md` for the implementation record, security
-constraints, validation matrix, and remaining Debian packaging work. This is
-an executable port milestone; it is not yet a Debian archive-ready libc.
+constraints and validation matrix for the exact-i386 research work. Debian
+i486 packaging is tracked in `debian-i486/`.
 
 ## Host requirements
 
@@ -106,9 +143,11 @@ their original behavior:
 ./build-debian.sh
 ```
 
-On the first run, this script creates a Debian trixie i386 minbase rootfs in
-`build/debian-i386-root`. It then builds Linux, installs the modules, builds
-the PC-98 loaders, and creates:
+On the first run, this script creates a rootfs from Debian trixie's official
+`i386` archive in `build/debian-i386-root`. Despite the Debian architecture
+name, these official binaries use an i686-class baseline and are intended for
+Pentium II or newer systems. The script then builds Linux, installs the
+modules, builds the PC-98 loaders, and creates:
 
 ```text
 build/qemu-pc98-linux.raw
@@ -146,6 +185,21 @@ The Linux 7.1 artifact is named
 `XZ_LEVEL`, and `XZ_THREADS` can override the name and compression settings.
 Existing dist files are never overwritten.
 
+The v0.4 Release set consists of the following persistent CF-card images.
+The Debian images use the full PC-98 kernel configuration. The low-memory
+Debian experiment is not published because login is not reliable below
+64 MiB.
+
+| Image | Userland | Minimum RAM |
+| --- | --- | ---: |
+| `linux-7.1-pc98-i386-busybox.img.xz` | static musl/BusyBox | 5 MiB |
+| `linux-7.1-pc98-i486-busybox.img.xz` | static musl/BusyBox | 5 MiB |
+| `debian13-pc98-i486-live-cfcard.img.xz` | Debian 13/i486 | 64 MiB |
+| `debian13-pc98-i686-live-cfcard.img.xz` | Debian 13/i686 | 64 MiB |
+
+Each archive has a matching `.sha256` file. Public images use the GDC screen
+and PC-98 keyboard as the console.
+
 ## Disk layout
 
 `build/qemu-pc98-linux.raw` is a single raw IDE disk with two native PC-98
@@ -157,7 +211,7 @@ partitions.
 | LBA 1 | PC-98 sixteen-entry partition table |
 | LBA 2 through 135 | FAT16-aware Linux second-stage loader |
 | Partition 1 | 200 MiB PC-98 DOS-compatible FAT16 containing non-compressed `VMLINUX` |
-| Partition 2 | Debian i386 ext4 root filesystem, mounted as `/dev/sda2` |
+| Partition 2 | ext4 root filesystem, mounted as `/dev/sda2` |
 
 The LBA 0 IPL loads the Linux loader directly from LBA 2. Partition 1 also
 has a free PC-98 FAT16 PBR, so a genuine PC-98 disk IPL can boot Linux after
@@ -203,7 +257,7 @@ The main environment-variable overrides are:
 | `KERNEL_SOURCE` | `linux-$KERNEL_VERSION` |
 | `JOBS` | `nproc`; parallel kernel build job count |
 | `KERNEL_BUILD` | `build/kernel` for 6.12; otherwise `build/kernel-$KERNEL_VERSION` |
-| `CPU_FAMILY` | `686`; Linux 7.0 and 7.1 also retain the experimental `486` target |
+| `CPU_FAMILY` | `686`; use `486` or `386` for the completed PC-98 low-generation ports |
 | `DEVICE_PROFILE` | Linux 7.1 defaults to `pc98`; use `full` for the full Debian driver catalogue |
 | `CONSOLE_MODE` | `video`; use `dual` only for a private GDC plus serial diagnostic build |
 | `INSTALL_MODULES` | `1`; set to `0` to skip `modules_install` |
@@ -215,21 +269,22 @@ The main environment-variable overrides are:
 | `ROOT_PASSWORD` | Initial local test password; default `pc98` |
 | `BOOT_MB` | FAT16 boot partition size; default 200 MiB |
 | `ROOT_MB` | ext4 root partition size; default 200 MiB |
+| `BOOT_LOGO` | Optional 80 by 120 packed 1bpp logo for the boot screen |
 | `DIST_IMAGE_NAME` | Filename inside `dist/` before the `.xz` suffix |
 
 `build-debian-rootfs.sh` stops if `ROOT_STAGE` already exists, preventing an
 existing rootfs from being overwritten accidentally.
 
-Linux 7.0 supports both the Debian-oriented i686 kernel and the retained i486
-kernel target. An i486 validation build can be made without installing its
-modules into the Debian staging tree:
+Linux 7.0 supports both the official-Debian-oriented i686 kernel and the
+PC-98 i486 kernel target. An i486 validation build can be made without
+installing its modules into the official i686 Debian staging tree:
 
 ```sh
 KERNEL_VERSION=7.0 CPU_FAMILY=486 INSTALL_MODULES=0 ./build-kernel.sh
 ```
 
-The Debian 13 userland remains i686 and therefore is not usable on an actual
-i486 even when the kernel itself is built for i486.
+Use the separately maintained Debian/i486DX port rather than the official
+Debian archive on i486DX, Pentium, and Pentium MMX systems.
 
 Linux 7.1 uses the `pc98` device profile by default. It retains the PCI core
 required by `pc9821`, the PC-98 IDE and framebuffer drivers, and standard
@@ -268,10 +323,12 @@ platform and device changes were forward-ported from the Linux 7.0 tree.
 Linux 7.1 changed partition-parser logging to `struct seq_buf`; the NEC98
 parser follows the new API.
 
-Linux 7.1 supports the Debian-oriented `CONFIG_M686=y` target and an
-experimental `CONFIG_M486=y` target. The latter restores the x86 i486
-configuration removed by upstream Linux 7.1 and uses a separately built,
-static musl/BusyBox root filesystem instead of the i686 Debian userland.
+Linux 7.1 supports the PC-98 `CONFIG_M386=y`, `CONFIG_M486=y`, and
+`CONFIG_M686=y` targets. The lower-generation work restores the x86 i386 and
+i486 configurations removed by upstream Linux and supports i386SX, i386DX,
+i486SX, and i486DX hardware. The small i386 and i486 release images use a
+static musl/BusyBox userland; the i486DX release additionally provides the
+custom Debian port.
 
 The trimmed kernel and module set build successfully. The generated
 two-partition image boots under qemu-pc98 with TCG, mounts the Debian 13 ext4
@@ -286,7 +343,7 @@ CPU_FAMILY=486 I386_CONSOLE=video ./build-i386-image.sh
 qemu-system-i386 \
   -M pc9801 \
   -cpu 486 \
-  -m 16 \
+  -m 5M \
   -accel tcg \
   -drive if=ide,bus=0,unit=0,format=raw,file=build/i486-video/linux-7.1-pc98-i486-busybox.img
 ```
@@ -312,7 +369,8 @@ default build and staging directories.
 
 The i486 image mounts its ext4 root, starts BusyBox init, reaches an
 interactive shell, and reports Linux 7.1.0-i486 under qemu-pc98 and on a
-physical PC-9821 Ra43. The i386 target remains a research milestone.
+physical PC-9821 Ra43. The i386 build has also booted on qemu-pc98 and
+physical i386 PC-98 systems.
 
 The BusyBox image includes `ip`, `ping`, and `udhcpc`. To obtain an address
 on the first non-loopback interface and install the DHCP-provided route and
@@ -323,11 +381,12 @@ net-up
 ip addr
 ```
 
-During the slower i486 kernel load and decompression, the second-stage loader
-shows a BSD-style size, load address, loaded-byte count, and progress dots on
-the first GDC text row. The kernel enables the PC-98 early console immediately
-after decompression, so the display no longer remains black between the
-firmware boot menu and normal console initialization.
+The second-stage loader clears text and graphics VRAM, displays the kernel,
+code, and data sizes, and updates the transferred code and data counts while
+loading the non-compressed ELF `VMLINUX`. An optional 80 by 120 1bpp image is
+drawn in white at the lower-right corner. The loader initializes the graphics
+GDC and digital palette through the standard PC-98 BIOS interface, so this
+screen works with both the NEC ROM BIOS and the compatible BIOS.
 
 The i486 kernel includes the `e100` and `MII` drivers for the Ra43 onboard
 PC-9821X-B06-compatible Intel PRO/100 adapter. Linux matches its primary
@@ -346,9 +405,9 @@ Use `KERNEL_VERSION=7.1 ./run-qemu.sh` for
 This image requires the PC-98-enabled qemu-pc98 build; upstream QEMU does not
 provide the required machine and device implementations.
 
-Debian 13 i386 uses P6 instructions such as `cmov`, so the guest CPU must be
-at least a Pentium II. The PC-98 machine does not currently connect the APIC,
-therefore disable the advertised CPU APIC feature:
+The official Debian 13 `i386` archive uses an i686/P6 baseline including
+instructions such as `cmov`, so that image requires at least a Pentium II.
+Disable the advertised CPU APIC feature with the current PC-98 machine:
 
 ```text
 -cpu pentium2,-apic
@@ -368,8 +427,9 @@ qemu-system-i386 \
 `QEMU`, `BIOS_DIR`, `MACHINE`, `CPU`, `MEMORY`, `ACCEL`, and
 `DISPLAY_BACKEND` can override the defaults used by `run-qemu.sh`.
 
-The Debian 13 i386 userland is not suitable for an i486-only physical PC-98.
-Such hardware requires a separately built i486-compatible userland.
+For i486DX, Pentium, and Pentium MMX machines, use the project's Debian
+13/i486DX image and package repository instead. Debian operation has a tested
+minimum of 64 MiB RAM on both the i486DX and i686 paths.
 
 ## Console and framebuffer drivers
 

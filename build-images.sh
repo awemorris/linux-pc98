@@ -38,6 +38,9 @@ image_options=(--boot-mb "$boot_mb" --root-mb "$root_mb" --swap-mb "$swap_mb")
 if [ "$small_ext4" != 0 ]; then
 	image_options+=(--small-ext4)
 fi
+if [ -n "${BOOT_LOGO:-}" ]; then
+	image_options+=(--logo "$BOOT_LOGO")
+fi
 
 sudo python3 "$repo/tools/mk-pc98-linux-disk.py" create \
 	"$output" \

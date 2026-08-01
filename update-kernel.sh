@@ -24,9 +24,15 @@ fi
 
 make -C "$repo/loader"
 
+logo_options=()
+if [ -n "${BOOT_LOGO:-}" ]; then
+	logo_options+=(--logo "$BOOT_LOGO")
+fi
+
 python3 "$repo/tools/mk-pc98-linux-disk.py" update-kernel \
 	"$image" \
 	"$repo/loader/disk-ipl.bin" \
 	"$repo/loader/partition-pbr.bin" \
 	"$repo/loader/fat-loader.bin" \
-	"$kernel_image"
+	"$kernel_image" \
+	"${logo_options[@]}"

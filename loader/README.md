@@ -11,7 +11,7 @@ setup code is not executed.
 | 0             | `disk-ipl.bin`, with `IPL1` at offset 4            |
 | 1             | PC-98 partition table: sixteen 32-byte entries     |
 | 2 through 135 | `fat-loader.bin` followed by unused space          |
-| Partition 1   | PC-98 DOS-compatible FAT16 with `VMLINUX`          |
+| Partition 1   | PC-98 DOS-compatible FAT16 with `VMLINUX` and optional `LOGO.RAW` |
 | Partition 2   | ext4 Debian root filesystem                        |
 
 The fixed BIOS geometry is eight heads and seventeen sectors per track.
@@ -59,6 +59,26 @@ This avoids retaining a compressed input image and a decompression workspace
 in guest RAM. It is the preferred path for memory-constrained i386 PC-98
 systems, where CF storage capacity is less important than RAM.
 
+The ELF path clears the PC-98 text and planar graphics VRAM and displays a
+fixed Japanese boot status screen. Code and data transfer counts are updated
+separately in KiB. An optional root-directory file named `LOGO.RAW` is drawn
+at the lower-right corner (x=560, y=280 on the 640 by 400 graphics screen).
+It must be exactly 1200 bytes: 80 by 120 pixels,
+packed 1bpp, 10 bytes per row, most-significant bit first. The same bitmap is
+copied to the B, R, G, and I planes, producing a white image. If the file is
+absent, loading continues without a logo.
+
+Before clearing and drawing, the loader invokes the standard PC-98 graphics
+BIOS services (`INT 18h`, `AH=42h` and `AH=40h`) to select the 640 by 400
+colour display area and start the slave GDC. It also programs the standard
+digital palette explicitly. The bitmap therefore does not depend on graphics
+state left behind by either the NEC ROM BIOS or the compatible BIOS.
+
+The loader explicitly writes bit 2 of port `0x43b` to expose the 15--16 MiB
+region as RAM. Consecutive ELF segments reuse the current FAT stream position;
+the loader does not reread the complete first segment while seeking the next
+one.
+
 The kernel command line enables `earlyprintk=pc9800`, which takes over as soon
 as the kernel starts and unregisters when the normal PC-98 console is ready.
 
@@ -86,6 +106,14 @@ boot protocol with `CS=0x10`, `DS/ES/SS=0x18`, and `ESI` pointing to
 make -C loader
 ./build-debian.sh
 ./update-kernel.sh
+```
+
+The repository includes the release bitmap as `loader/boot-logo.raw`. Set
+`BOOT_LOGO` when creating or updating an image to add it:
+
+```sh
+BOOT_LOGO=loader/boot-logo.raw \
+  ./update-kernel.sh path/to/disk.img path/to/vmlinux.boot
 ```
 
 `update-kernel.sh` updates both boot records, the second-stage loader, and the

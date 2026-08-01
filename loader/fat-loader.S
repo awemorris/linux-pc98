@@ -32,8 +32,19 @@ _start:
 
 	movw	$0, progress_sectors
 	movb	$(load_dot_field - load_status), progress_column
-	movw	$loading_message, %si
-	call	show_status
+	call	clear_boot_screen
+	call	draw_boot_screen
+
+	/*
+	 * Make the 15-16 MiB region ordinary RAM.  Port 043Bh bit 2 disables
+	 * the PC-98 system-space mirror; values 00h and 01h both leave the
+	 * mirror enabled.  Do this explicitly because the BIOS setup choice
+	 * and the hardware latch are not guaranteed to agree at boot time.
+	 */
+	movw	$0x043b, %dx
+	movb	$0x04, %al
+	outb	%al, %dx
+	outb	%al, $0x5f
 
 	xorw	%ax, %ax
 	movw	%ax, %es
@@ -139,6 +150,7 @@ kernel_found:
 	cmpl	$1024, %eax
 	jb	loader_failure
 	movl	%eax, file_size
+	call	find_and_load_logo
 
 	/* A20 and unreal-mode FS for copying above 1 MiB. */
 	xorb	%al, %al
@@ -329,8 +341,11 @@ prepare_boot_params:
 	movl	$CMDLINE, %ebx
 	movb	$0, %fs:(%ebx)
 
+	cmpb	$0, elf_debug_active
+	jne	7f
 	movw	starting_message_ptr, %si
 	call	show_status
+7:
 
 	cli
 	movb	$0xff, %al
@@ -421,17 +436,31 @@ elf_next_phdr:
 	movw	$starting_direct_message, starting_message_ptr
 	call	clear_boot_params
 	movl	$0, loaded_bytes
-	movw	$load_count_field, %di
-	xorl	%eax, %eax
-	call	format_decimal8
-	movl	elf_total_bytes, %eax
-	movw	$load_total_field, %di
-	call	format_decimal8
-	movw	$load_status, %si
-	call	show_status
+	movl	file_size, %eax
+	call	bytes_to_kb
+	movw	$kernel_size_field, %di
+	call	format_decimal6
+	movl	elf_segments+8, %eax
+	movl	%eax, elf_code_bytes
+	call	bytes_to_kb
+	movw	$code_total_field, %di
+	call	format_decimal6
+	movl	$0, elf_data_bytes
+	cmpb	$2, elf_segment_count
+	jb	1f
+	movl	elf_segments+24, %eax
+	movl	%eax, elf_data_bytes
+	call	bytes_to_kb
+	movw	$data_total_field, %di
+	call	format_decimal6
+1:
+	call	update_transfer_display
 	movw	$elf_segments, elf_segment_ptr
 	movb	elf_segment_count, %al
 	movb	%al, elf_segments_left
+	movb	$1, elf_debug_active
+	movl	$0, elf_stream_pos
+	call	stream_reset
 
 elf_load_segment:
 	cmpb	$0, elf_segments_left
@@ -440,11 +469,20 @@ elf_load_segment:
 	movl	(%si), %eax		/* p_offset */
 	testl	$511, %eax
 	jnz	loader_failure
+	cmpl	elf_stream_pos, %eax
+	jb	loader_failure
 	movl	8(%si), %edx		/* p_filesz */
+	movl	4(%si), %ecx
+	movl	%ecx, cur_dest
+	movl	%edx, remaining
+	movb	$'S', elf_debug_op
+	call	update_transfer_display
 	testl	%edx, %edx
 	jz	elf_zero_segment
-	call	stream_reset
 	movl	(%si), %ecx
+	subl	elf_stream_pos, %ecx
+	testl	$511, %ecx
+	jnz	loader_failure
 	shrl	$9, %ecx
 elf_seek_segment:
 	testl	%ecx, %ecx
@@ -456,6 +494,12 @@ elf_seek_segment:
 	call	stream_read_sector
 	popl	%ecx
 	jc	loader_failure
+	addl	$512, elf_stream_pos
+	incw	seek_progress_sectors
+	testb	$0xff, seek_progress_sectors
+	jnz	1f
+	call	update_transfer_display
+1:
 	decl	%ecx
 	jmp	elf_seek_segment
 
@@ -465,6 +509,8 @@ elf_begin_segment:
 	movl	%eax, cur_dest
 	movl	8(%si), %eax
 	movl	%eax, remaining
+	movb	$'C', elf_debug_op
+	call	update_transfer_display
 elf_copy_next:
 	cmpl	$0, remaining
 	je	elf_zero_segment
@@ -473,6 +519,7 @@ elf_copy_next:
 	xorw	%bp, %bp
 	call	stream_read_sector
 	jc	loader_failure
+	addl	$512, elf_stream_pos
 	movl	$512, %edx
 	cmpl	%edx, remaining
 	jae	elf_copy_size_ready
@@ -508,10 +555,12 @@ elf_copy_account:
 	incw	progress_sectors
 	testb	$0xff, progress_sectors
 	jnz	elf_copy_next
-	call	update_load_status
+	call	update_transfer_display
 	jmp	elf_copy_next
 
 elf_zero_segment:
+	movb	$'Z', elf_debug_op
+	call	update_transfer_display
 	movw	elf_segment_ptr, %si
 	movl	12(%si), %ecx		/* p_memsz - p_filesz */
 	subl	8(%si), %ecx
@@ -536,12 +585,15 @@ elf_zero_bytes:
 	decl	%ecx
 	jnz	elf_zero_bytes
 elf_segment_done:
+	movb	$'D', elf_debug_op
+	call	update_transfer_display
 	addw	$16, elf_segment_ptr
 	decb	elf_segments_left
 	jmp	elf_load_segment
 
 elf_load_done:
-	call	update_load_status
+	movb	$'J', elf_debug_op
+	call	update_transfer_display
 	jmp	prepare_boot_params
 
 clear_boot_params:
@@ -556,6 +608,392 @@ clear_boot_params:
 	jnz	1b
 	popl	%edi
 	popl	%ecx
+	ret
+
+/* Find optional LOGO.RAW (80 x 120, packed 1bpp) in the FAT16 root. */
+find_and_load_logo:
+	pushw	%ax
+	pushw	%bx
+	pushw	%cx
+	pushw	%di
+	pushw	%si
+	pushw	%es
+	movw	$BOUNCE_SEG, %ax
+	movw	%ax, %es
+	xorw	%di, %di
+	movw	root_entries, %cx
+1:
+	cmpb	$0, %es:(%di)
+	je	4f
+	cmpb	$0xe5, %es:(%di)
+	je	3f
+	cmpb	$0x0f, %es:0x0b(%di)
+	je	3f
+	pushw	%cx
+	pushw	%di
+	movw	$logo_name, %si
+	movw	$11, %cx
+	repe cmpsb
+	popw	%di
+	popw	%cx
+	jne	3f
+	cmpw	$1200, %es:0x1c(%di)
+	jne	4f
+	cmpw	$0, %es:0x1e(%di)	/* upper word of file size */
+	jne	4f
+	movw	%es:0x1a(%di), %ax
+	cmpw	$2, %ax
+	jb	4f
+	movw	%ax, logo_cluster
+	call	load_logo_file
+	jmp	4f
+3:
+	addw	$32, %di
+	loop	1b
+4:
+	popw	%es
+	popw	%si
+	popw	%di
+	popw	%cx
+	popw	%bx
+	popw	%ax
+	ret
+
+/* Read the three sectors containing the optional 1200-byte logo. */
+load_logo_file:
+	pushw	%ax
+	pushw	%cx
+	pushw	%bp
+	pushw	%es
+	movw	first_cluster, %ax
+	pushw	%ax
+	movw	logo_cluster, %ax
+	movw	%ax, first_cluster
+	call	stream_reset
+	movw	$BOUNCE_SEG, %ax
+	movw	%ax, %es
+	xorw	%bp, %bp
+	movw	$3, %cx
+1:
+	pushw	%cx
+	call	stream_read_sector
+	popw	%cx
+	jc	2f
+	addw	$512, %bp
+	loop	1b
+	call	draw_logo
+2:
+	popw	%ax
+	movw	%ax, first_cluster
+	popw	%es
+	popw	%bp
+	popw	%cx
+	popw	%ax
+	ret
+
+/* Copy LOGO.RAW to x=560, y=280 in all four planar graphics planes. */
+draw_logo:
+	pushw	%ax
+	pushw	%cx
+	pushw	%si
+	pushw	%di
+	pushw	%es
+	pushw	%fs
+	movw	$BOUNCE_SEG, %ax
+	movw	%ax, %fs
+	movw	$0, logo_source_offset
+	movw	$22470, logo_vram_offset	/* 280 * 80 + 560 / 8 */
+	movw	$120, logo_rows_left
+1:
+	movw	$0xa800, %ax
+	call	copy_logo_row
+	movw	$0xb000, %ax
+	call	copy_logo_row
+	movw	$0xb800, %ax
+	call	copy_logo_row
+	movw	$0xe000, %ax
+	call	copy_logo_row
+	addw	$10, logo_source_offset
+	addw	$80, logo_vram_offset
+	decw	logo_rows_left
+	jnz	1b
+	popw	%fs
+	popw	%es
+	popw	%di
+	popw	%si
+	popw	%cx
+	popw	%ax
+	ret
+
+copy_logo_row:
+	movw	%ax, %es
+	movw	logo_source_offset, %si
+	movw	logo_vram_offset, %di
+	movw	$10, %cx
+1:
+	movb	%fs:(%si), %al
+	movb	%al, %es:(%di)
+	incw	%si
+	incw	%di
+	loop	1b
+	ret
+
+/* Clear all text VRAM and the standard GDC B/R/G/I graphics planes. */
+clear_boot_screen:
+	pushl	%eax
+	pushw	%cx
+	pushw	%di
+	pushw	%dx
+	pushw	%es
+
+	/*
+	 * Do not depend on the graphics state inherited from POST.  NEC ROMs
+	 * may hand control to the IPL with the slave GDC stopped, while the
+	 * compatible BIOS normally leaves it configured.  AH=42h selects the
+	 * 640x400 ALL area in colour mode, bank 0; AH=40h enables scan-out.
+	 */
+	pushw	%bx
+	pushw	%si
+	pushw	%ds
+	movb	$0xc0, %ch		/* ALL, colour, display bank 0 */
+	movb	$0x42, %ah
+	int	$0x18
+	movb	$0x40, %ah
+	int	$0x18
+	popw	%ds
+	popw	%si
+	popw	%bx
+
+	/* Standard PC-98 digital palette, including colour 7 = white. */
+	movb	$0x37, %al
+	outb	%al, $0xa8
+	movb	$0x15, %al
+	outb	%al, $0xaa
+	movb	$0x26, %al
+	outb	%al, $0xac
+	movb	$0x04, %al
+	outb	%al, $0xae
+
+	/* Select graphics display/draw bank 0 and enable the I plane. */
+	xorb	%al, %al
+	outb	%al, $0xa4
+	outb	%al, $0xa6
+	outb	%al, $0x7c		/* disable GRCG/EGC interception */
+	outb	%al, $0x5f
+	movb	$0x07, %al		/* enable extended-mode writes */
+	outb	%al, $0x6a
+	movb	$0x20, %al		/* disable 256-colour PEGC mode */
+	outb	%al, $0x6a
+	movb	$0x04, %al		/* disable EGC mode */
+	outb	%al, $0x6a
+	movb	$0x06, %al		/* close extended-mode writes */
+	outb	%al, $0x6a
+	movb	$0x01, %al		/* mode2[0]: 16-colour plane access */
+	outb	%al, $0x6a
+	outb	%al, $0x5f
+
+	/* Character and attribute planes are each 8 KiB. */
+	movw	$0xa000, %ax
+	movw	%ax, %es
+	xorw	%di, %di
+	movw	$0x0020, %ax
+	movw	$4096, %cx
+	rep stosw
+	movw	$0xa200, %ax
+	movw	%ax, %es
+	xorw	%di, %di
+	movw	$0x00e1, %ax
+	movw	$4096, %cx
+	rep stosw
+
+	/* 640 x 400 planar graphics: 80 bytes x 400 lines per plane. */
+	xorl	%eax, %eax
+	movw	$0xa800, %dx
+1:
+	movw	%dx, %es
+	xorw	%di, %di
+	movw	$8192, %cx
+	rep stosl
+	addw	$0x0800, %dx
+	cmpw	$0xc000, %dx
+	jne	1b
+	/* Plane I is mapped separately at E0000 in 16-colour mode. */
+	movw	$0xe000, %ax
+	movw	%ax, %es
+	xorw	%di, %di
+	movw	$8192, %cx
+	xorl	%eax, %eax
+	rep stosl
+
+	/* Start the slave (graphics) GDC so the optional bitmap is visible. */
+	movw	$0xffff, %cx
+2:
+	inb	$0xa0, %al
+	testb	$0x02, %al
+	jz	3f
+	xorb	%al, %al
+	outb	%al, $0x5f
+	loop	2b
+	jmp	4f
+3:
+	movb	$0x6b, %al		/* uPD7220 START */
+	outb	%al, $0xa2
+	xorb	%al, %al
+	outb	%al, $0x5f
+	outb	%al, $0x5f
+4:
+
+	popw	%es
+	popw	%dx
+	popw	%di
+	popw	%cx
+	popl	%eax
+	ret
+
+/* Draw the fixed boot-loader layout.  Row 0 and rows 2/5/9 stay blank. */
+draw_boot_screen:
+	pushw	%di
+	pushw	%si
+	movw	$160, %di		/* row 1 */
+	movw	$banner_machine, %si
+	call	draw_mixed_string
+	movw	$480, %di		/* row 3 */
+	movw	$banner_loader, %si
+	call	draw_mixed_string
+	movw	$640, %di		/* row 4 */
+	movw	$banner_copyright, %si
+	call	draw_mixed_string
+	call	draw_progress_lines
+	popw	%si
+	popw	%di
+	ret
+
+draw_progress_lines:
+	pushw	%di
+	pushw	%si
+	movw	$960, %di		/* row 6 */
+	movw	$kernel_size_line, %si
+	call	draw_mixed_string
+	movw	$1120, %di		/* row 7 */
+	movw	$code_progress_line, %si
+	call	draw_mixed_string
+	movw	$1280, %di		/* row 8 */
+	movw	$data_progress_line, %si
+	call	draw_mixed_string
+	popw	%si
+	popw	%di
+	ret
+
+/*
+ * Draw a mixed PC-98 text string at text-VRAM byte offset DI.
+ * Ordinary nonzero bytes are ANK codes.  Marker 01h is followed by a
+ * two-byte JIS code (row, cell); the word is duplicated for the two cells
+ * expected by real PC-98 character generators.  A zero byte terminates.
+ */
+draw_mixed_string:
+	pushw	%ax
+	pushw	%si
+	pushw	%di
+	pushw	%es
+	movw	$0xa000, %ax
+	movw	%ax, %es
+1:
+	lodsb
+	testb	%al, %al
+	jz	3f
+	cmpb	$0x01, %al
+	je	2f
+	xorb	%ah, %ah
+	stosw
+	jmp	1b
+2:
+	lodsw				/* JIS row in AL, cell in AH */
+	stosw
+	stosw
+	jmp	1b
+3:
+	popw	%es
+	popw	%di
+	popw	%si
+	popw	%ax
+	ret
+
+/* Convert a byte count in EAX to a rounded-up KiB count. */
+bytes_to_kb:
+	addl	$1023, %eax
+	shrl	$10, %eax
+	ret
+
+/* Write EAX right-aligned in a six-character decimal field at DS:DI. */
+format_decimal6:
+	pushl	%eax
+	pushl	%ebx
+	pushl	%edx
+	pushw	%cx
+	pushw	%di
+	movw	$6, %cx
+	movb	$' ', %dl
+1:
+	movb	%dl, (%di)
+	incw	%di
+	loop	1b
+	subw	$1, %di
+	movl	$10, %ebx
+	testl	%eax, %eax
+	jnz	2f
+	movb	$'0', (%di)
+	jmp	4f
+2:
+	xorl	%edx, %edx
+	divl	%ebx
+	addb	$'0', %dl
+	movb	%dl, (%di)
+	testl	%eax, %eax
+	jz	4f
+	decw	%di
+	jmp	2b
+4:
+	popw	%di
+	popw	%cx
+	popl	%edx
+	popl	%ebx
+	popl	%eax
+	ret
+
+/* Update the code/data transfer fields from the cumulative ELF byte count. */
+update_transfer_display:
+	pushl	%eax
+	pushl	%ebx
+	pushw	%di
+
+	movl	loaded_bytes, %eax
+	movl	elf_code_bytes, %ebx
+	cmpl	%ebx, %eax
+	jbe	1f
+	movl	%ebx, %eax
+1:
+	call	bytes_to_kb
+	movw	$code_done_field, %di
+	call	format_decimal6
+
+	movl	loaded_bytes, %eax
+	subl	elf_code_bytes, %eax
+	jnc	2f
+	xorl	%eax, %eax
+2:
+	movl	elf_data_bytes, %ebx
+	cmpl	%ebx, %eax
+	jbe	3f
+	movl	%ebx, %eax
+3:
+	call	bytes_to_kb
+	movw	$data_done_field, %di
+	call	format_decimal6
+	call	draw_progress_lines
+
+	popw	%di
+	popl	%ebx
+	popl	%eax
 	ret
 
 /*
@@ -623,6 +1061,74 @@ update_load_status:
 	call	show_status
 	popw	%si
 	popw	%di
+	popw	%bx
+	popl	%eax
+	ret
+
+/*
+ * Persistent ELF diagnostic line for real-machine loader debugging.
+ *
+ *   ELF0 C F=00102000 D=01002000 R=00ABCDEF L=00123456
+ *
+ * S=seeking, C=copying, Z=zeroing, D=segment done, J=jump, !=failure.
+ * F is the current file-stream position, D the physical destination,
+ * R the bytes remaining in the current segment and L the total copied.
+ */
+update_elf_status:
+	pushl	%eax
+	pushw	%bx
+	pushw	%di
+	pushw	%si
+
+	movb	elf_segment_count, %al
+	subb	elf_segments_left, %al
+	addb	$'0', %al
+	movb	%al, elf_debug_segment_field
+	movb	elf_debug_op, %al
+	movb	%al, elf_debug_op_field
+
+	movl	elf_stream_pos, %eax
+	movw	$elf_debug_file_field, %di
+	call	format_hex8
+	movl	cur_dest, %eax
+	movw	$elf_debug_dest_field, %di
+	call	format_hex8
+	movl	remaining, %eax
+	movw	$elf_debug_remaining_field, %di
+	call	format_hex8
+	movl	loaded_bytes, %eax
+	movw	$elf_debug_loaded_field, %di
+	call	format_hex8
+
+	movw	$elf_debug_status, %si
+	call	show_status
+	popw	%si
+	popw	%di
+	popw	%bx
+	popl	%eax
+	ret
+
+/* Write EAX as eight uppercase hexadecimal digits at DS:DI. */
+format_hex8:
+	pushl	%eax
+	pushw	%bx
+	pushw	%cx
+	pushw	%di
+	movw	$8, %cx
+1:
+	roll	$4, %eax
+	movb	%al, %bl
+	andb	$0x0f, %bl
+	addb	$'0', %bl
+	cmpb	$'9', %bl
+	jbe	2f
+	addb	$('A' - '9' - 1), %bl
+2:
+	movb	%bl, (%di)
+	incw	%di
+	loop	1b
+	popw	%di
+	popw	%cx
 	popw	%bx
 	popl	%eax
 	ret
@@ -771,11 +1277,17 @@ read_disk:
 	ret
 
 loader_failure:
+	cmpb	$0, %cs:elf_debug_active
+	je	1f
+	movb	$'!', %cs:elf_debug_op
+	call	update_elf_status
+1:
 	movb	$0x06, %al
 	outb	%al, $0x37
-1:
+
+2:
 	hlt
-	jmp	1b
+	jmp	2b
 
 	.balign 8
 gdt:
@@ -792,6 +1304,8 @@ kernel_name:
 	.ascii	"BZIMAGE    "
 vmlinux_name:
 	.ascii	"VMLINUX    "
+logo_name:
+	.ascii	"LOGO    RAW"
 partition_lba:
 	.long	0
 fat_lba:
@@ -826,6 +1340,8 @@ sector_in_cluster:
 	.byte	0
 progress_sectors:
 	.word	0
+seek_progress_sectors:
+	.word	0
 progress_column:
 	.byte	0
 loaded_bytes:
@@ -837,12 +1353,32 @@ starting_message_ptr:
 	.word	starting_message
 elf_total_bytes:
 	.long	0
+elf_code_bytes:
+	.long	0
+elf_data_bytes:
+	.long	0
 elf_segment_ptr:
 	.word	0
 elf_segment_count:
 	.byte	0
 elf_segments_left:
 	.byte	0
+elf_debug_active:
+	.byte	0
+elf_debug_op:
+	.byte	'S'
+	.balign 4
+elf_stream_pos:
+	.long	0
+	.balign 2
+logo_cluster:
+	.word	0
+logo_source_offset:
+	.word	0
+logo_vram_offset:
+	.word	0
+logo_rows_left:
+	.word	0
 	.balign 4
 elf_segments:
 	.fill	4 * 16, 1, 0
@@ -864,4 +1400,63 @@ load_total_field:
 	.ascii	" bytes"
 load_dot_field:
 	.fill	24, 1, 0x20
+	.byte	0
+
+/* PC-98 ANK strings; 01h introduces a two-byte JIS row/cell code. */
+banner_machine:
+	.ascii	"NEC PC-9800 "
+	.byte	0xbc, 0xd8, 0xb0, 0xbd, 0xde
+	.ascii	" "
+	.byte	0xca, 0xdf, 0xb0, 0xbf, 0xc5, 0xd9
+	.ascii	" "
+	.byte	0xba, 0xdd, 0xcb, 0xdf, 0xad, 0xb0, 0xc0
+	.byte	0
+banner_loader:
+	.ascii	"UNIX "
+	.byte	0xb6, 0xb0, 0xc8, 0xd9, 0xdb, 0xb0, 0xc0, 0xde, 0xb0
+	.ascii	" "
+	.byte	0xca, 0xde, 0xb0, 0xbc, 0xde, 0xae, 0xdd
+	.ascii	" 1.00"
+	.byte	0
+banner_copyright:
+	.asciz	"Copyright (C) 2026 NEC FANS on X.com"
+kernel_size_line:
+	.byte	0xb6, 0xb0, 0xc8, 0xd9, 0xbb, 0xb2, 0xbd, 0xde
+	.ascii	" "
+kernel_size_field:
+	.ascii	"     0"
+	.asciz	" KB"
+code_progress_line:
+	.byte	0xba, 0xb0, 0xc4, 0xde
+	.ascii	" "
+code_done_field:
+	.ascii	"     0"
+	.ascii	" / "
+code_total_field:
+	.ascii	"     0"
+	.asciz	" KB"
+data_progress_line:
+	.byte	0xc3, 0xde, 0xb0, 0xc0
+	.ascii	" "
+data_done_field:
+	.ascii	"     0"
+	.ascii	" / "
+data_total_field:
+	.ascii	"     0"
+	.asciz	" KB"
+
+elf_debug_status:
+	.ascii	"ELF"
+elf_debug_segment_field:
+	.ascii	"0 "
+elf_debug_op_field:
+	.ascii	"S F="
+elf_debug_file_field:
+	.ascii	"00000000 D="
+elf_debug_dest_field:
+	.ascii	"00000000 R="
+elf_debug_remaining_field:
+	.ascii	"00000000 L="
+elf_debug_loaded_field:
+	.ascii	"00000000"
 	.byte	0

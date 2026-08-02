@@ -288,12 +288,16 @@ Debian archive on i486DX, Pentium, and Pentium MMX systems.
 
 Linux 7.1 uses the `pc98` device profile by default. It retains the PCI core
 required by `pc9821`, the PC-98 IDE and framebuffer drivers, and standard
-USB 1.x/2.0 UHCI/OHCI/EHCI host controllers. The USB module set is limited
-to generic HID, mass-storage, CDC Ethernet/NCM, ACM serial, and printer
-classes. The fixed module allow-list is stored in
+USB 1.x/2.0 UHCI/OHCI/EHCI host controllers. The framebuffer console is
+built in. The Debian/i686 configuration keeps the Core-Graph Cirrus driver
+as a module, while the i386 and i486 configurations disable it completely.
+This prevents an untested model from replacing the working GDC console or
+freezing during boot. The USB module set is limited to generic HID,
+mass-storage, CDC Ethernet/NCM, ACM serial, and printer classes. The fixed
+module allow-list is stored in
 `configs/pc9800-modules.list`; it does not depend on the build host's loaded
 modules. This reduces the configured module count from 3,644 in the full
-Debian configuration to 23 modular Kconfig entries (22 installed `.ko`
+Debian configuration to 23 modular Kconfig entries (22 built `.ko`
 files).
 
 The untrimmed Debian driver catalogue remains available for comparison:
@@ -433,14 +437,48 @@ minimum of 64 MiB RAM on both the i486DX and i686 paths.
 
 ## Console and framebuffer drivers
 
-The boot console is the PC-98 GDC 80x25 text console. Japanese glyph support
-is not required to reach the Debian login prompt.
+The boot console starts on the PC-98 GDC 80x25 text console. In a Debian/i686
+installation on a confirmed Core-Graph machine, loading `pc98cirrusfb`
+selects an 800x600x16 framebuffer by default and fbcon takes over.
+`FRAMEBUFFER_CONSOLE_DETECT_PRIMARY` is disabled because the non-PnP Cirrus
+child is not a conventional PCI VGA function. Japanese glyph support is not
+required to reach the Debian login prompt.
 
-Two optional fbdev modules are included for later graphical use:
+The PC-98 framebuffer drivers are:
 
-- `pc98cirrusfb` for the qemu-pc98 Core-Graph Cirrus GD5440
+- `pc98cirrusfb` for the qemu-pc98 Core-Graph Cirrus GD5440; the Debian/i686
+  configuration provides this as an explicitly loaded module, while i386
+  and i486 set it to `n`
 - `pc98tridentfb` for the integrated Trident TGUI9660/9680/9682 used by
-  NEC Mate R systems
+  NEC Mate R systems; this remains an optional module
+
+The driver is deliberately limited to the fixed-interface Core-Graph path;
+PCI GD754x/755x laptop LCD support remains outside its scope. The 1 MiB
+Core-Graph framebuffer supports exactly `640x480-24`,
+`800x600-16`, and `1024x768-8`. The default prioritizes usable colour depth
+for X11. The module exports no hardware alias and is not listed in any
+modules-load configuration, so udev cannot select it automatically. On a
+confirmed machine, load it immediately before X with
+`modprobe pc98cirrusfb`; select another initial mode with
+`modprobe pc98cirrusfb mode=<mode>`. An fbdev client can also request one of
+these exact resolution/depth pairs with `FBIOPUT_VSCREENINFO`.
+
+## Native input devices
+
+The PC-98 keyboard driver already reports keys through the Linux input
+subsystem. The normal i486/i686 Linux 7.1 profiles now enable `evdev`, so the
+keyboard is available as `/dev/input/event0` as well as the console keyboard.
+The native IRQ 13 PC-98 bus mouse is handled by the `pc98busmouse` module and
+reports through both mousedev and evdev after `modprobe pc98busmouse`. In the
+qemu-pc98 validation run these were `/dev/input/mouse0` and
+`/dev/input/event1`; event numbers are not a stable ABI. It reports relative
+X/Y and three buttons to the standard input API, so Xorg, gpm, SDL and other
+non-X programs can use it without a special X-only driver.
+
+The deliberately tiny 80386 profile does not enable evdev or the mouse
+driver. In the normal build the linked `evdev` and `pc98busmouse` objects add
+about 10 KiB of kernel text/data; no USB HID support is required for these
+native devices.
 
 The Trident driver is based on the register sequences documented in Suika3
 `98disp_trident.c`. It handles the PC-98 BAR1 MMIO window, CR21 linear

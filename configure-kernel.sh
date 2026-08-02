@@ -110,6 +110,14 @@ make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 	--enable CMDLINE_OVERRIDE \
 	--set-str CMDLINE \
 	"$console_args earlyprintk=pc9800 root=/dev/sda2 rootfstype=ext4 rw"
+if [ "$kernel_version" = 7.1 ]; then
+	# Core-Graph is not a conventional PCI VGA function, so fbcon must not
+	# restrict attachment to the framebuffer it considers primary.
+	"$source/scripts/config" --file "$kernel_build/.config" \
+		--enable FRAMEBUFFER_CONSOLE \
+		--disable FRAMEBUFFER_CONSOLE_DETECT_PRIMARY \
+		--disable FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER
+fi
 "$source/scripts/config" --file "$kernel_build/.config" --enable "$cpu_config"
 if [ "$console_mode" = dual ]; then
 	"$source/scripts/config" --file "$kernel_build/.config" \
@@ -275,6 +283,27 @@ if [ "$device_profile" = pc98 ]; then
 		--enable NET_VENDOR_NATSEMI \
 		--enable NET_VENDOR_8390 \
 		--enable NE2K_LGY98
+	if [ "$kernel_version" = 7.1 ] && [ "$cpu_family" != 386 ]; then
+		# Native keyboard and mouse both use the Linux input subsystem.
+		# evdev exposes them as /dev/input/event* for Xorg and other users;
+		# keep it out of the deliberately tiny 80386 research image.
+		"$source/scripts/config" --file "$kernel_build/.config" \
+			--enable INPUT_EVDEV \
+			--module MOUSE_PC98
+	fi
+	make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
+fi
+if [ "$kernel_version" = 7.1 ]; then
+	# Core-Graph varies between PC-98 models and can freeze an untested
+	# machine during modeset.  Keep it out of the i386/i486 kernels.  The
+	# Debian/i686 build provides an explicitly loaded module with no modalias.
+	if [ "$cpu_family" = 686 ]; then
+		"$source/scripts/config" --file "$kernel_build/.config" \
+			--module FB_PC98_CIRRUS
+	else
+		"$source/scripts/config" --file "$kernel_build/.config" \
+			--disable FB_PC98_CIRRUS
+	fi
 	make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 fi
 mkdir -p "$(dirname "$output")"

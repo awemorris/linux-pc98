@@ -13,6 +13,18 @@ menuconfig INPUT_MOUSE
 
 if INPUT_MOUSE
 
+config MOUSE_PC98
+	tristate "NEC PC-9800 bus mouse"
+	depends on X86_PC9800 && ISA
+	help
+	  Say Y here to support the native two- or three-button bus mouse on
+	  NEC PC-9801 and PC-9821 machines.  The driver reports through the
+	  Linux input subsystem, making the mouse available to evdev, mousedev,
+	  gpm and Xorg.
+
+	  To compile this driver as a module, choose M here.  The module will
+	  be called pc98busmouse.
+
 config MOUSE_PS2
 	tristate "PS/2 mouse"
 	default y

@@ -100,10 +100,12 @@ config FB_PC98_CIRRUS
 	  display routing and relocated-register initialization that the generic
 	  PCI cirrusfb driver cannot do.
 
-	  The initial implementation provides the QEMU-compatible Core-Graph
-	  640x480 8-bpp mode and a linear /dev/fb device. Build it as a module
-	  to keep the native PC-98 GDC text console active during boot, then load
-	  pc98cirrusfb when a framebuffer application or X server needs it.
+	  The driver provides 640x480 24-bpp, 800x600 16-bpp and 1024x768
+	  8-bpp modes with a 1 MiB linear /dev/fb device. It deliberately has no
+	  hardware module alias: build it as a module to keep the native PC-98
+	  GDC text console active during boot, then load pc98cirrusfb explicitly
+	  after confirming that the machine has the supported Core-Graph path.
+	  PCI GD75xx laptop LCD controllers are not supported.
 
 config FB_PC98_TRIDENT
 	tristate "NEC PC-9821 built-in Trident TGUI96xx framebuffer"

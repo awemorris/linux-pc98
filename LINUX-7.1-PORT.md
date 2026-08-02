@@ -48,13 +48,18 @@ unrelated legacy device support was restored.
 The default Linux 7.1 build uses `DEVICE_PROFILE=pc98`. The profile retains
 the PCI core needed by the `pc9821` machine and the standard PCI UHCI, OHCI,
 and EHCI USB host-controller drivers. Its fixed module allow-list keeps the
-PC-98 Cirrus and Trident framebuffer modules plus generic USB HID,
-mass-storage, CDC Ethernet/NCM, ACM serial, and printer support. It does not
-derive the configuration from the build host's `lsmod` output.
+PC-98 Trident framebuffer module plus generic USB HID, mass-storage, CDC
+Ethernet/NCM, ACM serial, and printer support. The Debian/i686 configuration
+keeps the Core-Graph Cirrus driver as a manually loaded module, while i386
+and i486 disable it because untested PC-98 display variants can freeze during
+modeset. fbcon is built in; primary-framebuffer detection is disabled because
+Core-Graph's non-PnP Cirrus child is not a conventional PCI VGA function.
+The profile does not derive the configuration from the build host's `lsmod`
+output.
 
 The full Debian driver catalogue can still be selected explicitly with
 `DEVICE_PROFILE=full`. The PC-98 profile reduces the number of configured
-modular Kconfig entries from 3,644 to 23 (22 installed `.ko` files) and the
+modular Kconfig entries from 3,644 to 23 (22 built `.ko` files) and the
 installed Linux 7.1 modules from about 190 MiB to about 1.8 MiB.
 
 ## Build
@@ -215,9 +220,17 @@ adaptation remains separate work.
 
 - `CONFIG_M686=y` PC-98 non-compressed ELF `VMLINUX` build
 - Complete full-profile module build before trimming
-- Trimmed PC-98 profile build and `modules_install` (23 modular Kconfig
-  entries, 22 installed `.ko` files)
-- Cirrus and Trident PC-98 fbdev module builds
+- Trimmed PC-98 profile build (23 modular Kconfig entries, 22 built `.ko`
+  files)
+- Debian/i686 modular Cirrus and Trident fbdev, modular PC-98 bus mouse, and
+  built-in fbcon/evdev builds; i386/i486 Cirrus disabled
+- Core-Graph `reg02=F0h` readback and exact NEC path-08h attribute stream
+- qemu-pc98 Cirrus module load and fbcon display through the Debian 13 login
+  prompt at the default 800x600x16 mode
+- qemu-pc98 display validation of 640x480x24, 800x600x16 and 1024x768x8
+- PC-98 keyboard exposed through evdev and native IRQ 13 bus mouse exposed
+  through both evdev and mousedev; injected relative motion and button events
+  validated in qemu-pc98
 - Debian 13 two-partition raw image with only Linux 7.1 modules
 - qemu-pc98 `pc9821` TCG boot with `-cpu pentium2,-apic`
 - ext4 root mount, login prompt, and `uname -a` reporting Linux 7.1.0 i686

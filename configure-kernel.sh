@@ -12,7 +12,7 @@ video)
 	console_args="console=tty0"
 	;;
 dual)
-	console_args="console=ttyS0 console=tty0"
+	console_args="console=ttyPC0 console=tty0"
 	;;
 *)
 	echo "Unsupported CONSOLE_MODE: $console_mode (expected video or dual)" >&2

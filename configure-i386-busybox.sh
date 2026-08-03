@@ -47,7 +47,7 @@ cp "$base" "$config"
 
 case "$console_mode" in
 dual)
-	console_args="console=ttyS0 console=tty0"
+	console_args="console=ttyPC0 console=tty0"
 	;;
 video)
 	console_args="console=tty0"

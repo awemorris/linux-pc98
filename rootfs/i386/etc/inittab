@@ -3,7 +3,7 @@
 ::sysinit:/sbin/swapon -a
 ::sysinit:/bin/echo I386-BUSYBOX-SUCCESS
 tty1::respawn:-/bin/sh
-ttyS0::respawn:-/bin/sh
+ttyPC0::respawn:-/bin/sh
 ::ctrlaltdel:/bin/reboot
 ::shutdown:/bin/swapoff -a
 ::shutdown:/bin/umount -a -r

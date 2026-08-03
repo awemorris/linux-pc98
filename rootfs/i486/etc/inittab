@@ -4,6 +4,6 @@
 ::sysinit:/bin/busybox --install -s
 ::sysinit:/bin/hostname pc98-i486
 tty1::respawn:-/bin/sh
-ttyS0::respawn:-/bin/sh
+ttyPC0::respawn:-/bin/sh
 ::ctrlaltdel:/bin/reboot
 ::shutdown:/bin/umount -a -r

@@ -115,7 +115,8 @@ source is not hidden behind a file-level label.
 | same: loader disk-geometry state and getter/export | project boot protocol and Linux 7.1 integration | project-new, `Copyright (C) 2026 Awe Morris` |
 | `arch/x86/kernel/setup.c`, `platform-quirks.c`, `arch/x86/lib/kaslr.c` | short vanilla-7.1 integration hooks plus historical PC-98 platform facts | marked/documented as project port integration |
 | `arch/x86/include/uapi/asm/setup_data.h`: PC-98 boot setup record | project boot protocol using vanilla setup-data conventions | project-new interface |
-| `arch/x86/include/asm/microcode.h` | restored to vanilla 7.1 | prohibited four-line workaround is absent |
+| `arch/x86/kernel/head32.c` | restored to vanilla 7.1 | prohibited four-line CPUID/initrd workaround is absent |
+| `arch/x86/include/asm/microcode.h`: no-microcode platform-ID stub | project genuine-i386 compatibility code; `M386` disables microcode while `early_init_intel()` still records the platform ID | project-new and distinct from the audited `head32.c` candidate |
 
 ### Early and VT text consoles
 

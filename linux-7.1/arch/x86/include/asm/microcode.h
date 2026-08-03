@@ -61,7 +61,12 @@ static inline int intel_microcode_get_datasize(struct microcode_header_intel *hd
 	return hdr->datasize ? : DEFAULT_UCODE_DATASIZE;
 }
 
+#ifdef CONFIG_MICROCODE
 extern u32 intel_get_platform_id(void);
+#else
+/* M386 disables microcode, but early_init_intel() still records this field. */
+static inline u32 intel_get_platform_id(void) { return 0; }
+#endif
 
 static inline u32 intel_get_microcode_revision(void)
 {

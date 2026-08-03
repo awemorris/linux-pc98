@@ -2,13 +2,9 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")" && pwd)"
-kernel_version="${KERNEL_VERSION:-6.12}"
+kernel_version="${KERNEL_VERSION:-7.1}"
 source="${KERNEL_SOURCE:-$repo/linux-$kernel_version}"
-if [ "$kernel_version" = 6.12 ]; then
-	default_kernel_build="$repo/build/kernel"
-else
-	default_kernel_build="$repo/build/kernel-$kernel_version"
-fi
+default_kernel_build="$repo/build/kernel-$kernel_version"
 kernel_build="${KERNEL_BUILD:-$default_kernel_build}"
 root_stage="${ROOT_STAGE:-$repo/build/debian-i386-root}"
 jobs="${JOBS:-$(nproc)}"

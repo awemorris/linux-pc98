@@ -29,15 +29,6 @@ ipl_start:
 	pushw	%cs
 	popw	%ds
 
-	/* LBA = cylinder * (8 * 17) + head * 17 + sector. */
-	movzwl	0x0206, %eax
-	imull	$136, %eax, %eax
-	movzbl	0x0205, %ecx
-	imull	$17, %ecx, %ecx
-	addl	%ecx, %eax
-	movzbl	0x0204, %ecx
-	addl	%ecx, %eax
-
 	/*
 	 * Keep the firmware-provided stack.  Use segment zero explicitly for
 	 * the BIOS work area and place the handoff block at 0:0700; 0:0500
@@ -46,9 +37,8 @@ ipl_start:
 	pushw	%ds
 	xorw	%dx, %dx
 	movw	%dx, %ds
-	movw	%si, HANDOFF+10
-	movw	%di, HANDOFF+12
-	movl	%eax, HANDOFF+4
+	movw	%si, HANDOFF+12
+	movw	%di, HANDOFF+14
 	movb	0x0584, %dl
 	andb	$0x7f, %dl
 	movb	%dl, HANDOFF+8
@@ -61,9 +51,50 @@ ipl_start:
 	movb	$0x84, %ah
 	int	$0x1b
 	popw	%ds
-	jc	boot_failure
+	jc	1f
 	cmpw	$512, %bx
-	jne	boot_failure
+	jne	1f
+	testb	%dh, %dh
+	jz	1f
+	testb	%dl, %dl
+	jz	1f
+	movb	%dh, %cs:disk_heads
+	movb	%dl, %cs:disk_sectors
+	movb	$0, %cs:disk_flags
+	jmp	2f
+1:
+	movb	$8, %cs:disk_heads
+	movb	$17, %cs:disk_sectors
+	movb	$1, %cs:disk_flags
+2:
+	pushw	%ds
+	xorw	%dx, %dx
+	movw	%dx, %ds
+	movb	%cs:disk_heads, %al
+	movb	%al, HANDOFF+9
+	movb	%cs:disk_sectors, %al
+	movb	%al, HANDOFF+10
+	movb	$1, HANDOFF+11
+	movb	%cs:disk_flags, %al
+	movb	%al, HANDOFF+16
+	popw	%ds
+
+	/* Convert the selected partition's BIOS CHS using sensed geometry. */
+	movzbl	%cs:disk_heads, %edi
+	movzbl	%cs:disk_sectors, %ebx
+	imull	%ebx, %edi
+	movzwl	0x0206, %eax
+	imull	%edi, %eax
+	movzbl	0x0205, %ecx
+	imull	%ebx, %ecx
+	addl	%ecx, %eax
+	movzbl	0x0204, %ecx
+	addl	%ecx, %eax
+	pushw	%ds
+	xorw	%dx, %dx
+	movw	%dx, %ds
+	movl	%eax, HANDOFF+4
+	popw	%ds
 
 	movl	$2, %eax
 	movw	LOADER_SECTORS, %si
@@ -96,12 +127,14 @@ read_disk:
 	pushw	%es
 	pushw	%bp
 	xorl	%edx, %edx
-	movl	$136, %edi
+	movzbl	%cs:disk_heads, %edi
+	movzbl	%cs:disk_sectors, %ecx
+	imull	%ecx, %edi
 	divl	%edi
 	movw	%ax, %cx
 	movl	%edx, %eax
 	xorl	%edx, %edx
-	movl	$17, %edi
+	movzbl	%cs:disk_sectors, %edi
 	divl	%edi
 	movb	%al, %dh
 	xorw	%ax, %ax
@@ -109,8 +142,8 @@ read_disk:
 	movb	0x0584, %al
 	orb	$0x80, %al
 	movb	$0x06, %ah
-	movw	HANDOFF+10, %si
-	movw	HANDOFF+12, %di
+	movw	HANDOFF+12, %si
+	movw	HANDOFF+14, %di
 	int	$0x1b
 	pushfw
 	popw	%ax
@@ -137,6 +170,12 @@ boot_failure:
 
 read_flags:
 	.word	0
+disk_heads:
+	.byte	0
+disk_sectors:
+	.byte	0
+disk_flags:
+	.byte	0
 
 	.org	LOADER_SECTORS
 	.word	0			/* patched second-stage sector count */

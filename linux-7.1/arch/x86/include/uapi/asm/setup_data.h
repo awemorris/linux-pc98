@@ -14,7 +14,8 @@
 #define SETUP_IMA			8
 #define SETUP_RNG_SEED			9
 #define SETUP_KEXEC_KHO			10
-#define SETUP_ENUM_MAX			SETUP_KEXEC_KHO
+#define SETUP_PC98_DISK			11
+#define SETUP_ENUM_MAX			SETUP_PC98_DISK
 
 #define SETUP_INDIRECT			(1<<31)
 #define SETUP_TYPE_MAX			(SETUP_ENUM_MAX | SETUP_INDIRECT)
@@ -30,6 +31,20 @@ struct setup_data {
 	__u32 len;
 	__u8 data[];
 };
+
+/* NEC PC-9800 BIOS logical disk geometry passed by a boot loader. */
+#define PC98_BOOT_DISK_MAGIC		0x44383950U /* "P98D" */
+#define PC98_BOOT_DISK_VERSION		1
+
+struct pc98_boot_disk_setup {
+	__u32 magic;
+	__u16 version;
+	__u16 size;
+	__u8 bios_drive;
+	__u8 heads;
+	__u8 sectors;
+	__u8 flags;
+} __attribute__((packed));
 
 /* extensible setup indirect data node */
 struct setup_indirect {

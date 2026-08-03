@@ -21,6 +21,7 @@
 
 #include <asm/pc9800.h>
 #include <asm/reboot.h>
+#include <asm/setup_data.h>
 #include <asm/x86_init.h>
 
 #define PC98_RESET_PORT	0xf0
@@ -35,6 +36,38 @@
 /* Both the PIT and the 8251's baud generator run off this. */
 unsigned long pc9800_pit_tick_rate = PC98_CLOCK_5MHZ;
 EXPORT_SYMBOL_GPL(pc9800_pit_tick_rate);
+
+static u8 pc9800_boot_drive;
+static u8 pc9800_boot_heads;
+static u8 pc9800_boot_sectors;
+static u8 pc9800_boot_flags;
+
+void __init pc9800_set_boot_disk_info(const struct pc98_boot_disk_setup *info)
+{
+	if (info->magic != PC98_BOOT_DISK_MAGIC ||
+	    info->version != PC98_BOOT_DISK_VERSION ||
+	    info->size < sizeof(*info) || !info->heads || !info->sectors)
+		return;
+
+	pc9800_boot_drive = info->bios_drive;
+	pc9800_boot_heads = info->heads;
+	pc9800_boot_sectors = info->sectors;
+	pc9800_boot_flags = info->flags;
+	pr_info("PC-98 boot disk: BIOS drive %u, logical CHS */%u/%u%s\n",
+		pc9800_boot_drive, pc9800_boot_heads, pc9800_boot_sectors,
+		pc9800_boot_flags & 1 ? " (8/17 fallback)" : "");
+}
+
+bool pc9800_get_boot_disk_geometry(unsigned int *heads,
+				   unsigned int *sectors)
+{
+	if (!pc9800_boot_heads || !pc9800_boot_sectors)
+		return false;
+
+	*heads = pc9800_boot_heads;
+	*sectors = pc9800_boot_sectors;
+	return true;
+}
 
 #define PC98_RTC_CTRL	0x20		/* W: command bits, CLK, STB, data */
 #define PC98_RTC_MODE	0x22		/* bit 5: uPD4993 extended format */

@@ -51,6 +51,7 @@
 #include <asm/numa.h>
 #include <asm/olpc_ofw.h>
 #include <asm/pci-direct.h>
+#include <asm/pc9800.h>
 #include <asm/prom.h>
 #include <asm/proto.h>
 #include <asm/realmode.h>
@@ -476,6 +477,24 @@ static void __init add_kho(u64 phys_addr, u32 data_len)
 	early_memunmap(kho, size);
 }
 
+static void __init add_pc98_boot_disk(u64 phys_addr, u32 data_len)
+{
+	struct pc98_boot_disk_setup *info;
+	u64 addr = phys_addr + sizeof(struct setup_data);
+
+	if (!IS_ENABLED(CONFIG_X86_PC9800) ||
+	    data_len < sizeof(struct setup_data) + sizeof(*info))
+		return;
+
+	info = early_memremap(addr, sizeof(*info));
+	if (!info) {
+		pr_warn("setup: failed to map PC-98 boot disk data\n");
+		return;
+	}
+	pc9800_set_boot_disk_info(info);
+	early_memunmap(info, sizeof(*info));
+}
+
 static void __init parse_setup_data(void)
 {
 	struct setup_data *data;
@@ -506,6 +525,9 @@ static void __init parse_setup_data(void)
 			break;
 		case SETUP_KEXEC_KHO:
 			add_kho(pa_data, data_len);
+			break;
+		case SETUP_PC98_DISK:
+			add_pc98_boot_disk(pa_data, data_len);
 			break;
 		case SETUP_RNG_SEED:
 			data = early_memremap(pa_data, data_len);

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")" && pwd)"
-kernel_version="${KERNEL_VERSION:-6.12}"
+kernel_version="${KERNEL_VERSION:-7.1}"
 source="${KERNEL_SOURCE:-$repo/linux-$kernel_version}"
 cpu_family="${CPU_FAMILY:-686}"
 device_profile="${DEVICE_PROFILE:-}"
@@ -20,25 +20,13 @@ dual)
 	;;
 esac
 if [ -z "$device_profile" ]; then
-	if [ "$kernel_version" = 7.1 ]; then
-		device_profile=pc98
-	else
-		device_profile=full
-	fi
+	device_profile=pc98
 fi
-if [ "$kernel_version" = 6.12 ]; then
-	default_kernel_build="$repo/build/kernel"
-else
-	default_kernel_build="$repo/build/kernel-$kernel_version"
-fi
+default_kernel_build="$repo/build/kernel-$kernel_version"
 kernel_build="${KERNEL_BUILD:-$default_kernel_build}"
 base="${BASE_CONFIG:-$repo/configs/debian-i386-base.config}"
 if [ "$cpu_family" = 686 ]; then
-	if [ "$kernel_version" = 6.12 ]; then
-		default_output="$repo/configs/pc9800-debian.config"
-	else
-		default_output="$repo/configs/pc9800-debian-$kernel_version.config"
-	fi
+	default_output="$repo/configs/pc9800-debian-$kernel_version.config"
 	cpu_config=M686
 elif [ "$cpu_family" = 486 ]; then
 	default_output="$repo/configs/pc9800-i486-$kernel_version.config"

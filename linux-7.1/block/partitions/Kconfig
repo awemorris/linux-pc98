@@ -130,8 +130,9 @@ config NEC98_PARTITION
 	default y
 	help
 	  Say Y to read the 16-entry partition table stored in sector 1 of
-	  NEC PC-9800 fixed disks. The initial implementation supports the
-	  fixed 8-head, 17-sector qemu-pc98 IDE geometry.
+	  NEC PC-9800 fixed disks. The boot loader supplies the BIOS logical
+	  heads/sectors used to interpret the table; an 8-head, 17-sector
+	  fallback is retained for older loaders and direct kernel boots.
 
 config BSD_DISKLABEL
 	bool "BSD disklabel (FreeBSD partition tables) support"

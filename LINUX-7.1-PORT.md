@@ -7,24 +7,23 @@
 - Source: <https://www.kernel.org/pub/linux/kernel/v7.x/linux-7.1.tar.xz>
 - SHA-256: `691f44797fbe790dc8a321604c927087526ad27b6d649925d60f8eed0a2564a0`
 
-The Linux 7.0 PC-98 change set was applied to a clean official v7.1 tree in
-a temporary Git repository. This separates upstream v7.0-to-v7.1 changes
-from the PC-98 port.
+The PC-98 support in this tree was reconstructed directly on the official
+v7.1 source. The historical implementation source is the immutable official
+Linux/PC-98 2.6.7 tree in `linux-2.6.7-pc98-original/`. No intermediate
+forward-port snapshot is retained or used by the build.
 
 ## Porting decisions
 
-The 32-file Linux 7.0 PC-98 patch produced one merge conflict:
-
-- `drivers/tty/serial/Kconfig`: Linux 7.1 no longer had the old ESP32 UART
-  entries at the end of the menu. The v7.1 layout was retained and only the
-  PC-98 uPD8251 entries were inserted.
+Historical PC-98 behavior was mapped to current Linux interfaces module by
+module. Current-API integrations and substantial project additions are
+identified in the source and in the clean-port audit report.
 
 Linux 7.1 changed the partition-parser diagnostic buffer from a character
 array to `struct seq_buf`. The NEC98 parser therefore uses
 `seq_buf_puts()` instead of `strlcat()`.
 
-The resulting PC-98 delta relative to official v7.1 contains 32 files with
-2,704 insertions and 4 deletions, plus the one-line `seq_buf` API update.
+The maintained result is a direct Linux 7.1 port rather than a chain of
+forward-port snapshots.
 
 ## Current scope
 

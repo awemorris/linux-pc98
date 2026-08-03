@@ -16,6 +16,7 @@
 	.set FAT_SEG,	0x2800
 	.set BP_ADDR,	0x20000
 	.set CMDLINE,	0x21000
+	.set PC98_DATA,	0x22000
 	.set KDEST,	0x100000
 	.set BOOT_CS,	0x10
 	.set BOOT_DS,	0x18
@@ -52,6 +53,26 @@ _start:
 	jne	loader_failure
 	movl	%es:HANDOFF+4, %eax
 	movl	%eax, partition_lba
+	movb	%es:HANDOFF+8, %al
+	movb	%al, boot_drive
+	cmpb	$1, %es:HANDOFF+11
+	jne	loader_failure
+	movb	%es:HANDOFF+9, %al
+	testb	%al, %al
+	jz	loader_failure
+	movb	%al, bios_heads
+	movb	%es:HANDOFF+10, %al
+	testb	%al, %al
+	jz	loader_failure
+	movb	%al, bios_sectors
+	movw	%es:HANDOFF+12, %ax
+	movw	%ax, bios_si
+	movw	%es:HANDOFF+14, %ax
+	movw	%ax, bios_di
+	movb	%es:HANDOFF+16, %al
+	movb	%al, bios_flags
+	call	validate_boot_partition
+	jc	loader_failure
 
 	/* Read the FAT16 BPB. */
 	movw	$FAT_SEG, %ax
@@ -305,6 +326,26 @@ prepare_boot_params:
 	movl	$CMDLINE, %fs:0x228(%edi)
 	movb	$2, %fs:0x1e8(%edi)
 
+	/* Pass the INT 1Bh logical geometry independently of ATA IDENTIFY. */
+	movl	$PC98_DATA, %fs:0x250(%edi)
+	movl	$0, %fs:0x254(%edi)
+	movl	$PC98_DATA, %ebx
+	movl	$0, %fs:(%ebx)
+	movl	$0, %fs:4(%ebx)
+	movl	$11, %fs:8(%ebx)	/* SETUP_PC98_DISK */
+	movl	$12, %fs:12(%ebx)
+	movl	$0x44383950, %fs:16(%ebx)	/* "P98D" */
+	movw	$1, %fs:20(%ebx)
+	movw	$12, %fs:22(%ebx)
+	movb	boot_drive, %al
+	movb	%al, %fs:24(%ebx)
+	movb	bios_heads, %al
+	movb	%al, %fs:25(%ebx)
+	movb	bios_sectors, %al
+	movb	%al, %fs:26(%ebx)
+	movb	bios_flags, %al
+	movb	%al, %fs:27(%ebx)
+
 	/* e820 conventional and extended RAM from the PC-98 BIOS work area. */
 	movl	$0x501, %ebx
 	movzbl	%fs:(%ebx), %eax
@@ -341,11 +382,8 @@ prepare_boot_params:
 	movl	$CMDLINE, %ebx
 	movb	$0, %fs:(%ebx)
 
-	cmpb	$0, elf_debug_active
-	jne	7f
 	movw	starting_message_ptr, %si
 	call	show_status
-7:
 
 	cli
 	movb	$0xff, %al
@@ -458,7 +496,6 @@ elf_next_phdr:
 	movw	$elf_segments, elf_segment_ptr
 	movb	elf_segment_count, %al
 	movb	%al, elf_segments_left
-	movb	$1, elf_debug_active
 	movl	$0, elf_stream_pos
 	call	stream_reset
 
@@ -475,7 +512,6 @@ elf_load_segment:
 	movl	4(%si), %ecx
 	movl	%ecx, cur_dest
 	movl	%edx, remaining
-	movb	$'S', elf_debug_op
 	call	update_transfer_display
 	testl	%edx, %edx
 	jz	elf_zero_segment
@@ -509,7 +545,6 @@ elf_begin_segment:
 	movl	%eax, cur_dest
 	movl	8(%si), %eax
 	movl	%eax, remaining
-	movb	$'C', elf_debug_op
 	call	update_transfer_display
 elf_copy_next:
 	cmpl	$0, remaining
@@ -559,7 +594,6 @@ elf_copy_account:
 	jmp	elf_copy_next
 
 elf_zero_segment:
-	movb	$'Z', elf_debug_op
 	call	update_transfer_display
 	movw	elf_segment_ptr, %si
 	movl	12(%si), %ecx		/* p_memsz - p_filesz */
@@ -585,14 +619,12 @@ elf_zero_bytes:
 	decl	%ecx
 	jnz	elf_zero_bytes
 elf_segment_done:
-	movb	$'D', elf_debug_op
 	call	update_transfer_display
 	addw	$16, elf_segment_ptr
 	decb	elf_segments_left
 	jmp	elf_load_segment
 
 elf_load_done:
-	movb	$'J', elf_debug_op
 	call	update_transfer_display
 	jmp	prepare_boot_params
 
@@ -1065,74 +1097,6 @@ update_load_status:
 	popl	%eax
 	ret
 
-/*
- * Persistent ELF diagnostic line for real-machine loader debugging.
- *
- *   ELF0 C F=00102000 D=01002000 R=00ABCDEF L=00123456
- *
- * S=seeking, C=copying, Z=zeroing, D=segment done, J=jump, !=failure.
- * F is the current file-stream position, D the physical destination,
- * R the bytes remaining in the current segment and L the total copied.
- */
-update_elf_status:
-	pushl	%eax
-	pushw	%bx
-	pushw	%di
-	pushw	%si
-
-	movb	elf_segment_count, %al
-	subb	elf_segments_left, %al
-	addb	$'0', %al
-	movb	%al, elf_debug_segment_field
-	movb	elf_debug_op, %al
-	movb	%al, elf_debug_op_field
-
-	movl	elf_stream_pos, %eax
-	movw	$elf_debug_file_field, %di
-	call	format_hex8
-	movl	cur_dest, %eax
-	movw	$elf_debug_dest_field, %di
-	call	format_hex8
-	movl	remaining, %eax
-	movw	$elf_debug_remaining_field, %di
-	call	format_hex8
-	movl	loaded_bytes, %eax
-	movw	$elf_debug_loaded_field, %di
-	call	format_hex8
-
-	movw	$elf_debug_status, %si
-	call	show_status
-	popw	%si
-	popw	%di
-	popw	%bx
-	popl	%eax
-	ret
-
-/* Write EAX as eight uppercase hexadecimal digits at DS:DI. */
-format_hex8:
-	pushl	%eax
-	pushw	%bx
-	pushw	%cx
-	pushw	%di
-	movw	$8, %cx
-1:
-	roll	$4, %eax
-	movb	%al, %bl
-	andb	$0x0f, %bl
-	addb	$'0', %bl
-	cmpb	$'9', %bl
-	jbe	2f
-	addb	$('A' - '9' - 1), %bl
-2:
-	movb	%bl, (%di)
-	incw	%di
-	loop	1b
-	popw	%di
-	popw	%cx
-	popw	%bx
-	popl	%eax
-	ret
-
 /* Write EAX as eight zero-padded decimal digits at DS:DI. */
 format_decimal8:
 	pushl	%eax
@@ -1161,6 +1125,84 @@ stream_reset:
 	movw	first_cluster, %ax
 	movw	%ax, current_cluster
 	movb	$0, sector_in_cluster
+	ret
+
+/*
+ * Read and interpret the NEC98 partition table with the BIOS logical CHS.
+ * Accept a handoff LBA only when it matches an active table entry's IPL or
+ * partition-start CHS.  This also validates a genuine IPL -> PBR handoff.
+ */
+validate_boot_partition:
+	pushl	%eax
+	pushl	%ebx
+	pushl	%ecx
+	pushl	%edx
+	pushw	%di
+	pushw	%es
+	pushw	%bp
+	movw	$FAT_SEG, %ax
+	movw	%ax, %es
+	xorw	%bp, %bp
+	movl	$1, %eax
+	movw	$512, %bx
+	call	read_disk
+	jc	8f
+	xorw	%di, %di
+	movw	$16, %cx
+1:
+	movw	%es:(%di), %ax
+	testw	%ax, %ax
+	jz	7f
+	pushw	%cx
+	movb	%es:4(%di), %dl
+	movb	%es:5(%di), %dh
+	movw	%es:6(%di), %ax
+	call	chs_to_lba
+	cmp	partition_lba, %eax
+	je	6f
+	movb	%es:8(%di), %dl
+	movb	%es:9(%di), %dh
+	movw	%es:10(%di), %ax
+	call	chs_to_lba
+	cmp	partition_lba, %eax
+	je	6f
+	popw	%cx
+7:
+	addw	$32, %di
+	loop	1b
+8:
+	movw	$1, read_flags
+	jmp	9f
+6:
+	popw	%cx
+	movw	$0, read_flags
+9:
+	popw	%bp
+	popw	%es
+	popw	%di
+	popl	%edx
+	popl	%ecx
+	popl	%ebx
+	popl	%eax
+	cmpw	$0, read_flags
+	jne	10f
+	clc
+	ret
+10:
+	stc
+	ret
+
+/* AX=cylinder, DH=head, DL=zero-based sector; return EAX=absolute LBA. */
+chs_to_lba:
+	movzwl	%ax, %eax
+	movzbl	bios_heads, %ecx
+	imull	%ecx, %eax
+	movzbl	%dh, %ecx
+	addl	%ecx, %eax
+	movzbl	bios_sectors, %ecx
+	imull	%ecx, %eax
+	movzbl	%dl, %ecx
+	addl	%ecx, %eax
 	ret
 
 /* Read the next 512-byte file sector to ES:BP and advance the FAT stream. */
@@ -1235,7 +1277,7 @@ fat_next:
 
 read_disk:
 	pushl	%eax
-	pushw	%bx
+	pushl	%ebx
 	pushw	%cx
 	pushw	%dx
 	pushw	%si
@@ -1243,26 +1285,62 @@ read_disk:
 	pushw	%ds
 	pushw	%es
 	pushw	%bp
+
+	/* BX is a byte count; issue conservative one-sector INT 1Bh reads. */
+	testw	%bx, %bx
+	jz	9f
+	testw	$511, %bx
+	jnz	9f
+	movw	%bx, %cx
+	shrw	$9, %cx
+	movw	%cx, %cs:pio_count
+	movl	%eax, %cs:pio_lba
+	movw	%bp, %cs:pio_offset
+	movw	%es, %ax
+	movw	%ax, %cs:pio_segment
+
+1:
+	cmpw	$0, %cs:pio_count
+	je	8f
+	movl	%cs:pio_lba, %eax
 	xorl	%edx, %edx
-	movl	$136, %edi
-	divl	%edi
-	movw	%ax, %cx
+	movzbl	%cs:bios_heads, %ebx
+	movzbl	%cs:bios_sectors, %ecx
+	imull	%ecx, %ebx
+	divl	%ebx
+	cmpl	$0xffff, %eax
+	ja	9f
+	movw	%ax, %cs:pio_cylinder
 	movl	%edx, %eax
 	xorl	%edx, %edx
-	movl	$17, %edi
-	divl	%edi
+	movzbl	%cs:bios_sectors, %ebx
+	divl	%ebx
 	movb	%al, %dh
+	movw	%cs:pio_cylinder, %cx
+	movw	%cs:pio_segment, %ax
+	movw	%ax, %es
+	movw	%cs:pio_offset, %bp
 	xorw	%ax, %ax
 	movw	%ax, %ds
-	movb	%ss:0x0584, %al
+	movb	%cs:boot_drive, %al
 	orb	$0x80, %al
 	movb	$0x06, %ah
-	movw	%ss:HANDOFF+10, %si
-	movw	%ss:HANDOFF+12, %di
+	movw	$512, %bx
+	movw	%cs:bios_si, %si
+	movw	%cs:bios_di, %di
 	int	$0x1b
-	pushfw
-	popw	%ax
-	movw	%ax, %cs:read_flags
+	jc	9f
+	incl	%cs:pio_lba
+	addw	$512, %cs:pio_offset
+	decw	%cs:pio_count
+	jmp	1b
+
+8:
+	movw	$0, %cs:read_flags
+	jmp	10f
+9:
+	movw	$1, %cs:read_flags
+10:
 	popw	%bp
 	popw	%es
 	popw	%ds
@@ -1270,24 +1348,23 @@ read_disk:
 	popw	%si
 	popw	%dx
 	popw	%cx
-	popw	%bx
+	popl	%ebx
 	popl	%eax
-	pushw	%cs:read_flags
-	popfw
+	cmpw	$0, %cs:read_flags
+	jne	11f
+	clc
+	ret
+11:
+	stc
 	ret
 
 loader_failure:
-	cmpb	$0, %cs:elf_debug_active
-	je	1f
-	movb	$'!', %cs:elf_debug_op
-	call	update_elf_status
-1:
 	movb	$0x06, %al
 	outb	%al, $0x37
 
-2:
+1:
 	hlt
-	jmp	2b
+	jmp	1b
 
 	.balign 8
 gdt:
@@ -1336,6 +1413,14 @@ sectors_per_cluster:
 	.byte	0
 sector_scale:
 	.byte	0
+boot_drive:
+	.byte	0
+bios_heads:
+	.byte	0
+bios_sectors:
+	.byte	0
+bios_flags:
+	.byte	0
 sector_in_cluster:
 	.byte	0
 progress_sectors:
@@ -1344,6 +1429,21 @@ seek_progress_sectors:
 	.word	0
 progress_column:
 	.byte	0
+	.balign 4
+pio_lba:
+	.long	0
+pio_count:
+	.word	0
+pio_cylinder:
+	.word	0
+pio_offset:
+	.word	0
+pio_segment:
+	.word	0
+bios_si:
+	.word	0
+bios_di:
+	.word	0
 loaded_bytes:
 	.long	0
 kernel_entry_ptr:
@@ -1363,10 +1463,6 @@ elf_segment_count:
 	.byte	0
 elf_segments_left:
 	.byte	0
-elf_debug_active:
-	.byte	0
-elf_debug_op:
-	.byte	'S'
 	.balign 4
 elf_stream_pos:
 	.long	0
@@ -1444,19 +1540,3 @@ data_done_field:
 data_total_field:
 	.ascii	"     0"
 	.asciz	" KB"
-
-elf_debug_status:
-	.ascii	"ELF"
-elf_debug_segment_field:
-	.ascii	"0 "
-elf_debug_op_field:
-	.ascii	"S F="
-elf_debug_file_field:
-	.ascii	"00000000 D="
-elf_debug_dest_field:
-	.ascii	"00000000 R="
-elf_debug_remaining_field:
-	.ascii	"00000000 L="
-elf_debug_loaded_field:
-	.ascii	"00000000"
-	.byte	0

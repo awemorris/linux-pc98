@@ -21,6 +21,15 @@ PBR_LOADER_SECTORS = 0x46
 LOADER_LBA = 2
 
 
+def set_geometry(heads, sectors):
+    global HEADS, SECTORS, CYL_SECTORS
+    if not 1 <= heads <= 255 or not 1 <= sectors <= 255:
+        raise RuntimeError("heads and sectors must be in the range 1..255")
+    HEADS = heads
+    SECTORS = sectors
+    CYL_SECTORS = heads * sectors
+
+
 def read_file(path):
     with open(path, "rb") as stream:
         return stream.read()
@@ -49,6 +58,31 @@ def partition_entry(mid, sid, start_cylinder, end_cylinder, name):
         end_cylinder,
         label,
     )
+
+
+def detect_geometry(image_path):
+    geometry = None
+    with open(image_path, "rb") as image:
+        image.seek(PARTITION_TABLE_LBA * SECTOR_SIZE)
+        table = image.read(16 * PARTITION_ENTRY_SIZE)
+    if len(table) != SECTOR_SIZE:
+        raise RuntimeError("short PC-98 partition table")
+    for index in range(16):
+        offset = index * PARTITION_ENTRY_SIZE
+        fields = struct.unpack(
+            "<BBBBBBHBBHBBH16s",
+            table[offset:offset + PARTITION_ENTRY_SIZE])
+        if not fields[0] and not fields[1]:
+            continue
+        entry_geometry = (fields[11] + 1, fields[10] + 1)
+        if geometry is None:
+            geometry = entry_geometry
+        elif geometry != entry_geometry:
+            raise RuntimeError(
+                "inconsistent PC-98 partition end geometry")
+    if geometry is None:
+        raise RuntimeError("PC-98 partition table is empty")
+    return geometry
 
 
 def parse_partition(image, index):
@@ -412,6 +446,8 @@ def main():
     create_parser.add_argument("--boot-mb", type=int, default=200)
     create_parser.add_argument("--root-mb", type=int, default=200)
     create_parser.add_argument("--swap-mb", type=int, default=0)
+    create_parser.add_argument("--heads", type=int, default=8)
+    create_parser.add_argument("--sectors", type=int, default=17)
     create_parser.add_argument(
         "--logo",
         help="optional 80x120 packed 1bpp LOGO.RAW for the boot screen")
@@ -426,12 +462,20 @@ def main():
     update_parser.add_argument("pbr")
     update_parser.add_argument("loader")
     update_parser.add_argument("kernel")
+    update_parser.add_argument("--heads", type=int)
+    update_parser.add_argument("--sectors", type=int)
     update_parser.add_argument(
         "--logo",
         help="optional 80x120 packed 1bpp LOGO.RAW for the boot screen")
     update_parser.set_defaults(function=update_kernel)
 
     args = parser.parse_args()
+    if args.command == "update-kernel":
+        if (args.heads is None) != (args.sectors is None):
+            raise RuntimeError("--heads and --sectors must be specified together")
+        if args.heads is None:
+            args.heads, args.sectors = detect_geometry(args.image)
+    set_geometry(args.heads, args.sectors)
     args.function(args)
 
 

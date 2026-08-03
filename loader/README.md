@@ -14,8 +14,32 @@ setup code is not executed.
 | Partition 1   | PC-98 DOS-compatible FAT16 with `VMLINUX` and optional `LOGO.RAW` |
 | Partition 2   | ext4 Debian root filesystem                        |
 
-The fixed BIOS geometry is eight heads and seventeen sectors per track.
-Partition 1 begins at cylinder 1, which corresponds to LBA 136.
+The disk IPL and partition PBR obtain the BIOS CHS geometry with
+`INT 1Bh/AH=84h` and use the returned head and sector counts while loading
+the second stage. If the firmware does not implement the sense request or
+returns invalid values, those two boot records fall back to eight heads and
+seventeen sectors per track.
+
+Once loaded, `fat-loader.bin` continues to use `INT 1Bh/AH=06h`. It reads the
+LBA 1 partition table, converts both the IPL and partition-start CHS fields
+with the sensed BIOS geometry, and verifies the partition selected by the
+disk IPL or PBR before opening its FAT16 filesystem. The second stage does not
+program ATA registers and is therefore independent of the underlying IDE or
+SCSI controller used by the BIOS.
+
+Images created without geometry options use the BIOS 8/17 layout, so
+Partition 1 begins at cylinder 1 (LBA 136). The image builder also accepts
+`--heads` and `--sectors`; for example, `--heads 4 --sectors 17` creates an
+image for an older BIOS four-head geometry.
+
+Official distribution images currently use only the 8/17 layout. The older
+four-head layout remains experimental and is not published as a prebuilt
+image. `update-kernel.sh` detects an existing image's geometry from its
+cylinder-aligned partition entries; `DISK_HEADS` and `DISK_SECTORS` can
+override that detection for development. The selected geometry affects the
+on-disk partition CHS fields. The geometry actually returned by BIOS SENSE,
+the BIOS drive number, and an ABI version are also passed to Linux in a
+`SETUP_PC98_DISK` setup-data node attached to `boot_params`.
 
 `disk-ipl.bin` obtains the first-partition LBA from the first entry in the
 LBA 1 partition table, then loads the second stage from LBA 2 at `1000:0000`.
@@ -90,6 +114,7 @@ as the kernel starts and unregisters when the normal PC-98 console is ready.
 | `0x00010000`     | FAT16 second-stage loader                          |
 | `0x00020000`     | 4096-byte `boot_params` structure                  |
 | `0x00021000`     | Kernel command line                                |
+| `0x00022000`     | `SETUP_PC98_DISK` setup-data node                   |
 | `0x00028000`     | BPB and FAT read buffer                            |
 | `0x00030000`     | Directory and kernel read buffer                   |
 | `0x00100000`     | bzImage payload, or first ELF `PT_LOAD` segment    |
@@ -99,6 +124,21 @@ PC-98 BIOS work area. It enables A20 and uses a flat unreal-mode segment to
 copy data above 1 MiB. It then enters the kernel according to the Linux x86
 boot protocol with `CS=0x10`, `DS/ES/SS=0x18`, and `ESI` pointing to
 `boot_params`.
+
+Linux uses the handed BIOS H/S values to interpret the NEC98 partition table.
+The native `pc98_ide` block driver and `pata_pc9800`/libata then access the
+device with LBA when ATA IDENTIFY advertises it and fall back to the device's
+ATA CHS geometry otherwise. BIOS logical geometry is intentionally not used
+as ATA device geometry.
+
+## DOS loader
+
+`loader/dos/linux98.exe` is a separate real-mode DOS command for systems whose
+logical geometry is installed by an IPL utility before Linux is started. It
+uses DOS file I/O to load an uncompressed `VMLINUX`, passes the current INT
+1Bh SENSE result through the same `SETUP_PC98_DISK` ABI, and switches to
+protected mode before entering the kernel. See `loader/dos/README.md` for its
+current restrictions.
 
 ## Building and updating
 

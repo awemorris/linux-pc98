@@ -24,7 +24,7 @@ normal block-device partitions.
 
 ## Kernel
 
-The PC-98 changes are integrated directly in `linux-6.12/`; it is not a
+The PC-98 changes are integrated directly in `linux-7.1/`; it is not a
 submodule and no patch-application step is required. Configure and build it
 out of tree with:
 
@@ -35,7 +35,7 @@ out of tree with:
 The QEMU build uses Debian's non-PAE i686 distribution configuration as its
 feature baseline, then overlays the PC-98 platform, built-in boot devices,
 ext4 root support and the PC-98 console. Build products are kept under
-`build/kernel`, leaving `linux-6.12/` as a source-only directory. The boot disk
+`build/kernel-7.1`, leaving `linux-7.1/` as a source-only directory. The boot disk
 uses a stripped, non-compressed ELF `VMLINUX`. The symbol-rich `vmlinux`
 remains in the build directory for debugging, while `vmlinux.boot` is copied
 to the FAT16 partition without a decompression stage or initramfs.
@@ -137,13 +137,13 @@ BusyBox build instead of the Debian 13 userspace.
 ## Verified result
 
 The free compatibility BIOS loaded the `IPL1` disk, the LBA 2 second stage
-found `VMLINUX` through its FAT16 cluster chain, and Linux 6.12 parsed both
+found `VMLINUX` through its FAT16 cluster chain, and Linux 7.1 parsed both
 PC-98 partitions. It mounted ext4 from `/dev/sda2` and reached the Debian 13
 `pc98 login:` prompt under qemu-pc98 TCG.
 The following commands completed using Debian's i386 userspace:
 
 ```text
-Linux pc98 6.12.0+ ... i686 GNU/Linux
+Linux pc98 7.1.0+ ... i686 GNU/Linux
 13.6
 ```
 

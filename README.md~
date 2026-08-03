@@ -1,18 +1,10 @@
 Linux/pc98 Workspace
 ====================
 
-This repository contains:
-
-- Linux: 7.1, i386SX/DX and i486SX/DX port, with NEC PC-9800 machine support
-- Debian: 13 "trixie", i486DX port, with NEC PC-9800 utils
-- glibc: 2.41, i486DX port
-- BusyBox: i386SX port
-- qemu: 11.0, NEC PC-9800 support with compatible BIOS
-- pc98boot: NEC PC-9800 HDD-IPL and FAT16 bootloader
-
-Each component is reusable for other retro PCs.
-
-## How to start
+This repository contains Linux 6.12, Linux 7.0, and Linux 7.1 ports for the
+NEC PC-9800 series, boot loaders, the maintained i486DX glibc and Debian 13
+ports, small i386/i486 BusyBox systems, and a raw disk image builder for
+qemu-pc98 and physical PC-98 machines.
 
 Clone it with its maintained toolchain and emulator sources:
 
@@ -57,7 +49,10 @@ smaller BusyBox systems are the supported choice below that threshold.
 | Path | Contents |
 | --- | --- |
 | `linux-2.6.7-pc98-original/` | Immutable last-complete upstream PC-9800 source snapshot from immediately before its 2004 removal |
-| `linux-7.1/` | Linux 7.1 source tree with the clean PC-98 port integrated |
+| `linux-6.12/` | Linux 6.12 source tree with the PC-98 port integrated |
+| `linux-7.0/` | Linux 7.0 source tree with the PC-98 port forward-ported |
+| `linux-7.1/` | Linux 7.1 source tree with the PC-98 port forward-ported |
+| `patches/linux-6.12-pc98/` | Recovered chronological 6.12 series and the complete current v6.12 delta |
 | `qemu-pc98/` | qemu-pc98 submodule used for i386 and PC-98 validation |
 | `toolchain/` | GCC, musl, and glibc submodules plus the versioned patch inventory |
 | `debian-i486/` | Framework and patch database for the Debian 13/i486DX package port |
@@ -80,9 +75,11 @@ See `toolchain/README.md` for the exact source baselines, local-source
 integration, patch regeneration, update procedure, and automated patch
 replay check.
 
-The historical Linux 2.6.7 tree is retained as immutable source and
-provenance material; it is not used by the build. The direct clean port to
-the current Linux 7.1 tree is documented in `LINUX-7.1-PORT.md`.
+The historical tree is reference material and is not used by the build.
+`LINUX-6.12-PORT.md` records its exact provenance and maps the original
+Linux/PC-98 implementation to the reconstructed Linux 6.12 platform and
+drivers. The corresponding forward-port records are `LINUX-7.0-PORT.md` and
+`LINUX-7.1-PORT.md`.
 
 ## glibc 2.41 ports
 
@@ -131,7 +128,8 @@ kernel modules into it, and generating the ext4 filesystem image.
 
 ## Complete Debian image build
 
-Linux 7.1 is the only maintained kernel tree and the default build target:
+Linux 6.12 remains the default so existing build and release procedures keep
+their original behavior:
 
 ```sh
 ./build-debian.sh
@@ -144,12 +142,21 @@ Pentium II or newer systems. The script then builds Linux, installs the
 modules, builds the PC-98 loaders, and creates:
 
 ```text
-build/qemu-pc98-linux-7.1.raw
+build/qemu-pc98-linux.raw
 ```
 
-The kernel is built out of tree in `build/kernel-7.1`; `linux-7.1/` remains
-a source-only directory. `KERNEL_VERSION=7.1` may still be specified
-explicitly for automated builds.
+The kernel is built out of tree in `build/kernel`; `linux-6.12/` remains a
+source-only directory.
+
+To build a versioned Linux image instead:
+
+```sh
+KERNEL_VERSION=7.1 ./build-debian.sh
+```
+
+This uses `linux-7.1/`, builds out of tree in `build/kernel-7.1`, and writes
+`build/qemu-pc98-linux-7.1.raw`. It does not overwrite the Linux 6.12 kernel
+or disk image.
 
 The individual build stages can also be run separately:
 
@@ -238,10 +245,10 @@ The main environment-variable overrides are:
 
 | Variable | Default or purpose |
 | --- | --- |
-| `KERNEL_VERSION` | `7.1` (the maintained kernel source) |
+| `KERNEL_VERSION` | `6.12`; select `6.12`, `7.0`, or `7.1` |
 | `KERNEL_SOURCE` | `linux-$KERNEL_VERSION` |
 | `JOBS` | `nproc`; parallel kernel build job count |
-| `KERNEL_BUILD` | `build/kernel-$KERNEL_VERSION` |
+| `KERNEL_BUILD` | `build/kernel` for 6.12; otherwise `build/kernel-$KERNEL_VERSION` |
 | `CPU_FAMILY` | `686`; use `486` or `386` for the completed PC-98 low-generation ports |
 | `DEVICE_PROFILE` | Linux 7.1 defaults to `pc98`; use `full` for the full Debian driver catalogue |
 | `CONSOLE_MODE` | `video`; use `dual` only for a private GDC plus serial diagnostic build |
@@ -260,21 +267,25 @@ The main environment-variable overrides are:
 `build-debian-rootfs.sh` stops if `ROOT_STAGE` already exists, preventing an
 existing rootfs from being overwritten accidentally.
 
+Linux 7.0 supports both the official-Debian-oriented i686 kernel and the
+PC-98 i486 kernel target. An i486 validation build can be made without
+installing its modules into the official i686 Debian staging tree:
+
+```sh
+KERNEL_VERSION=7.0 CPU_FAMILY=486 INSTALL_MODULES=0 ./build-kernel.sh
+```
+
 Use the separately maintained Debian/i486DX port rather than the official
 Debian archive on i486DX, Pentium, and Pentium MMX systems.
 
 Linux 7.1 uses the `pc98` device profile by default. It retains the PCI core
 required by `pc9821`, the PC-98 IDE and framebuffer drivers, and standard
-USB 1.x/2.0 UHCI/OHCI/EHCI host controllers. The framebuffer console is
-built in. The Debian/i686 configuration keeps the Core-Graph Cirrus driver
-as a module, while the i386 and i486 configurations disable it completely.
-This prevents an untested model from replacing the working GDC console or
-freezing during boot. The USB module set is limited to generic HID,
-mass-storage, CDC Ethernet/NCM, ACM serial, and printer classes. The fixed
-module allow-list is stored in
+USB 1.x/2.0 UHCI/OHCI/EHCI host controllers. The USB module set is limited
+to generic HID, mass-storage, CDC Ethernet/NCM, ACM serial, and printer
+classes. The fixed module allow-list is stored in
 `configs/pc9800-modules.list`; it does not depend on the build host's loaded
 modules. This reduces the configured module count from 3,644 in the full
-Debian configuration to 23 modular Kconfig entries (22 built `.ko`
+Debian configuration to 23 modular Kconfig entries (22 installed `.ko`
 files).
 
 The untrimmed Debian driver catalogue remains available for comparison:
@@ -283,14 +294,26 @@ The untrimmed Debian driver catalogue remains available for comparison:
 KERNEL_VERSION=7.1 DEVICE_PROFILE=full ./build-kernel.sh
 ```
 
+## Linux 7.0 port status
+
+The `linux-7.0/` tree is based on the official Linux v7.0 release. The PC-98
+platform, partition parser, PATA, keyboard, serial, text console, Cirrus
+fbdev, and Trident fbdev changes were forward-ported from this repository's
+6.12 tree. The serial driver uses the Linux 7 timer API
+(`timer_delete_sync()`).
+
+Both `CONFIG_M686=y` and `CONFIG_M486=y` PC-98 kernels build successfully.
+The complete Debian-oriented module set also builds and installs. The i686
+kernel has booted under qemu-pc98 through the custom IPL and FAT16 loader,
+mounted the Debian ext4 root filesystem, reached the login prompt, and
+reported Linux 7.0.0 from `uname`.
+
 ## Linux 7.1 port status
 
-The `linux-7.1/` tree is based on the official Linux v7.1 release. PC-98
-support was cleanly and directly reconstructed from the official final
-Linux/PC-98 2.6.7 sources, with current APIs and independently maintained
-project code documented in `LINUX-7.1-PORT.md`. Linux 7.1 changed
-partition-parser logging to `struct seq_buf`; the NEC98 parser follows the
-new API.
+The `linux-7.1/` tree is based on the official Linux v7.1 release. The PC-98
+platform and device changes were forward-ported from the Linux 7.0 tree.
+Linux 7.1 changed partition-parser logging to `struct seq_buf`; the NEC98
+parser follows the new API.
 
 Linux 7.1 supports the PC-98 `CONFIG_M386=y`, `CONFIG_M486=y`, and
 `CONFIG_M686=y` targets. The lower-generation work restores the x86 i386 and
@@ -402,48 +425,14 @@ minimum of 64 MiB RAM on both the i486DX and i686 paths.
 
 ## Console and framebuffer drivers
 
-The boot console starts on the PC-98 GDC 80x25 text console. In a Debian/i686
-installation on a confirmed Core-Graph machine, loading `pc98cirrusfb`
-selects an 800x600x16 framebuffer by default and fbcon takes over.
-`FRAMEBUFFER_CONSOLE_DETECT_PRIMARY` is disabled because the non-PnP Cirrus
-child is not a conventional PCI VGA function. Japanese glyph support is not
-required to reach the Debian login prompt.
+The boot console is the PC-98 GDC 80x25 text console. Japanese glyph support
+is not required to reach the Debian login prompt.
 
-The PC-98 framebuffer drivers are:
+Two optional fbdev modules are included for later graphical use:
 
-- `pc98cirrusfb` for the qemu-pc98 Core-Graph Cirrus GD5440; the Debian/i686
-  configuration provides this as an explicitly loaded module, while i386
-  and i486 set it to `n`
+- `pc98cirrusfb` for the qemu-pc98 Core-Graph Cirrus GD5440
 - `pc98tridentfb` for the integrated Trident TGUI9660/9680/9682 used by
-  NEC Mate R systems; this remains an optional module
-
-The driver is deliberately limited to the fixed-interface Core-Graph path;
-PCI GD754x/755x laptop LCD support remains outside its scope. The 1 MiB
-Core-Graph framebuffer supports exactly `640x480-24`,
-`800x600-16`, and `1024x768-8`. The default prioritizes usable colour depth
-for X11. The module exports no hardware alias and is not listed in any
-modules-load configuration, so udev cannot select it automatically. On a
-confirmed machine, load it immediately before X with
-`modprobe pc98cirrusfb`; select another initial mode with
-`modprobe pc98cirrusfb mode=<mode>`. An fbdev client can also request one of
-these exact resolution/depth pairs with `FBIOPUT_VSCREENINFO`.
-
-## Native input devices
-
-The PC-98 keyboard driver already reports keys through the Linux input
-subsystem. The normal i486/i686 Linux 7.1 profiles now enable `evdev`, so the
-keyboard is available as `/dev/input/event0` as well as the console keyboard.
-The native IRQ 13 PC-98 bus mouse is handled by the `pc98busmouse` module and
-reports through both mousedev and evdev after `modprobe pc98busmouse`. In the
-qemu-pc98 validation run these were `/dev/input/mouse0` and
-`/dev/input/event1`; event numbers are not a stable ABI. It reports relative
-X/Y and three buttons to the standard input API, so Xorg, gpm, SDL and other
-non-X programs can use it without a special X-only driver.
-
-The deliberately tiny 80386 profile does not enable evdev or the mouse
-driver. In the normal build the linked `evdev` and `pc98busmouse` objects add
-about 10 KiB of kernel text/data; no USB HID support is required for these
-native devices.
+  NEC Mate R systems
 
 The Trident driver is based on the register sequences documented in Suika3
 `98disp_trident.c`. It handles the PC-98 BAR1 MMIO window, CR21 linear
@@ -464,5 +453,5 @@ Physical Ra43 testing still shows vertical colour bars after explicit module
 loading. The remaining register-initialization mismatch is deferred; the GDC
 console remains the supported display path for the current i486 work.
 
-See `LINUX-7.1-PORT.md`, `QEMU-PC98.md`, and
+See `LINUX-7.0-PORT.md`, `LINUX-7.1-PORT.md`, `QEMU-PC98.md`, and
 `loader/README.md` for further implementation and validation details.

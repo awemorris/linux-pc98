@@ -4,7 +4,7 @@
  *
  * This is intentionally a small, fixed-configuration alternative to the
  * libata/SCSI-disk path for memory-constrained i386 machines.  It supports
- * one master ATA disk, 512-byte LBA28 PIO reads and writes, and cache flush.
+ * one master ATA disk, 512-byte LBA28/CHS PIO reads and writes, and cache flush.
  * The device interrupt is disabled and commands are polled synchronously.
  */
 
@@ -60,6 +60,10 @@ struct pc98ide_device {
 	struct blk_mq_tag_set tag_set;
 	struct gendisk *disk;
 	sector_t sectors;
+	u16 cylinders;
+	u8 heads;
+	u8 sectors_per_track;
+	bool lba_supported;
 	bool flush_supported;
 };
 
@@ -93,21 +97,39 @@ static void pc98ide_400ns_delay(void)
 	inb(PC98IDE_ALTSTATUS);
 }
 
-static int pc98ide_select_lba(u32 lba)
+static int pc98ide_select_sector(u32 lba)
 {
+	u32 track, cylinder;
+	u8 head, sector;
 	int ret;
 
 	ret = pc98ide_wait(false);
 	if (ret)
 		return ret;
 
-	outb(ATA_DEV_LBA | ((lba >> 24) & 0x0f), PC98IDE_DEVICE);
-	pc98ide_400ns_delay();
+	if (pc98ide.lba_supported) {
+		outb(ATA_DEV_LBA | ((lba >> 24) & 0x0f), PC98IDE_DEVICE);
+		pc98ide_400ns_delay();
+		outb(1, PC98IDE_NSECTOR);
+		outb(lba, PC98IDE_LBAL);
+		outb(lba >> 8, PC98IDE_LBAM);
+		outb(lba >> 16, PC98IDE_LBAH);
+		return 0;
+	}
 
+	track = lba / pc98ide.sectors_per_track;
+	sector = lba % pc98ide.sectors_per_track + 1;
+	head = track % pc98ide.heads;
+	cylinder = track / pc98ide.heads;
+	if (cylinder >= pc98ide.cylinders)
+		return -ERANGE;
+
+	outb(0xa0 | head, PC98IDE_DEVICE);
+	pc98ide_400ns_delay();
 	outb(1, PC98IDE_NSECTOR);
-	outb(lba, PC98IDE_LBAL);
-	outb(lba >> 8, PC98IDE_LBAM);
-	outb(lba >> 16, PC98IDE_LBAH);
+	outb(sector, PC98IDE_LBAL);
+	outb(cylinder, PC98IDE_LBAM);
+	outb(cylinder >> 8, PC98IDE_LBAH);
 	return 0;
 }
 
@@ -115,10 +137,11 @@ static int pc98ide_rw_sector(sector_t sector, void *buffer, bool write)
 {
 	int ret;
 
-	if (sector >= pc98ide.sectors || sector > 0x0fffffff)
+	if (sector >= pc98ide.sectors ||
+	    (pc98ide.lba_supported && sector > 0x0fffffff))
 		return -EIO;
 
-	ret = pc98ide_select_lba((u32)sector);
+	ret = pc98ide_select_sector((u32)sector);
 	if (ret)
 		return ret;
 
@@ -223,6 +246,7 @@ static const struct block_device_operations pc98ide_fops = {
 static int __init pc98ide_identify(void)
 {
 	u16 id[256];
+	u16 heads, sectors_per_track;
 	u32 sectors;
 	int ret;
 
@@ -246,14 +270,25 @@ static int __init pc98ide_identify(void)
 		return ret;
 	insw(PC98IDE_DATA, id, 256);
 
-	if (!(id[49] & ATA_ID_LBA))
-		return -ENODEV;
-	sectors = (u32)id[ATA_ID_LBA_CAPACITY] |
-		  ((u32)id[ATA_ID_LBA_CAPACITY + 1] << 16);
-	if (!sectors)
-		return -ENODEV;
-
-	pc98ide.sectors = min_t(sector_t, sectors, 0x10000000ULL);
+	pc98ide.lba_supported = !!(id[49] & ATA_ID_LBA);
+	if (pc98ide.lba_supported) {
+		sectors = (u32)id[ATA_ID_LBA_CAPACITY] |
+			  ((u32)id[ATA_ID_LBA_CAPACITY + 1] << 16);
+		if (!sectors)
+			return -ENODEV;
+		pc98ide.sectors = min_t(sector_t, sectors, 0x10000000ULL);
+	} else {
+		pc98ide.cylinders = id[1];
+		heads = id[3];
+		sectors_per_track = id[6];
+		if (!pc98ide.cylinders || !heads || heads > 16 ||
+		    !sectors_per_track || sectors_per_track > 255)
+			return -ENODEV;
+		pc98ide.heads = heads;
+		pc98ide.sectors_per_track = sectors_per_track;
+		pc98ide.sectors = (sector_t)pc98ide.cylinders *
+			pc98ide.heads * pc98ide.sectors_per_track;
+	}
 	pc98ide.flush_supported = id[ATA_ID_COMMAND_SET_1] & ATA_ID_FLUSH;
 	return 0;
 }
@@ -322,9 +357,10 @@ static int __init pc98ide_init(void)
 	if (ret)
 		goto out_disk;
 
-	pr_info(DRV_NAME ": %s: %llu sectors (%llu MiB), polling PIO\n",
+	pr_info(DRV_NAME ": %s: %llu sectors (%llu MiB), %s polling PIO\n",
 		PC98IDE_DISK_NAME, (unsigned long long)pc98ide.sectors,
-		(unsigned long long)(pc98ide.sectors >> 11));
+		(unsigned long long)(pc98ide.sectors >> 11),
+		pc98ide.lba_supported ? "LBA28" : "CHS");
 	return 0;
 
 out_disk:

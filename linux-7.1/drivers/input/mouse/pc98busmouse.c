@@ -7,6 +7,13 @@
  * evdev, mousedev, gpm and Xorg rather than through an X-only interface.
  *
  * Based on the Linux 2.6.7 PC-98 driver by Osamu Tomita.
+ *
+ * Copyright (c) 2002 Osamu Tomita
+ * Copyright (C) 2026 Awe Morris
+ *
+ * The historical driver was based on work by James Banks, Matthew Dillon,
+ * David Giller, Nathan Laredo, Linus Torvalds, Johan Myreen, Cliff Matthews,
+ * Philip Blundell, Russell King, and Vojtech Pavlik.
  */
 
 #include <linux/init.h>

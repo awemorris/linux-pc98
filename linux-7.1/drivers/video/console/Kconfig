@@ -39,14 +39,12 @@ config MDA_CONSOLE
 	  If unsure, say N.
 
 config PC98_CONSOLE
-	bool "PC-9800 GDC text console"
-	depends on X86_PC9800
+	bool "NEC PC-9800 text console"
+	depends on X86_PC9800 && VT
 	default y
 	help
-	  Text console on the NEC PC-9800 GDC screen. Character codes and
-	  attributes live in two separate planes (0xA0000 / 0xA2000), so this
-	  is a distinct driver from vgacon. Enable it to use the machine's own
-	  display and keyboard instead of a serial console.
+	  Use the GDC text character and attribute planes as the system console.
+	  This is required on PC-9800 systems without a framebuffer console.
 
 config SGI_NEWPORT_CONSOLE
 	tristate "SGI Newport Console support"
@@ -160,4 +158,3 @@ config STI_CONSOLE
 	  The alternative is to use your primary serial port as a console.
 
 endmenu
-

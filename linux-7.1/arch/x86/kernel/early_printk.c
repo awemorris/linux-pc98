@@ -78,63 +78,79 @@ static struct console early_vga_console = {
 
 #ifdef CONFIG_X86_PC9800
 /*
- * NEC PC-9800 text console. Unlike the PC/AT, character codes and attributes
- * live in two separate planes (0xA0000 and 0xA2000), each addressed on a
- * 2-byte cell stride; the screen is 80x25. Attribute 0xE1 is white, visible.
+ * Added in the Awe Morris's port.
+ *
+ * PC-9800 text memory has separate character and attribute planes.  This
+ * layout and the 0xe1 visible-text attribute are inherited from the official
+ * Linux 2.6.7 PC-9800 boot console.
  */
-#define PC9800_COLS	80
-#define PC9800_ROWS	25
-#define PC9800_ATTR	0xe1
+#define PC98_TEXT_PHYS		0x000a0000
+#define PC98_ATTR_OFFSET	0x00002000
+#define PC98_TEXT_COLUMNS	80
+#define PC98_TEXT_LINES		25
+#define PC98_TEXT_ATTRIBUTE	0x00e1
 
-static int pc9800_xpos, pc9800_ypos = 24;
-
-static void early_pc9800_write(struct console *con, const char *str, unsigned n)
+static void early_pc9800_scroll(void)
 {
-	char __iomem *cram = (char __iomem *)(__ISA_IO_base + 0xa0000);
-	char __iomem *aram = (char __iomem *)(__ISA_IO_base + 0xa2000);
-	char c;
-	int i, k, j;
+	u8 __iomem *text = __ISA_IO_base + PC98_TEXT_PHYS;
+	u8 __iomem *attr = text + PC98_ATTR_OFFSET;
+	unsigned int cell;
 
-	while ((c = *str++) != '\0' && n-- > 0) {
-		if (pc9800_ypos >= PC9800_ROWS) {
-			/* scroll 1 line up in both planes */
-			for (k = 1, j = 0; k < PC9800_ROWS; k++, j++)
-				for (i = 0; i < PC9800_COLS; i++) {
-					writew(readw(cram + 2 * (PC9800_COLS * k + i)),
-					       cram + 2 * (PC9800_COLS * j + i));
-					writeb(readb(aram + 2 * (PC9800_COLS * k + i)),
-					       aram + 2 * (PC9800_COLS * j + i));
-				}
-			for (i = 0; i < PC9800_COLS; i++) {
-				writew(0x20, cram + 2 * (PC9800_COLS * j + i));
-				writeb(PC9800_ATTR, aram + 2 * (PC9800_COLS * j + i));
+	for (cell = 0; cell < PC98_TEXT_COLUMNS * (PC98_TEXT_LINES - 1);
+	     cell++) {
+		writew(readw(text + 2 * (cell + PC98_TEXT_COLUMNS)),
+		       text + 2 * cell);
+		writew(readw(attr + 2 * (cell + PC98_TEXT_COLUMNS)),
+		       attr + 2 * cell);
+	}
+
+	for (; cell < PC98_TEXT_COLUMNS * PC98_TEXT_LINES; cell++) {
+		writew(' ', text + 2 * cell);
+		writew(PC98_TEXT_ATTRIBUTE, attr + 2 * cell);
+	}
+}
+
+static void early_pc9800_write(struct console *con, const char *str,
+			       unsigned int count)
+{
+	u8 __iomem *text = __ISA_IO_base + PC98_TEXT_PHYS;
+	u8 __iomem *attr = text + PC98_ATTR_OFFSET;
+
+	while (count--) {
+		unsigned char ch = *str++;
+		unsigned int cell;
+
+		if (ch == '\r') {
+			current_xpos = 0;
+			continue;
+		}
+		if (ch == '\n') {
+			current_xpos = 0;
+			current_ypos++;
+		} else {
+			cell = current_ypos * PC98_TEXT_COLUMNS + current_xpos;
+			writew(ch, text + 2 * cell);
+			writew(PC98_TEXT_ATTRIBUTE, attr + 2 * cell);
+			if (++current_xpos == PC98_TEXT_COLUMNS) {
+				current_xpos = 0;
+				current_ypos++;
 			}
-			pc9800_ypos = PC9800_ROWS - 1;
 		}
 
-		if (c == '\n') {
-			pc9800_xpos = 0;
-			pc9800_ypos++;
-		} else if (c != '\r') {
-			writew((unsigned char)c,
-			       cram + 2 * (PC9800_COLS * pc9800_ypos + pc9800_xpos));
-			writeb(PC9800_ATTR,
-			       aram + 2 * (PC9800_COLS * pc9800_ypos + pc9800_xpos));
-			if (++pc9800_xpos >= PC9800_COLS) {
-				pc9800_xpos = 0;
-				pc9800_ypos++;
-			}
+		if (current_ypos == PC98_TEXT_LINES) {
+			early_pc9800_scroll();
+			current_ypos--;
 		}
 	}
 }
 
 static struct console early_pc9800_console = {
-	.name =		"earlypc9800",
-	.write =	early_pc9800_write,
-	.flags =	CON_PRINTBUFFER,
-	.index =	-1,
+	.name = "earlypc98",
+	.write = early_pc9800_write,
+	.flags = CON_PRINTBUFFER,
+	.index = -1,
 };
-#endif /* CONFIG_X86_PC9800 */
+#endif
 
 /* Serial functions loosely based on a similar package from Klaus P. Gerlicher */
 
@@ -458,6 +474,13 @@ static int __init setup_early_printk(char *buf)
 	keep = (strstr(buf, "keep") != NULL);
 
 	while (*buf != '\0') {
+#ifdef CONFIG_X86_PC9800
+		if (!strncmp(buf, "pc9800", 6)) {
+			current_xpos = 0;
+			current_ypos = 0;
+			early_console_register(&early_pc9800_console, keep);
+		}
+#endif
 		if (!strncmp(buf, "mmio32", 6)) {
 			buf += 6;
 			early_mmio_serial_init(buf);
@@ -488,10 +511,6 @@ static int __init setup_early_printk(char *buf)
 			current_ypos = boot_params.screen_info.orig_y;
 			early_console_register(&early_vga_console, keep);
 		}
-#ifdef CONFIG_X86_PC9800
-		if (!strncmp(buf, "pc9800", 6))
-			early_console_register(&early_pc9800_console, keep);
-#endif
 #ifdef CONFIG_EARLY_PRINTK_DBGP
 		if (!strncmp(buf, "dbgp", 4) && !early_dbgp_init(buf + 4))
 			early_console_register(&early_dbgp_console, keep);

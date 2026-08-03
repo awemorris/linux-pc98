@@ -1593,21 +1593,23 @@ config SERIAL_NUVOTON_MA35D1_CONSOLE
 	  "console=ttyNVTx".
 
 config SERIAL_PC98_8251
-	tristate "NEC PC-9800 uPD8251 serial support"
+	tristate "NEC PC-9800 built-in uPD8251 serial port"
 	depends on X86_PC9800
 	select SERIAL_CORE
+	default y
 	help
-	  Driver for the NEC PC-9800 internal uPD8251 USART (I/O 0x30/0x32,
-	  baud via 8253 counter 2). Presents as ttyS0. Say Y to use the
-	  built-in serial port as a console under NP2kai.
+	  Support the standard NEC PC-9800 RS-232C interface. The non-FIFO
+	  onboard uPD8251 is registered as ttyPC0; FIFO and V.Fast extensions
+	  are outside the initial implementation.
 
 config SERIAL_PC98_8251_CONSOLE
-	bool "NEC PC-9800 uPD8251 console support"
+	bool "Console on the PC-9800 built-in serial port"
 	depends on SERIAL_PC98_8251=y
 	select SERIAL_CORE_CONSOLE
+	default y
 	help
-	  Support for using the PC-9800 uPD8251 serial port as the system
-	  console (console=ttyS0).
+	  Enable the standard PC-9800 RS-232C interface as a kernel console.
+	  Select it with a command line such as "console=ttyPC0,9600".
 
 endmenu
 

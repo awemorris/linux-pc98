@@ -11,6 +11,10 @@
  * I/O 0x20 (command bits, plus CLK and STB) and read back a bit at a time from
  * bit 0 of I/O 0x33. Replacing get_wallclock also stops the generic code from
  * touching 0x70/0x71, which on this machine are the PIT's ports.
+ *
+ * Platform resource allocation and machine hooks are derived from the last
+ * official Linux PC-9800 port by Osamu Tomita <tomita@cinet.co.jp>.
+ * Copyright (C) 2026 Awe Morris
  */
 #include <linux/bcd.h>
 #include <linux/export.h>
@@ -68,6 +72,7 @@ bool pc9800_get_boot_disk_geometry(unsigned int *heads,
 	*sectors = pc9800_boot_sectors;
 	return true;
 }
+EXPORT_SYMBOL_GPL(pc9800_get_boot_disk_geometry);
 
 #define PC98_RTC_CTRL	0x20		/* W: command bits, CLK, STB, data */
 #define PC98_RTC_MODE	0x22		/* bit 5: uPD4993 extended format */

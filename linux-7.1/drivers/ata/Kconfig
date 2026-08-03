@@ -1116,15 +1116,14 @@ config PATA_PLATFORM
 	  If unsure, say N.
 
 config PATA_PC9800
-	bool "NEC PC-9800 built-in IDE support"
+	bool "NEC PC-9800 built-in IDE"
 	depends on X86_PC9800
 	select PATA_PLATFORM
 	default y
 	help
-	  This option enables the PC-9800's own IDE interface: the ATA taskfile
-	  at I/O 0x640 with the registers two bytes apart, control at 0x74C, and
-	  the interface-select register at 0x432. Say Y to boot from a real disk
-	  on a PC-9800.
+	  Enable the built-in PC-9800 IDE task-file interface. Its ATA registers
+	  are spaced two I/O ports apart, transfer data in 16-bit PIO mode, and
+	  signal IRQ 9.
 
 config PATA_OF_PLATFORM
 	tristate "OpenFirmware platform device PATA support"

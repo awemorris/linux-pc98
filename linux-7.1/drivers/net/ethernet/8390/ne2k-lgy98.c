@@ -12,6 +12,8 @@
  *
  * Keep the generic ISA NE2000 driver free of PC-98 conditionals and use the
  * common 8390 PIO core for the protocol-independent part of the device.
+ *
+ * Copyright (C) 2026 Awe Morris
  */
 
 #include <linux/delay.h>

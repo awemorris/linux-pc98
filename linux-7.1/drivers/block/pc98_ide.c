@@ -6,6 +6,11 @@
  * libata/SCSI-disk path for memory-constrained i386 machines.  It supports
  * one master ATA disk, 512-byte LBA28/CHS PIO reads and writes, and cache flush.
  * The device interrupt is disabled and commands are polled synchronously.
+ *
+ * Hardware mapping derived from the Linux/98 project PC-9800 IDE driver.
+ * Copyright (C) 1997-2000 Linux/98 project,
+ *                            Kyoto University Microcomputer Club.
+ * Copyright (C) 2026 Awe Morris
  */
 
 #include <linux/blk-mq.h>

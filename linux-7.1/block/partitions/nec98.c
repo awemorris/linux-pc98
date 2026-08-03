@@ -6,6 +6,9 @@
  * CHS fields are zero based.  The geometry is the BIOS logical geometry
  * passed by the boot loader, not ATA IDENTIFY geometry.  The two can differ
  * on real machines and on systems using an IPL-resident BIOS extension.
+ *
+ * Copyright (C) 1999 Kyoto University Microcomputer Club
+ * Copyright (C) 2026 Awe Morris
  */
 
 #include <linux/unaligned.h>

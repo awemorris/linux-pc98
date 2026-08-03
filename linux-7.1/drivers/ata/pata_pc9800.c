@@ -1,91 +1,117 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * IDE (PATA) support for the NEC PC-9800's built-in interface.
+ * NEC PC-9800 built-in PATA frontend.
  *
- * The taskfile is the usual ATA one, but at PC-98 addresses and with the
- * registers two bytes apart: data 0x640, error/feature 0x642, ... command
- * 0x64E, and device control / alternate status at 0x74C. Port 0x432 selects
- * which of the two interfaces the taskfile window talks to; the built-in
- * drives are on interface 0, so it is set once here.
+ * Copyright (C) 1997-2000 Linux/98 project,
+ *                            Kyoto University Microcomputer Club.
+ * Copyright (C) 2026 Awe Morris
  *
- * The data register is 16 bits wide only, hence use16bit — a 32-bit access
- * would spill into the error register.
- *
- * Everything else is the generic platform PATA path, so this driver is just
- * the PC-98 addressing plus that bank write.
+ * The task-file ports, two-byte register spacing, control port, and IRQ are
+ * from the last official Linux PC-9800 IDE driver.  Transfer and error
+ * handling are delegated to the official Linux 7.1 pata_platform/libata code.
  */
-#include <linux/kernel.h>
-#include <linux/module.h>
+
+#include <linux/ata.h>
+#include <linux/init.h>
 #include <linux/io.h>
-#include <scsi/scsi_host.h>
+#include <linux/ioport.h>
 #include <linux/libata.h>
+#include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/ata_platform.h>
 
-#define DRV_NAME	"pata_pc9800"
+#include <asm/pc9800.h>
 
-#define PC98_IDE_BANK	0x432		/* interface select */
-#define PC98_IDE_CMD	0x640		/* taskfile base, registers 2 bytes apart */
-#define PC98_IDE_CTL	0x74c		/* device control / altstatus */
-#define PC98_IDE_IRQ	9
+#define PC98_ATA_COMMAND_BASE	0x0640
+#define PC98_ATA_COMMAND_END	0x064e
+#define PC98_ATA_CONTROL	0x074c
+#define PC98_ATA_BANK_SELECT	0x0432
+#define PC98_ATA_IRQ		9
+#define PC98_ATA_PORT_SHIFT	1
 
-static int poll;
-module_param(poll, int, 0);
-MODULE_PARM_DESC(poll, "Use PIO polling instead of IRQ 9");
-
-static const struct scsi_host_template pc9800_sht = {
-	ATA_PIO_SHT(DRV_NAME),
+static struct scsi_host_template pc98_pata_sht = {
+	ATA_PIO_SHT("pata_pc9800"),
 };
 
-static struct resource pc9800_res[] = {
-	{ .start = PC98_IDE_CMD, .end = PC98_IDE_CMD + 15, .flags = IORESOURCE_IO },
-	{ .start = PC98_IDE_CTL, .end = PC98_IDE_CTL,      .flags = IORESOURCE_IO },
-	{ .start = PC98_IDE_IRQ, .end = PC98_IDE_IRQ,      .flags = IORESOURCE_IRQ },
-};
-
-static int pc9800_ide_probe(struct platform_device *pdev)
+static int pc98_pata_bios_param(struct scsi_device *sdev,
+				struct gendisk *disk, sector_t capacity,
+				int geometry[])
 {
-	outb(0, PC98_IDE_BANK);		/* talk to the built-in interface */
+	unsigned int heads = 8;
+	unsigned int sectors = 17;
 
-	return __pata_platform_probe(&pdev->dev, &pc9800_res[0], &pc9800_res[1],
-				     poll ? NULL : &pc9800_res[2],
-				     1 /* registers are 2 bytes apart */,
-				     ATA_PIO4, &pc9800_sht, true /* 16-bit data */);
-}
-
-static struct platform_driver pc9800_ide_driver = {
-	.probe	= pc9800_ide_probe,
-	.driver	= {
-		.name = DRV_NAME,
-	},
-};
-
-static struct platform_device *pc9800_ide_pdev;
-
-static int __init pc9800_ide_init(void)
-{
-	int ret;
-
-	ret = platform_driver_register(&pc9800_ide_driver);
-	if (ret)
-		return ret;
-
-	pc9800_ide_pdev = platform_device_register_simple(DRV_NAME, -1, NULL, 0);
-	if (IS_ERR(pc9800_ide_pdev)) {
-		platform_driver_unregister(&pc9800_ide_driver);
-		return PTR_ERR(pc9800_ide_pdev);
-	}
+	/*
+	 * The NEC98 partition table uses the BIOS logical geometry supplied by
+	 * the loader. ATA commands remain LBA-first in libata; this callback is
+	 * only the legacy geometry reported to upper layers.
+	 */
+	pc9800_get_boot_disk_geometry(&heads, &sectors);
+	geometry[0] = heads;
+	geometry[1] = sectors;
+	sector_div(capacity, geometry[0] * geometry[1]);
+	geometry[2] = capacity;
 	return 0;
 }
 
-static void __exit pc9800_ide_exit(void)
+static struct resource pc98_pata_resources[] = {
+	{
+		.start = PC98_ATA_COMMAND_BASE,
+		.end = PC98_ATA_COMMAND_END,
+		.flags = IORESOURCE_IO,
+	},
+	{
+		.start = PC98_ATA_CONTROL,
+		.end = PC98_ATA_CONTROL,
+		.flags = IORESOURCE_IO,
+	},
+	{
+		.start = PC98_ATA_IRQ,
+		.end = PC98_ATA_IRQ,
+		.flags = IORESOURCE_IRQ,
+	},
+};
+
+static int pc98_pata_probe(struct platform_device *pdev)
 {
-	platform_device_unregister(pc9800_ide_pdev);
-	platform_driver_unregister(&pc9800_ide_driver);
+	/*
+	 * The official PC-98 IDE driver selects the built-in interface through
+	 * port 0x432.  This frontend exposes only interface zero, so select and
+	 * retain that bank for the lifetime of the device.
+	 */
+	if (!devm_request_region(&pdev->dev, PC98_ATA_BANK_SELECT, 1,
+				 "pata_pc9800 bank"))
+		return -EBUSY;
+	outb(0, PC98_ATA_BANK_SELECT);
+
+	return __pata_platform_probe(&pdev->dev, &pc98_pata_resources[0],
+				     &pc98_pata_resources[1],
+				     &pc98_pata_resources[2],
+				     PC98_ATA_PORT_SHIFT, ATA_PIO0,
+				     &pc98_pata_sht, true);
 }
 
-module_init(pc9800_ide_init);
-module_exit(pc9800_ide_exit);
+static struct platform_driver pc98_pata_driver = {
+	.probe = pc98_pata_probe,
+	.remove = ata_platform_remove_one,
+	.driver = {
+		.name = "pata_pc9800",
+	},
+};
+module_platform_driver(pc98_pata_driver);
 
-MODULE_DESCRIPTION("NEC PC-9800 built-in IDE driver");
+static int __init pc98_pata_device_init(void)
+{
+	struct platform_device *device;
+
+	pc98_pata_sht.bios_param = pc98_pata_bios_param;
+	device = platform_device_register_simple("pata_pc9800",
+						 PLATFORM_DEVID_NONE,
+						 pc98_pata_resources,
+						 ARRAY_SIZE(pc98_pata_resources));
+	return PTR_ERR_OR_ZERO(device);
+}
+arch_initcall(pc98_pata_device_init);
+
+MODULE_AUTHOR("PC-9800 Lovers");
+MODULE_DESCRIPTION("NEC PC-9800 built-in PATA driver");
 MODULE_LICENSE("GPL");

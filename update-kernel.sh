@@ -7,6 +7,7 @@ default_kernel_build="$repo/build/kernel-$kernel_version"
 default_image="$repo/build/qemu-pc98-linux-$kernel_version.raw"
 image="${1:-${OUTPUT_IMAGE:-$default_image}}"
 kernel_image="${2:-${KERNEL_IMAGE:-${KERNEL_BUILD:-$default_kernel_build}/vmlinux.boot}}"
+dos_loader="${DOS_LOADER:-$repo/loader/dos/linux98.exe}"
 
 if [ ! -f "$image" ]; then
 	echo "Disk image not found: $image" >&2
@@ -18,6 +19,11 @@ if [ ! -f "$kernel_image" ]; then
 fi
 
 make -C "$repo/loader"
+make -C "$repo/loader/dos"
+if [ ! -f "$dos_loader" ]; then
+	echo "DOS Linux loader not found: $dos_loader" >&2
+	exit 1
+fi
 
 logo_options=()
 if [ -n "${BOOT_LOGO:-}" ]; then
@@ -39,5 +45,6 @@ python3 "$repo/tools/mk-pc98-linux-disk.py" update-kernel \
 	"$repo/loader/partition-pbr.bin" \
 	"$repo/loader/fat-loader.bin" \
 	"$kernel_image" \
+	--dos-loader "$dos_loader" \
 	"${geometry_options[@]}" \
 	"${logo_options[@]}"

@@ -129,6 +129,11 @@ sudo apt install \
 Root privileges are used when creating the Debian staging tree, installing
 kernel modules into it, and generating the ext4 filesystem image.
 
+Image generation also builds `loader/dos/linux98.exe` with OpenWatcom 1.9.
+Set `WATCOM` when the compiler is installed somewhere other than
+`/home/awe/openwatcom-1.9`. The executable is stored as `LINUX98.EXE` in the
+FAT16 boot partition beside `VMLINUX`.
+
 ## Complete Debian image build
 
 Linux 7.1 is the only maintained kernel tree and the default build target:
@@ -195,7 +200,7 @@ partitions.
 | LBA 0 | Disk IPL with the `IPL1` marker |
 | LBA 1 | PC-98 sixteen-entry partition table |
 | LBA 2 through 135 | FAT16-aware Linux second-stage loader |
-| Partition 1 | 200 MiB PC-98 DOS-compatible FAT16 containing non-compressed `VMLINUX` |
+| Partition 1 | 200 MiB PC-98 DOS-compatible FAT16 containing non-compressed `VMLINUX` and `LINUX98.EXE` |
 | Partition 2 | ext4 root filesystem, mounted as `/dev/sda2` |
 
 The LBA 0 IPL loads the Linux loader directly from LBA 2. Partition 1 also

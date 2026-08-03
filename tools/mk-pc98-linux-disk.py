@@ -128,7 +128,7 @@ def write_zeros(stream, offset, length):
 
 
 def write_fat16(image, start_lba, total_physical_sectors, kernel_path,
-                pbr_template, logo_path=None):
+                pbr_template, logo_path=None, dos_loader_path=None):
     if total_physical_sectors % PC98_DOS_SECTOR_SCALE:
         raise RuntimeError("FAT16 partition is not 1024-byte-sector aligned")
 
@@ -137,6 +137,7 @@ def write_fat16(image, start_lba, total_physical_sectors, kernel_path,
         raise RuntimeError("partition PBR must be exactly 512 bytes")
     kernel = read_file(kernel_path)
     logo = read_file(logo_path) if logo_path else None
+    dos_loader = read_file(dos_loader_path) if dos_loader_path else None
     if logo is not None and len(logo) != 1200:
         raise RuntimeError(
             f"boot logo must be exactly 1200 bytes, got {len(logo)}")
@@ -179,8 +180,11 @@ def write_fat16(image, start_lba, total_physical_sectors, kernel_path,
     cluster_bytes = spc * PC98_DOS_SECTOR_SIZE
     kernel_clusters = math.ceil(len(kernel) / cluster_bytes)
     logo_clusters = math.ceil(len(logo) / cluster_bytes) if logo else 0
-    if kernel_clusters + logo_clusters > clusters:
-        raise RuntimeError("kernel and boot logo do not fit in boot partition")
+    dos_loader_clusters = (
+        math.ceil(len(dos_loader) / cluster_bytes) if dos_loader else 0)
+    if kernel_clusters + logo_clusters + dos_loader_clusters > clusters:
+        raise RuntimeError(
+            "kernel, boot logo, and DOS loader do not fit in boot partition")
     first_cluster = 2
 
     fat = bytearray(spf * PC98_DOS_SECTOR_SIZE)
@@ -193,6 +197,12 @@ def write_fat16(image, start_lba, total_physical_sectors, kernel_path,
     for number in range(logo_clusters):
         cluster = logo_first_cluster + number
         following = 0xFFFF if number + 1 == logo_clusters else cluster + 1
+        struct.pack_into("<H", fat, cluster * 2, following)
+    dos_loader_first_cluster = logo_first_cluster + logo_clusters
+    for number in range(dos_loader_clusters):
+        cluster = dos_loader_first_cluster + number
+        following = (
+            0xFFFF if number + 1 == dos_loader_clusters else cluster + 1)
         struct.pack_into("<H", fat, cluster * 2, following)
 
     root = bytearray(root_sectors * PC98_DOS_SECTOR_SIZE)
@@ -208,6 +218,13 @@ def write_fat16(image, start_lba, total_physical_sectors, kernel_path,
         root[43] = 0x20
         struct.pack_into("<H", root, 32 + 26, logo_first_cluster)
         struct.pack_into("<I", root, 32 + 28, len(logo))
+    if dos_loader is not None:
+        entry = 64 if logo is not None else 32
+        root[entry:entry + 11] = b"LINUX98 EXE"
+        root[entry + 11] = 0x20
+        struct.pack_into(
+            "<H", root, entry + 26, dos_loader_first_cluster)
+        struct.pack_into("<I", root, entry + 28, len(dos_loader))
 
     base = start_lba * SECTOR_SIZE
     write_zeros(image, base, total_physical_sectors * SECTOR_SIZE)
@@ -233,11 +250,18 @@ def write_fat16(image, start_lba, total_physical_sectors, kernel_path,
     if logo is not None:
         image.seek(data_offset + kernel_clusters * cluster_bytes)
         image.write(logo)
+    if dos_loader is not None:
+        image.seek(
+            data_offset +
+            (kernel_clusters + logo_clusters) * cluster_bytes)
+        image.write(dos_loader)
 
     return {
         "kernel_bytes": len(kernel),
         "kernel_clusters": kernel_clusters,
         "logo_bytes": len(logo) if logo is not None else 0,
+        "dos_loader_bytes": (
+            len(dos_loader) if dos_loader is not None else 0),
         "spf": spf,
     }
 
@@ -368,7 +392,8 @@ def create(args):
         p1_start = chs_lba(p1_start_cyl)
         p1_sectors = boot_cylinders * CYL_SECTORS
         fat_info = write_fat16(
-            image, p1_start, p1_sectors, args.kernel, pbr, args.logo)
+            image, p1_start, p1_sectors, args.kernel, pbr, args.logo,
+            args.dos_loader)
         make_ext4(
             image, chs_lba(p2_start_cyl),
             p2_cylinders * CYL_SECTORS, args.root_stage,
@@ -391,6 +416,8 @@ def create(args):
             f"{p3_cylinders * CYL_SECTORS}")
     if fat_info["logo_bytes"]:
         summary += f"; boot logo {fat_info['logo_bytes']} bytes"
+    if fat_info["dos_loader_bytes"]:
+        summary += f"; DOS loader {fat_info['dos_loader_bytes']} bytes"
     print(summary)
 
 
@@ -422,13 +449,18 @@ def update_kernel(args):
         image.seek(LOADER_LBA * SECTOR_SIZE)
         image.write(loader)
         fat_info = write_fat16(
-            image, start_lba, sectors, args.kernel, pbr, args.logo)
+            image, start_lba, sectors, args.kernel, pbr, args.logo,
+            args.dos_loader)
     logo_summary = (
         f"; boot logo {fat_info['logo_bytes']} bytes"
         if fat_info["logo_bytes"] else "")
+    dos_loader_summary = (
+        f"; DOS loader {fat_info['dos_loader_bytes']} bytes"
+        if fat_info["dos_loader_bytes"] else "")
     print(
         f"updated {args.image} partition 1: "
-        f"kernel {fat_info['kernel_bytes']} bytes{logo_summary}; "
+        f"kernel {fat_info['kernel_bytes']} bytes{logo_summary}"
+        f"{dos_loader_summary}; "
         "partition 2 was not modified")
 
 
@@ -452,6 +484,9 @@ def main():
         "--logo",
         help="optional 80x120 packed 1bpp LOGO.RAW for the boot screen")
     create_parser.add_argument(
+        "--dos-loader",
+        help="optional DOS Linux loader stored as LINUX98.EXE")
+    create_parser.add_argument(
         "--small-ext4", action="store_true",
         help="use a 1 MiB journal and omit large-filesystem ext4 features")
     create_parser.set_defaults(function=create)
@@ -467,6 +502,9 @@ def main():
     update_parser.add_argument(
         "--logo",
         help="optional 80x120 packed 1bpp LOGO.RAW for the boot screen")
+    update_parser.add_argument(
+        "--dos-loader",
+        help="optional DOS Linux loader stored as LINUX98.EXE")
     update_parser.set_defaults(function=update_kernel)
 
     args = parser.parse_args()

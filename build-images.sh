@@ -16,6 +16,7 @@ small_ext4="${SMALL_EXT4:-0}"
 disk_heads="${DISK_HEADS:-8}"
 disk_sectors="${DISK_SECTORS:-17}"
 output="${OUTPUT_IMAGE:-$default_output}"
+dos_loader="${DOS_LOADER:-$repo/loader/dos/linux98.exe}"
 
 if [ ! -f "$kernel_image" ]; then
 	echo "Kernel image not found: $kernel_image" >&2
@@ -30,6 +31,11 @@ fi
 
 mkdir -p "$build"
 make -C "$repo/loader"
+make -C "$repo/loader/dos"
+if [ ! -f "$dos_loader" ]; then
+	echo "DOS Linux loader not found: $dos_loader" >&2
+	exit 1
+fi
 
 image_options=(
 	--boot-mb "$boot_mb"
@@ -37,6 +43,7 @@ image_options=(
 	--swap-mb "$swap_mb"
 	--heads "$disk_heads"
 	--sectors "$disk_sectors"
+	--dos-loader "$dos_loader"
 )
 if [ "$small_ext4" != 0 ]; then
 	image_options+=(--small-ext4)

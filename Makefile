@@ -1,5 +1,5 @@
-KERNEL_VERSION ?= 6.12
-KERNEL_BUILD ?= $(if $(filter 6.12,$(KERNEL_VERSION)),$(CURDIR)/build/kernel,$(CURDIR)/build/kernel-$(KERNEL_VERSION))
+KERNEL_VERSION ?= 7.1
+KERNEL_BUILD ?= $(CURDIR)/build/kernel-$(KERNEL_VERSION)
 export KERNEL_VERSION KERNEL_BUILD
 
 .PHONY: all configure kernel rootfs images dist busybox-i386 busybox-i386-video busybox-i386-dual busybox-i486 busybox-i686 update-kernel run clean

@@ -1,0 +1,20 @@
+# Command
+python3 audit/tools/scan-candidate-blocks.py \
+  --audit-tree /home/awe/work/linux-v6.12-hayao-audit \
+  --current-tree /home/awe/linux-pc98/linux-7.1
+
+# candidate implementation blocks
+e1c3f4247 early PC-98 console: 0
+7f25ed79d modern uPD8251 serial: 0
+a28cc9290 low-1-MiB workaround: 0
+23a4b8c32 modern GDC consw: 0
+a51b4854a modern libata frontend: 0
+7180536ff GDC hardware cursor: 0
+a10442563 CPUID-less microcode workaround: 0
+TOTAL_MATCHED_NORMALIZED_LINES=0
+
+# explicitly permitted keyboard blocks
+5d96a282a keyboard supplied by Awe Morris: matched
+b716545d0 keyboard recovery supplied by Awe Morris: matched
+TOTAL_MATCHED_NORMALIZED_LINES=91
+

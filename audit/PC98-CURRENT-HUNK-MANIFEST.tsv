@@ -1,0 +1,73 @@
+path	hunk	provenance
+arch/x86/Kconfig	@@ -92,10 +92,11 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig	@@ -104,14 +105,14 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig	@@ -132,7 +133,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig	@@ -246,7 +247,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig	@@ -265,7 +266,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig	@@ -316,7 +317,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig	@@ -340,7 +341,6 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig	@@ -446,6 +446,11 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig	@@ -694,6 +699,17 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig	@@ -1326,7 +1342,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig	@@ -1647,7 +1663,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig	@@ -2758,6 +2774,11 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig.cpu	@@ -8,18 +8,17 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig.cpu	@@ -45,6 +44,29 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig.cpu	@@ -173,6 +195,14 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig.cpu	@@ -221,6 +251,16 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig.cpu	@@ -269,20 +309,24 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig.cpu	@@ -314,11 +358,13 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/Kconfig.cpu	@@ -354,7 +400,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/include/asm/i8259.h	@@ -12,18 +12,31 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/include/asm/pc9800.h	@@ -0,0 +1,25 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/include/uapi/asm/setup_data.h	@@ -14,7 +14,8 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/include/uapi/asm/setup_data.h	@@ -30,6 +31,20 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/Makefile	@@ -67,6 +67,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/Makefile	@@ -83,7 +84,9 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/Makefile	@@ -101,6 +104,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/early_printk.c	@@ -76,6 +76,82 @@	HISTORICAL-2.6.7 + SPEC + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/early_printk.c	@@ -398,6 +474,13 @@	HISTORICAL-2.6.7 + SPEC + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/irqinit.c	@@ -107,8 +107,14 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/pc9800.c	@@ -0,0 +1,208 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/platform-quirks.c	@@ -5,6 +5,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/platform-quirks.c	@@ -30,6 +31,10 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/setup.c	@@ -51,6 +51,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/setup.c	@@ -476,6 +477,24 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/setup.c	@@ -506,6 +525,9 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/setup.c	@@ -656,6 +678,16 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/kernel/setup.c	@@ -1249,8 +1281,14 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+arch/x86/lib/kaslr.c	@@ -26,8 +26,13 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+block/partitions/Kconfig	@@ -123,6 +123,16 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+block/partitions/Makefile	@@ -12,6 +12,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+block/partitions/check.h	@@ -60,6 +60,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+block/partitions/core.c	@@ -57,6 +57,9 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+block/partitions/nec98.c	@@ -0,0 +1,157 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/ata/Kconfig	@@ -1115,6 +1115,16 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/ata/Makefile	@@ -106,6 +106,7 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/ata/pata_pc9800.c	@@ -0,0 +1,117 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/block/Kconfig	@@ -50,6 +50,20 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/block/Makefile	@@ -12,6 +12,7 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/block/pc98_ide.c	@@ -0,0 +1,395 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/input/keyboard/Kconfig	@@ -70,6 +70,16 @@	BSD + EXPLICIT-AWE-PERMISSION + UPSTREAM-7.1
+drivers/input/keyboard/Makefile	@@ -13,6 +13,7 @@	BSD + EXPLICIT-AWE-PERMISSION + UPSTREAM-7.1
+drivers/input/keyboard/pc98kbd.c	@@ -0,0 +1,348 @@	BSD + EXPLICIT-AWE-PERMISSION + UPSTREAM-7.1
+drivers/input/mouse/Kconfig	@@ -12,6 +12,18 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/input/mouse/Makefile	@@ -13,6 +13,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/input/mouse/pc98busmouse.c	@@ -0,0 +1,192 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/net/ethernet/8390/Kconfig	@@ -103,6 +103,21 @@	SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/net/ethernet/8390/ne2k-lgy98.c	@@ -0,0 +1,377 @@	SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/tty/serial/Kconfig	@@ -1592,6 +1592,25 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/tty/serial/Makefile	@@ -98,3 +98,4 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/tty/serial/pc98_8251.c	@@ -0,0 +1,656 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/video/console/Kconfig	@@ -37,6 +37,14 @@	HISTORICAL-2.6.7 + SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/video/console/Kconfig	@@ -150,4 +158,3 @@	HISTORICAL-2.6.7 + SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/video/console/Makefile	@@ -8,3 +8,4 @@	HISTORICAL-2.6.7 + SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/video/console/pc98con.c	@@ -0,0 +1,282 @@	HISTORICAL-2.6.7 + SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/video/fbdev/Kconfig	@@ -86,6 +86,45 @@	STRATOHAL-ZLIB + UPSTREAM-7.1 + PROJECT-NEW
+drivers/video/fbdev/Makefile	@@ -78,6 +78,8 @@	STRATOHAL-ZLIB + UPSTREAM-7.1 + PROJECT-NEW
+drivers/video/fbdev/pc98cirrusfb.c	@@ -0,0 +1,700 @@	STRATOHAL-ZLIB + UPSTREAM-7.1 + PROJECT-NEW
+drivers/video/fbdev/pc98tridentfb.c	@@ -0,0 +1,1017 @@	STRATOHAL-ZLIB + UPSTREAM-7.1 + PROJECT-NEW
+include/linux/console.h	@@ -132,6 +132,12 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+include/linux/i8253.h	@@ -14,9 +14,16 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+include/linux/timex.h	@@ -159,6 +159,16 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+include/uapi/linux/serial_core.h	@@ -231,6 +231,9 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW

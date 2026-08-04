@@ -88,6 +88,8 @@ driver.
 | `pc98_pata_probe()`, platform device/driver registration | Linux 7.1 `pata_platform.c` and platform APIs | Independently written small frontend | Same module notices |
 | `nec98_table_valid()`, `nec98_partition()` | Official 2.6.7 `fs/partitions/nec98.c` | Parser translated to Linux 7.1 `parsed_partitions`, sector accessor, and bounds APIs | Kyoto University Microcomputer Club 1999, then Awe Morris |
 | partition registration in `block/partitions/*` | Linux 7.1 partition parser registry | Short integration hooks | Existing upstream files; ledger attribution only |
+| `pc9801_92.c`: WD33C93A reset, select-and-transfer, polled PIO and SCSI host integration | Public WD33C93A register behavior and the independently written free PC-9801-92 option ROM in qemu-pc98; Linux 7.1 SCSI host and scatter-gather APIs | New project implementation using one-command polled PIO as the initial physical-board/QEMU baseline; no code from the separately audited Linux 6.12 tree or NEC ROM | Copyright (C) 2026 Awe Morris |
+| PC-9801-92 Kconfig, Makefile and profile hooks | Linux 7.1 build configuration | Short project-new integration | Ledger attribution only |
 
 ## 6. Standard onboard uPD8251 serial port
 
@@ -166,6 +168,11 @@ At the time this report was prepared:
   on both CPU configurations.
 - `ttyPC0` transmitted a 17,235-byte `dmesg`, received `RX-8251-OK`, and
   emitted an automatic serial-console boot log.
+- The PC-9801-92 driver enumerated the qemu-pc98 SCSI disk, parsed both NEC98
+  partitions, mounted the SCSI `sda2` ext4 filesystem as root, reached the
+  BusyBox shell, and completed traced READ(10) and WRITE(10) commands with
+  zero target status and residual.  An IDE-only boot also reached the shell
+  with the driver built in and no PC-9801-92 device present.
 - `git diff --check` is clean.
 - Strict checkpatch reports no issues for the platform, PATA, GDC console,
   keyboard, serial, i386 cmpxchg, and minimal debug-register files.  The NEC98

@@ -165,7 +165,8 @@ if [ "$device_profile" = pc98 ]; then
 		--disable HIPPI \
 		--disable HAMRADIO \
 		--disable ISDN \
-		--disable SCSI_LOWLEVEL \
+		--enable SCSI_LOWLEVEL \
+		--enable SCSI_PC9801_92 \
 		--disable MMC \
 		--disable MEMSTICK \
 		--disable NVME_CORE \
@@ -265,6 +266,8 @@ if [ "$device_profile" = pc98 ]; then
 	# Keep the LGY-98 driver built in as well; qemu-pc98 exposes this
 	# C-Bus NE2000-compatible adapter at I/O 0x00d0 and IRQ 6.
 	"$source/scripts/config" --file "$kernel_build/.config" \
+		--enable SCSI_LOWLEVEL \
+		--enable SCSI_PC9801_92 \
 		--enable NET_VENDOR_INTEL \
 		--enable E100 \
 		--enable MII \

@@ -300,6 +300,17 @@ menuconfig SCSI_LOWLEVEL
 
 if SCSI_LOWLEVEL && SCSI
 
+config SCSI_PC9801_92
+	tristate "NEC PC-9801-92 SCSI support"
+	depends on X86_PC9800 && ISA && HAS_IOPORT
+	help
+	  This driver supports the NEC PC-9801-92 C-Bus SCSI host adapter,
+	  which is based on the WD33C93A controller.  The initial driver uses
+	  polled programmed I/O at 0xCC0; interrupt-driven DMA can be added
+	  later.
+
+	  If unsure, say N.
+
 config ISCSI_TCP
 	tristate "iSCSI Initiator over TCP/IP"
 	depends on SCSI && INET

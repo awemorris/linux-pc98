@@ -3,14 +3,15 @@
  * NEC PC-9800 fixed-disk partition table support
  *
  * The table occupies LBA 1 and contains sixteen packed 32-byte entries.
- * CHS fields are zero based.  The geometry is the BIOS logical geometry
- * passed by the boot loader, not ATA IDENTIFY geometry.  The two can differ
- * on real machines and on systems using an IPL-resident BIOS extension.
+ * CHS fields are zero based.  Interpret them using the geometry reported by
+ * the block device.  The boot loader's BIOS logical geometry is only a
+ * compatibility fallback for drivers which do not provide one themselves.
  *
  * Copyright (C) 1999 Kyoto University Microcomputer Club
  * Copyright (C) 2026 Awe Morris
  */
 
+#include <linux/hdreg.h>
 #include <linux/unaligned.h>
 
 #include <asm/pc9800.h>
@@ -46,6 +47,21 @@ static sector_t nec98_chs_to_lba(u16 cylinder, u8 head, u8 sector,
 				 unsigned int heads, unsigned int sectors)
 {
 	return ((sector_t)cylinder * heads + head) * sectors + sector;
+}
+
+static bool nec98_disk_geometry(struct gendisk *disk, unsigned int *heads,
+				unsigned int *sectors)
+{
+	struct hd_geometry geometry = { };
+
+	if (!disk->fops || !disk->fops->getgeo ||
+	    disk->fops->getgeo(disk, &geometry) ||
+	    !geometry.heads || !geometry.sectors)
+		return false;
+
+	*heads = geometry.heads;
+	*sectors = geometry.sectors;
+	return true;
 }
 
 static bool nec98_table_valid(const struct nec98_partition *table,
@@ -92,11 +108,13 @@ int nec98_partition(struct parsed_partitions *state)
 	if (queue_logical_block_size(state->disk->queue) != 512)
 		return 0;
 
-	if (!pc9800_get_boot_disk_geometry(&heads, &sectors)) {
-		/* Legacy loaders and direct kernel boots used the NEC IDE default. */
-		heads = 8;
-		sectors = 17;
-		pr_warn_once("NEC98: no BIOS geometry supplied; using 8/17\n");
+	if (!nec98_disk_geometry(state->disk, &heads, &sectors)) {
+		if (!pc9800_get_boot_disk_geometry(&heads, &sectors)) {
+			/* Legacy direct boots used the NEC IDE default. */
+			heads = 8;
+			sectors = 17;
+			pr_warn_once("NEC98: no disk geometry supplied; using 8/17\n");
+		}
 	}
 
 	/* Genuine NEC IPLs and this project's free IPL both end in 55 AA. */

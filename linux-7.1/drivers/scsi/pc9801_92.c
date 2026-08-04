@@ -36,6 +36,8 @@
 
 #define PC9801_92_DMA_DISABLE	0x02
 #define PC9801_92_HOST_ID	7
+#define PC9801_92_BIOS_HEADS	8
+#define PC9801_92_BIOS_SECTORS	32
 #define PC9801_92_TIMEOUT_US	5000000
 #define PC9801_92_BOARD_MEM_BANK	0x30
 #define PC9801_92_BOARD_IRQ_ENABLE	0x04
@@ -245,12 +247,27 @@ static int pc9801_92_host_reset(struct scsi_cmnd *cmd)
 	return pc9801_92_reset_controller() ? FAILED : SUCCESS;
 }
 
+static int pc9801_92_bios_param(struct scsi_device *sdev,
+				struct gendisk *disk, sector_t capacity,
+				int geometry[])
+{
+	/* PC-9801-92 compatible BIOS logical geometry. */
+	geometry[0] = PC9801_92_BIOS_HEADS;
+	geometry[1] = PC9801_92_BIOS_SECTORS;
+	geometry[2] = min_t(sector_t,
+		capacity / (PC9801_92_BIOS_HEADS *
+			    PC9801_92_BIOS_SECTORS),
+		U16_MAX);
+	return 0;
+}
+
 static const struct scsi_host_template pc9801_92_template = {
 	.module			= THIS_MODULE,
 	.proc_name		= DRV_NAME,
 	.name			= "NEC PC-9801-92 SCSI",
 	.queuecommand		= pc9801_92_queuecommand,
 	.eh_host_reset_handler	= pc9801_92_host_reset,
+	.bios_param		= pc9801_92_bios_param,
 	.can_queue		= 1,
 	.this_id		= PC9801_92_HOST_ID,
 	.sg_tablesize		= SG_ALL,

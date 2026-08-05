@@ -14,8 +14,10 @@ ROOTS = ("arch/x86", "block", "drivers", "include")
 
 
 def source_class(path: str) -> str:
-    if path.endswith("drivers/scsi/pc9801_92.c"):
-        return "SPEC + QEMU-PC98-FREE-ROM + UPSTREAM-7.1 + PROJECT-NEW"
+    if path.endswith(("drivers/scsi/pc980155.c",
+                      "drivers/scsi/pc980155.h",
+                      "drivers/scsi/wd33c93.c")):
+        return "HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW"
     if "input/keyboard" in path:
         return "BSD + EXPLICIT-AWE-PERMISSION + UPSTREAM-7.1"
     if "input/mouse" in path:

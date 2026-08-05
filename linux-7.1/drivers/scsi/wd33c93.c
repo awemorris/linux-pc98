@@ -74,6 +74,7 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/blkdev.h>
+#include <linux/io.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
@@ -162,6 +163,74 @@ module_param(setup_strings, charp, 0);
 
 static void wd33c93_execute(struct Scsi_Host *instance);
 
+#ifdef CONFIG_WD33C93_PIO
+/*
+ * Port-I/O access path restored from the Linux/98 2.6.7 WD33C93 core.
+ * PC-9801-55/92 adapters expose SASR and SCMD through x86 I/O ports rather
+ * than memory-mapped registers.
+ */
+static inline unsigned long wd33c93_ioport(volatile unsigned char *reg)
+{
+	return (unsigned long)reg;
+}
+
+static inline uchar
+read_wd33c93(const wd33c93_regs regs, uchar reg_num)
+{
+	outb(reg_num, wd33c93_ioport(regs.SASR));
+	return inb(wd33c93_ioport(regs.SCMD));
+}
+
+static unsigned long
+read_wd33c93_count(const wd33c93_regs regs)
+{
+	unsigned long value;
+
+	outb(WD_TRANSFER_COUNT_MSB, wd33c93_ioport(regs.SASR));
+	value = inb(wd33c93_ioport(regs.SCMD)) << 16;
+	value |= inb(wd33c93_ioport(regs.SCMD)) << 8;
+	value |= inb(wd33c93_ioport(regs.SCMD));
+	return value;
+}
+
+static inline uchar
+read_aux_stat(const wd33c93_regs regs)
+{
+	return inb(wd33c93_ioport(regs.SASR));
+}
+
+static inline void
+write_wd33c93(const wd33c93_regs regs, uchar reg_num, uchar value)
+{
+	outb(reg_num, wd33c93_ioport(regs.SASR));
+	outb(value, wd33c93_ioport(regs.SCMD));
+}
+
+static void
+write_wd33c93_count(const wd33c93_regs regs, unsigned long value)
+{
+	outb(WD_TRANSFER_COUNT_MSB, wd33c93_ioport(regs.SASR));
+	outb(value >> 16, wd33c93_ioport(regs.SCMD));
+	outb(value >> 8, wd33c93_ioport(regs.SCMD));
+	outb(value, wd33c93_ioport(regs.SCMD));
+}
+
+static inline void
+write_wd33c93_cmd(const wd33c93_regs regs, uchar cmd)
+{
+	write_wd33c93(regs, WD_COMMAND, cmd);
+}
+
+static inline void
+write_wd33c93_cdb(const wd33c93_regs regs, uint len, uchar cmnd[])
+{
+	int i;
+
+	outb(WD_CDB_1, wd33c93_ioport(regs.SASR));
+	for (i = 0; i < len; i++)
+		outb(cmnd[i], wd33c93_ioport(regs.SCMD));
+}
+#else
 static inline uchar
 read_wd33c93(const wd33c93_regs regs, uchar reg_num)
 {
@@ -228,6 +297,7 @@ write_wd33c93_cdb(const wd33c93_regs regs, uint len, uchar cmnd[])
 	for (i = 0; i < len; i++)
 		*regs.SCMD = cmnd[i];
 }
+#endif
 
 static inline uchar
 read_1_byte(const wd33c93_regs regs)

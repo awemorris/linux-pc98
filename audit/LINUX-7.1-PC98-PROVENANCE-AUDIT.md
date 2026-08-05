@@ -77,7 +77,7 @@ does not perform semantic similarity inference.  The source ledger below is
 the complementary manual semantic review.
 
 `linux-7.1-pc98.patch` preserves the complete reviewable delta, while
-`PC98-CURRENT-HUNK-MANIFEST.tsv` contains one row for each of its 72 unified
+`PC98-CURRENT-HUNK-MANIFEST.tsv` contains one row for each of its 79 unified
 diff hunks.  Generate both again with:
 
 ```sh
@@ -151,6 +151,9 @@ source is not hidden behind a file-level label.
 | same: minimal synchronous blk-mq implementation | vanilla 7.1 block APIs, project implementation for memory-constrained i386 | project-new |
 | `block/partitions/nec98.c`: on-disk layout and CHS conversion | official 2.6.7 `fs/partitions/nec98.c` | Kyoto University Microcomputer Club 1999 notice retained |
 | same: parser bounds and loader-geometry use | vanilla 7.1 partition APIs and project boot protocol | `Copyright (C) 2026 Awe Morris` |
+| `drivers/scsi/pc980155.c`, `.h`: board registers, configuration readout, interrupt gate, reset sequence and ISA DMA operation | official 2.6.7 `drivers/scsi/pc980155.c` and `.h` by Tomoharu Ugawa, Kyoto University Microcomputer Club (Linux/98 project) | Original 1997-2003 notices retained; `Copyright (C) 2026 Awe Morris` follows them for current SCSI APIs, profiles, geometry and bounce-buffer adaptation |
+| `drivers/scsi/wd33c93.c`: port-I/O register/count/CDB accessors under `CONFIG_WD33C93_PIO` | official Linux/98 2.6.7 WD33C93 core | Historical access path restored conditionally; ordinary upstream memory-mapped path is unchanged |
+| SCSI Kconfig/Makefile integration | vanilla 7.1 build interfaces plus the historical WD33C93 core relationship | short mechanical integration; `SCSI_PC9801_92` selects the port-I/O core path |
 | related Kconfig/Makefile/check/core hooks | vanilla 7.1 interface integration | short mechanical integration |
 
 ### Serial
@@ -207,11 +210,12 @@ The following must remain true before the integration is committed:
 | Check | Result |
 |---|---|
 | Candidate normalized-block scan | PASS: 0 prohibited, 91 explicitly permitted keyboard lines |
-| `git diff --check` | PASS |
+| Source `git diff --check` | PASS; generated `audit/linux-7.1-pc98.patch` excluded because unified-diff context markers intentionally contain space-before-tab sequences |
 | i486 full link (`ARCH=i386`, `pc9800-i486-7.1.config`) | PASS; ELF32 Intel 80386 `vmlinux`, SHA-256 `52989aca9c9c8e6a4e6de053fbf7cbb602783a28ec4341d1853e883572d84e76` |
 | i386 BusyBox config `olddefconfig prepare` | PASS; `X86_PC9800=y`, `M386=y`, `PC98_CONSOLE=y` retained |
 | i686 Debian config `olddefconfig prepare` | PASS; `X86_PC9800=y`, `M686=y`, `PATA_PC9800=y`, `PC98_CONSOLE=y` retained |
-| Review patch/manifest generation | PASS; 5,562 patch lines and 72 manifest hunks |
+| Review patch/manifest generation | PASS; 6,533 patch lines and 79 manifest hunks |
+| PC-9801-55/92 historical driver port | PASS; Linux 7.1 i386 link, QEMU 92 and 55 profile root mount, 5 MiB SCSI92 BusyBox boot, and segmented-DMA qtest |
 
 The full i486 build emitted one pre-existing conversion warning in generic
 `arch/x86/kernel/i8259.c` while forming the cascade-bit probe mask.  It did not

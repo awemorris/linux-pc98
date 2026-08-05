@@ -43,18 +43,18 @@ on-disk partition CHS fields. The geometry actually returned by BIOS SENSE,
 the BIOS drive number, and an ABI version are also passed to Linux in a
 `SETUP_PC98_DISK` setup-data node attached to `boot_params`.
 
-`disk-ipl.bin` is deliberately generic.  It offers only `FDD 1` and `HDD 1`.
-The former loads the first floppy boot sector; the latter loads exactly the
-sector at LBA 2 of the first fixed disk and transfers control to it at the
-conventional `1fc0:0000` address.  It has no knowledge of BOOT98, FAT, or the
-length of the next program.  Another project may replace LBA 2 with its own
-one-sector bootstrap without changing LBA 0.
+`disk-ipl.bin` is deliberately generic and silent.  It immediately loads
+exactly the sector at LBA 2 of the current fixed disk and transfers control to
+it at the conventional `1fc0:0000` address.  It has no knowledge of BOOT98,
+FAT, or the length of the next program.  Another project may replace LBA 2
+with its own one-sector bootstrap without changing LBA 0.
 
 The BOOT98 sector at LBA 2 is a self-loading bootstrap.  It reads the
 remaining reserved BOOT98 sectors (through LBA 15), enters the complete
 second stage at `1000:0000`, probes BIOS-visible disks, locates a FAT16
-partition named `BOOT`, and loads `BOOT98.BIN`.  `BOOT98.BIN` is the third
-stage and displays this menu:
+partition named `BOOT`, and loads `BOOT98.BIN`.  Probe status and the menu are
+written sequentially from the next text row.  `BOOT98.BIN` is the third stage
+and displays this menu:
 
 ```text
 Auto

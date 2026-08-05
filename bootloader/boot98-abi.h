@@ -43,6 +43,7 @@ enum boot98_bios_service {
 	BOOT98_BIOS_IPLWARE = 6,
 	BOOT98_BIOS_REPROBE = 7,
 	BOOT98_BIOS_CHAIN_BOOT = 8,
+	BOOT98_BIOS_CLOCK_SECOND = 9,
 };
 
 struct boot98_bios_request {

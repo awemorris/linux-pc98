@@ -44,6 +44,7 @@ cp "$base" "$config"
 	--enable MATH_EMULATION \
 	--enable FUTEX \
 	--enable COMPAT_32BIT_TIME \
+	--disable CMDLINE_OVERRIDE \
 	--enable SCSI \
 	--enable BLK_DEV_SD \
 	--disable SCSI_PROC_FS \

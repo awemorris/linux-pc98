@@ -13,6 +13,8 @@
 #define BP_ADDR 0x70000U
 #define CMD_ADDR 0x71000U
 #define PC98_ADDR 0x72000U
+#define CONSOLE_FIRST_ROW 8
+#define STARTUP_TIMEOUT_SECONDS 3
 
 /*
  * Stage 2 runs without a C library or operating-system services.  Text and
@@ -26,7 +28,7 @@ static const struct boot98_handoff *ho;
 static const struct boot98_device *devs;
 static struct boot98_bios_request rq;
 static uint8_t sec[512], cfg[CFG_MAX];
-static unsigned row = 13, col;
+static unsigned row = CONSOLE_FIRST_ROW, col;
 
 struct part {
 	uint8_t valid, index;
@@ -77,15 +79,45 @@ static unsigned slen(const char *s)
 	return n;
 }
 
-/* Lower-half-screen console used by the interactive command shell. */
+static uint8_t port_in8(uint16_t port)
+{
+	uint8_t value;
+	asm volatile("inb %w1, %0" : "=a" (value) : "Nd" (port));
+	return value;
+}
+
+static void port_out8(uint16_t port, uint8_t value)
+{
+	asm volatile("outb %0, %w1" : : "a" (value), "Nd" (port));
+}
+
+/* Keep the hardware text cursor at the position used by the direct-VRAM
+ * console.  Without this, the interactive shell accepts input but looks
+ * frozen on real machines because no cursor or prompt activity is visible. */
+static void update_cursor(void)
+{
+	unsigned addr = row * 80 + col;
+	unsigned timeout;
+
+	for (timeout = 100000; timeout; timeout--)
+		if (!(port_in8(0x60) & 0x02))
+			break;
+	if (!timeout)
+		return;
+	port_out8(0x62, 0x49);
+	port_out8(0x60, (uint8_t)addr);
+	port_out8(0x60, (uint8_t)(addr >> 8));
+}
+
+/* Sequential console below the Stage 1 probe message. */
 static void clear_lower(void)
 {
 	unsigned p;
-	for (p = 13 * 80; p < 25 * 80; p++) {
+	for (p = CONSOLE_FIRST_ROW * 80; p < 25 * 80; p++) {
 		tv[p] = ' ';
 		av[p * 2] = 0xe1;
 	}
-	row = 13;
+	row = CONSOLE_FIRST_ROW;
 	col = 0;
 }
 static void nl(void)
@@ -93,7 +125,7 @@ static void nl(void)
 	col = 0;
 	if (++row < 25)
 		return;
-	for (unsigned r = 13; r < 24; r++)
+	for (unsigned r = CONSOLE_FIRST_ROW; r < 24; r++)
 		for (unsigned c = 0; c < 80; c++) {
 			tv[r * 80 + c] = tv[(r + 1) * 80 + c];
 			av[(r * 80 + c) * 2] = av[((r + 1) * 80 + c) * 2];
@@ -356,6 +388,7 @@ static void prompt(void)
 		puts(parts[curpart].name);
 	}
 	puts(" ok ");
+	update_cursor();
 }
 static int key(void)
 {
@@ -369,6 +402,38 @@ static int poll(void)
 {
 	return (int)call(BOOT98_BIOS_KEY_POLL);
 }
+
+/* Return seconds since the start of the current minute, or -1 for an
+ * invalid BIOS result.  Stage 1 converts the BIOS BCD byte to binary before
+ * returning it through the gateway.  INT 1Ch/AH=00h is available on the
+ * early PC-9801 models for which a CPU-speed-dependent delay loop would be
+ * least useful. */
+static int clock_second(void)
+{
+	unsigned second = (unsigned)call(BOOT98_BIOS_CLOCK_SECOND) & 0xff;
+	if (second > 59)
+		return -1;
+	return (int)second;
+}
+
+/* Only the first startup selection is timed.  The loop budget is a safety
+ * fallback for firmware whose calendar service is missing or stuck. */
+static int initial_key(void)
+{
+	int start = clock_second();
+	unsigned budget = 0x20000;
+	for (;;) {
+		int k = poll();
+		if (k >= 0)
+			return key();
+		int now = clock_second();
+		if (start >= 0 && now >= 0 && (now - start + 60) % 60 >=
+		    STARTUP_TIMEOUT_SECONDS)
+			return -1;
+		if (!--budget)
+			return -1;
+	}
+}
 static int line(char *b)
 {
 	unsigned n = 0;
@@ -381,17 +446,20 @@ static int line(char *b)
 		}
 		if (k == '\r' || k == '\n') {
 			putc('\n');
+			update_cursor();
 			b[n] = 0;
 			return n;
 		}
 		if ((k == 8 || k == 0x7f) && n) {
 			n--;
 			putc('\b');
+			update_cursor();
 			continue;
 		}
 		if (k >= 32 && k < 127 && n < LINE_MAX - 1) {
 			b[n++] = k;
 			putc(k);
+			update_cursor();
 		}
 	}
 }
@@ -939,6 +1007,7 @@ static void chain_menu_device(int floppy, unsigned ordinal)
  * boots do not return through the BIOS gateway. */
 static int startup_menu(void)
 {
+	int first = 1;
 	for (;;) {
 		clear_lower();
 		puts("BOOT98\n\n"
@@ -949,7 +1018,10 @@ static int startup_menu(void)
 		     "5) HDD 2\n"
 		     "6) Shell\n\n"
 		     "Select: ");
-		int k = key();
+		int k = first ? initial_key() : key();
+		first = 0;
+		if (k < 0)
+			return 1;
 		putc((char)k);
 		putc('\n');
 		switch (k) {

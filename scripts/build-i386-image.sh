@@ -39,6 +39,12 @@ output="${OUTPUT_IMAGE:-$default_output}"
 boot_vmlinux="$kernel_build/vmlinux.boot"
 root_stage="${ROOT_STAGE:-$buildroot_work/output/target}"
 skip_rootfs_build="${SKIP_ROOTFS_BUILD:-0}"
+root_device="${ROOT_DEVICE:-/dev/hd98a2}"
+
+case "$root_device" in
+/dev/*2) swap_device="${root_device%2}3" ;;
+*) echo "ROOT_DEVICE must be an absolute /dev path: $root_device" >&2; exit 1 ;;
+esac
 
 I386_CONSOLE="$console_mode" \
 CPU_FAMILY="$cpu_family" \
@@ -77,10 +83,29 @@ if [ -e "$output" ]; then
 	exit 1
 fi
 
+# Buildroot's staging tree is shared by IDE and SCSI profiles.  Make a cheap
+# temporary copy so the on-image fstab can use the matching block-device
+# namespace without modifying the next profile's input tree.
+image_root_stage="$(mktemp -d "${TMPDIR:-/tmp}/pc98-rootfs.XXXXXX")"
+cfg="$(mktemp "${TMPDIR:-/tmp}/boot98-i${cpu_family}.XXXXXX")"
+cleanup()
+{
+	rm -f -- "$cfg"
+	rm -rf -- "$image_root_stage"
+}
+trap cleanup EXIT INT TERM
+cp -a --reflink=auto "$root_stage"/. "$image_root_stage"/
+cat >"$image_root_stage/etc/fstab" <<EOF
+$root_device	/	ext4	defaults,noatime	0	1
+$swap_device	none	swap	sw	0	0
+proc	/proc	proc	defaults	0	0
+sysfs	/sys	sysfs	defaults	0	0
+EOF
+
 KERNEL_VERSION=7.1 \
 KERNEL_BUILD="$kernel_build" \
 KERNEL_IMAGE="$boot_vmlinux" \
-ROOT_STAGE="$root_stage" \
+ROOT_STAGE="$image_root_stage" \
 BOOT_MB="${BOOT_MB:-200}" \
 ROOT_MB="${ROOT_MB:-200}" \
 SWAP_MB="${SWAP_MB:-32}" \
@@ -88,12 +113,10 @@ SMALL_EXT4="${SMALL_EXT4:-1}" \
 OUTPUT_IMAGE="$output" \
 	"$repo/scripts/build-images.sh"
 
-cfg="$(mktemp "${TMPDIR:-/tmp}/boot98-i${cpu_family}.XXXXXX")"
-trap 'rm -f "$cfg"' EXIT INT TERM
 printf '%s\n' \
 	"echo Booting Linux 7.1 i${cpu_family}..." \
 	'kernel VMLINUX' \
-	'arg root=/dev/hd98a2 rootfstype=ext4 rw' \
+	"arg root=$root_device rootfstype=ext4 rw" \
 	'boot' >"$cfg"
 DISK_HEADS="${DISK_HEADS:-8}" DISK_SECTORS="${DISK_SECTORS:-17}" \
 	"$repo/scripts/install-boot98-image.sh" "$output" "$boot_vmlinux" "$cfg"

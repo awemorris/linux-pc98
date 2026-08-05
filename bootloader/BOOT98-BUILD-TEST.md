@@ -35,8 +35,9 @@ Run the automated headless smoke test with:
   --image build/images/boot98-i386-test.raw --timeout 55
 ```
 
-The test selects `HDD 1` at the generic IPL menu and `Auto` at the third-stage
-menu.  It succeeds only after the kernel reaches the BusyBox shell.  QEMU uses
+The fixed-disk IPL silently enters LBA 2, and the third-stage menu selects
+`Auto` after its three-second first-key timeout.  The test succeeds only after
+the kernel reaches the BusyBox shell; it does not inject keyboard input. QEMU uses
 `~/qemu-pc98/build-i386-port/qemu-system-i386`, machine
 `pc9821`, and ROMs from `~/qemu-pc98/roms/pc98bios`. Always use
 `snapshot=on` for user-provided images and terminate only the exact QEMU

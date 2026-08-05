@@ -216,16 +216,25 @@ Use `./build.sh image list` to list the supported variants.  Every image is
 created through a named profile, for example:
 
 ```sh
-./build.sh image debian13-i486-boot98
-./build.sh image busybox-i386-h8
+./build.sh image busybox-i386-ide
+./build.sh image busybox-i386-scsi
+./build.sh image debian13-i486-ide
+./build.sh image debian13-i486-scsi
 ```
 
-The BusyBox H=8 profiles install the three-stage BOOT98 environment.  On the
-generic LBA 0 menu select `HDD 1` (item 2).  After the LBA 2 second stage has
-loaded `BOOT98.BIN`, select `Auto` (item 1) to execute `BOOT98.CFG` and boot
-`VMLINUX`.  Select `Shell` (item 6) to bypass automatic configuration and
-enter the interactive shell.  The headless `busybox-i386` smoke test injects
-the `HDD 1` and `Auto` selections through its private QEMU monitor.
+IDE profiles use the NEC logical geometry H=8/S=17. PC-9801-92 SCSI
+profiles use H=8/S=32 and therefore require a separate disk image even when
+the files stored in the partitions are identical. The i386 IDE image uses
+the small `pc98_ide` driver (`/dev/hd98a`); i386 SCSI and both i486/libata
+images use the standard SCSI disk namespace (`/dev/sda`).
+
+The BusyBox H=8 profiles install the three-stage BOOT98 environment.  The
+silent LBA 0 IPL immediately enters the LBA 2 second stage, which loads
+`BOOT98.BIN`.  The first third-stage menu selection has a three-second
+timeout: it executes `Auto`, reads `BOOT98.CFG`, and boots `VMLINUX`.  Select
+`Shell` (item 6) before the timeout to enter the interactive shell instead.
+The headless `busybox-i386` smoke test uses this unattended path without
+synthetic keyboard input.
 
 A test kernel can be installed while creating an image:
 
@@ -296,11 +305,10 @@ the user selects the active Linux partition. The BPB uses the NEC fixed-disk
 convention of 1024-byte logical DOS sectors and includes the PC-98 extension
 at offsets `0x3e..0x45`.
 
-The current built-in kernel command line uses `root=/dev/sda2`. A genuine
-IPL can select Partition 1 from a second HDD and successfully enter the
-Linux kernel, but the kernel then looks for the root filesystem on the first
-HDD and panics. Device-order-independent root selection remains follow-up
-work; use this image as the first HDD for a complete boot.
+The kernel no longer overrides the command line supplied by BOOT98.
+`BOOT98.CFG` in each image selects the matching root device. A manually
+installed standalone configuration must therefore use `/dev/hd98a2` for the
+i386 IDE image and `/dev/sda2` for i386 SCSI or i486/libata images.
 
 DOS may install its own PBR and filesystem in Partition 1. Reformatting it
 removes `VMLINUX`, so restore the kernel afterwards if the partition is to

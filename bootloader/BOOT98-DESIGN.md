@@ -63,9 +63,8 @@ traditional IPL/menu area.
 
 - One 512-byte `IPL1` record.
 - Uses PC-98 BIOS disk services.
-- Displays `FDD 1` and `HDD 1`.
-- `FDD 1` loads and enters the first floppy's boot sector.
-- `HDD 1` loads exactly LBA 2 of the first fixed disk at `1fc0:0000`.
+- Does not alter the display or wait for keyboard input.
+- Loads exactly LBA 2 of the current fixed disk at `1fc0:0000`.
 - Has no BOOT98-specific sector count, filesystem code, or next-stage format.
   Another project may install its own one-sector bootstrap at LBA 2.
 
@@ -90,6 +89,7 @@ traditional IPL/menu area.
 - Loaded only after its header, size, and checksum have been validated.
 - Displays `Auto`, `FDD 1`, `FDD 2`, `HDD 1`, `HDD 2`, and `Shell`.
 - `Auto` executes `BOOT98.CFG`; `Shell` bypasses it and opens the prompt.
+- Waits three seconds for the first selection and chooses `Auto` on timeout.
 - Implements the lower-half-screen interactive shell.
 - Implements FAT16 file access, `BOOT98.CFG`, the Linux loader, BOOT98
   applets, and IPLware compatibility.
@@ -529,12 +529,15 @@ Do not reopen these choices without new hardware evidence:
 The initial chain is implemented and has reached a Linux 7.1 i386 BusyBox
 prompt under QEMU:
 
-1. LBA 0 displays `FDD 1` and `HDD 1`; `HDD 1` enters LBA 2.
+1. LBA 0 silently enters LBA 2 of the current fixed disk.
 2. The LBA 2 bootstrap loads the remainder of sectors 2-15.
 3. The boot core finds `BOOT`, validates and loads `BOOT98.BIN`.
-4. The third-stage menu separates `Auto` from the interactive `Shell`.
-5. The headless test injects `HDD 1`, then `Auto`, and verifies the BusyBox
-   prompt.
+4. Probe status and the third-stage menu are displayed on consecutive rows.
+5. The first menu selection has a three-second timeout.  Timeout executes
+   `Auto`; if the third stage is unavailable, Stage 1 instead chain-loads the
+   `BOOT` partition PBR or the first active partition PBR.
+6. The headless test waits for the automatic selection and verifies the
+   BusyBox prompt without injecting keyboard input.
 
 The next work is deliberately hardware-facing:
 

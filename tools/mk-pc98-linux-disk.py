@@ -289,6 +289,7 @@ def make_ext4(image, start_lba, total_sectors, root_stage, small):
     try:
         command = [
             "mke2fs", "-q", "-F", "-t", "ext4", "-b", "1024",
+            "-L", "PC98ROOT",
         ]
         if small:
             command += [

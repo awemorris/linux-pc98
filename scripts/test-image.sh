@@ -23,6 +23,7 @@ Options:
   --log FILE         save QEMU serial output with tee
   --qemu FILE        qemu-system-i386 binary
   --bios-dir DIR     QEMU firmware directory
+  --storage TYPE     attach the supplied image as ide or scsi (default: ide)
 
 The serial backend is connected to this terminal. The distributed video-
 console images are not modified by this command.
@@ -58,10 +59,11 @@ if test ! -x "$qemu" && test -x "$HOME/qemu-pc98/build/qemu-system-i386"; then
 fi
 bios_dir="${BIOS_DIR:-$(dirname "$qemu")/../pc-bios}"
 memory=""
+storage=ide
 
 while test "$#" -gt 0; do
 	case "$1" in
-		--image | --jobs | --memory | --timeout | --log | --qemu | --bios-dir)
+		--image | --jobs | --memory | --timeout | --log | --qemu | --bios-dir | --storage)
 			test "$#" -ge 2 || { echo "Missing value for $1" >&2; exit 2; }
 			case "$1" in
 				--image) image="$2" ;;
@@ -71,6 +73,7 @@ while test "$#" -gt 0; do
 				--log) log="$2" ;;
 				--qemu) qemu="$2" ;;
 				--bios-dir) bios_dir="$2" ;;
+				--storage) storage="$2" ;;
 			esac
 			shift 2
 			;;
@@ -80,6 +83,11 @@ while test "$#" -gt 0; do
 		*) echo "Unknown test option: $1" >&2; exit 2 ;;
 	esac
 done
+
+case "$storage" in
+ide | scsi) ;;
+*) echo "Unsupported test storage: $storage" >&2; exit 2 ;;
+esac
 
 case "$jobs:$timeout_seconds" in
 	*[!0-9:]*) echo "Jobs and timeout must be non-negative integers" >&2; exit 2 ;;
@@ -154,62 +162,22 @@ if test "$prepare_only" -eq 1; then
 	exit 0
 fi
 
+case "$storage" in
+ide) drive="if=ide,bus=0,unit=0,format=raw,file=$image,snapshot=on" ;;
+scsi) drive="if=scsi,bus=0,unit=0,format=raw,file=$image,snapshot=on" ;;
+esac
+
 qemu_args=(
 	-M pc9801 -cpu "$cpu" -m "$memory" -accel tcg -L "$bios_dir"
 	-nic none
-	-drive "if=ide,bus=0,unit=0,format=raw,file=$image,snapshot=on"
+	-drive "$drive"
 	-display none -serial stdio -no-reboot
 )
 
-monitor_dir=""
-injector_pid=""
-cleanup_monitor()
-{
-	if test -n "$injector_pid"; then
-		kill "$injector_pid" 2>/dev/null || true
-		wait "$injector_pid" 2>/dev/null || true
-	fi
-	test -z "$monitor_dir" || rm -rf -- "$monitor_dir"
-}
-
-# The generic LBA 0 IPL first asks for FDD 1 or HDD 1. BOOT98 then presents
-# its third-stage menu, where Auto executes BOOT98.CFG. Inject HDD 1 followed
-# by Auto over a private HMP socket before waiting for serial kernel output.
-boot98_stage1="$repo/bootloader/boot98-stage1.bin"
-boot98_image=0
-if test "$profile" = busybox-i386 && test -f "$boot98_stage1"; then
-	stage1_size="$(stat -c %s "$boot98_stage1")"
-	if cmp -s "$boot98_stage1" \
-		<(dd if="$image" bs=1 skip=1024 count="$stage1_size" status=none); then
-		boot98_image=1
-	fi
-fi
-if test "$boot98_image" -eq 1; then
-	command -v socat >/dev/null || {
-		echo "socat is required to select the BOOT98 test entry" >&2
-		exit 1
-	}
-	monitor_dir="$(mktemp -d "$work/monitor.XXXXXX")"
-	monitor_socket="$monitor_dir/hmp.sock"
-	qemu_args+=( -monitor "unix:$monitor_socket,server=on,wait=off" )
-	(
-		for unused in $(seq 1 100); do
-			test -S "$monitor_socket" && break
-			sleep 0.1
-		done
-		test -S "$monitor_socket" || exit 1
-		sleep 2
-		printf 'sendkey 2\n' | socat - "UNIX-CONNECT:$monitor_socket" \
-			>/dev/null
-		sleep 3
-		printf 'sendkey 1\n' | socat - "UNIX-CONNECT:$monitor_socket" \
-			>/dev/null
-	) &
-	injector_pid=$!
-	trap cleanup_monitor EXIT INT TERM
-else
-	qemu_args+=( -monitor none )
-fi
+# The fixed-disk IPL silently enters LBA 2.  BOOT98 automatically selects
+# Auto after its three-second first-key timeout, so the headless path needs
+# no synthetic keyboard input or private monitor socket.
+qemu_args+=( -monitor none )
 if test -n "$log"; then
 	mkdir -p "$(dirname "$log")"
 	if test "$timeout_seconds" -gt 0; then

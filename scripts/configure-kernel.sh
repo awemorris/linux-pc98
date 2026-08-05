@@ -95,7 +95,7 @@ make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 	--disable SERIO_I8042 \
 	--disable KEYBOARD_ATKBD \
 	--enable CMDLINE_BOOL \
-	--enable CMDLINE_OVERRIDE \
+	--disable CMDLINE_OVERRIDE \
 	--set-str CMDLINE \
 	"$console_args earlyprintk=pc9800 root=/dev/sda2 rootfstype=ext4 rw"
 if [ "$kernel_version" = 7.1 ]; then

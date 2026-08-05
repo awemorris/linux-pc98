@@ -27,6 +27,7 @@ test "$stage1_size" -le 7168 || {
 	echo "BOOT98 Stage 1 exceeds its 14-sector area: $stage1_size" >&2
 	exit 1
 }
+stage1_sectors=$(((stage1_size + 511) / 512))
 
 # BOOT98 Stage 2 occupies the 14 sectors beginning at LBA 2. Clear that
 # complete region before replacing a legacy FAT loader. The generic LBA 0 IPL
@@ -67,6 +68,33 @@ PY
 )"
 
 offset=$((boot_lba * 512))
+
+# A generated Linux BOOT partition carries partition-pbr.bin.  Its count at
+# offset 46h must follow the Stage 1 size because both the disk IPL and this
+# recovery PBR load the same LBA 2 continuation.  Leave foreign/DOS PBR code
+# untouched so installing BOOT98 does not silently replace another loader.
+python3 - "$image" "$boot_lba" "$stage1_sectors" \
+	"$bootloader/partition-pbr.bin" <<'PY'
+from pathlib import Path
+import sys
+
+image, lba, sectors, template_path = (
+    sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4])
+template = Path(template_path).read_bytes()
+with open(image, "r+b") as stream:
+    stream.seek(lba * 512)
+    pbr = bytearray(stream.read(512))
+    if len(pbr) != 512:
+        raise SystemExit("short BOOT partition PBR")
+    if pbr[0x48:0x1fe] == template[0x48:0x1fe] and pbr[0x1fe:] == b"\x55\xaa":
+        pbr[0x46:0x48] = sectors.to_bytes(2, "little")
+        stream.seek(lba * 512)
+        stream.write(pbr)
+        print(f"Updated BOOT recovery PBR for {sectors} Stage 1 sectors")
+    else:
+        print("Preserved foreign BOOT partition PBR")
+PY
+
 mcopy -o -i "$image@@$offset" "$bootloader/BOOT98.BIN" ::BOOT98.BIN
 if test -n "$kernel"; then
 	mcopy -o -i "$image@@$offset" "$kernel" ::VMLINUX

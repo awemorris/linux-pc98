@@ -158,6 +158,11 @@ stage1_main:
 	call	probe_all
 	pushw	%cs
 	popw	%ds
+	movw	$found_label, %si
+	movw	$(7 * 160), %di
+	call	print_string
+	movb	device_count, %al
+	call	print_hex8
 	call	build_menu
 	pushw	%cs
 	popw	%ds
@@ -177,6 +182,21 @@ stage1_main:
 	call	clear_upper
 	call	draw_banner
 	call	show_menu
+	call	menu_initial_input
+	jnc	menu_key
+	/* BOOT without a valid Stage 2 still has a useful recovery PBR. */
+	movw	boot_menu_entry, %si
+	testw	%si, %si
+	jnz	menu_timeout_boot
+	movw	active_menu_entry, %si
+	testw	%si, %si
+	jz	menu_input
+menu_timeout_boot:
+	subw	$menu_table, %si
+	shrw	$4, %si
+	movw	%si, %ax
+	movb	%al, selected_menu
+	call	chain_selected
 	jmp	menu_input
 
 bad_handoff:
@@ -191,6 +211,7 @@ stop:
 menu_input:
 	xorb	%ah, %ah
 	int	$0x18
+menu_key:
 	cmpb	$'1', %al
 	jb	menu_input
 	cmpb	$'9', %al
@@ -206,6 +227,79 @@ menu_input:
 	je	enter_stage2
 	call	chain_selected
 	jmp	menu_input
+
+/* Wait up to three wall-clock seconds for the first menu key.  The PC-98
+ * calendar service is used instead of a CPU-speed-dependent delay loop. */
+menu_initial_input:
+	call	read_clock_second
+	movb	%al, %cs:timeout_start
+	movw	$0x2000, %cs:timeout_budget
+1:
+	movb	$0x01, %ah
+	int	$0x18
+	testb	%bh, %bh
+	jnz	3f
+	call	read_clock_second
+	cmpb	$0xff, %al
+	je	2f
+	cmpb	$0xff, %cs:timeout_start
+	je	2f
+	subb	%cs:timeout_start, %al
+	jnc	4f
+	addb	$60, %al
+4:
+	cmpb	$3, %al
+	jae	5f
+2:
+	decw	%cs:timeout_budget
+	jnz	1b
+5:
+	stc
+	ret
+3:
+	xorb	%ah, %ah
+	int	$0x18
+	clc
+	ret
+
+/* Return the RTC second as binary 0..59, or ffh for invalid BCD. */
+read_clock_second:
+	pushw	%bx
+	pushw	%cx
+	pushw	%dx
+	pushw	%si
+	pushw	%di
+	pushw	%ds
+	pushw	%es
+	pushw	%cs
+	popw	%es
+	movw	$timeout_calendar, %bx
+	xorb	%ah, %ah
+	int	$0x1c
+	movb	%es:5(%bx), %al
+	movb	%al, %dl
+	andb	$0x0f, %dl
+	cmpb	$9, %dl
+	ja	1f
+	andb	$0xf0, %al
+	shrb	$4, %al
+	cmpb	$5, %al
+	ja	1f
+	movb	$10, %cl
+	mulb	%cl
+	addb	%dl, %al
+	jmp	2f
+1:
+	movb	$0xff, %al
+2:
+	popw	%es
+	popw	%ds
+	popw	%di
+	popw	%si
+	popw	%dx
+	popw	%cx
+	popw	%bx
+	ret
 
 /* Probe 1.44 MiB FDD 0-3 (DA/UA 30h-33h). */
 probe_all:
@@ -535,6 +629,8 @@ bios_read_partition_table:
 /* Build stable menu records for every detected device and partition. */
 build_menu:
 	movb	$0, menu_count
+	movw	$0, boot_menu_entry
+	movw	$0, active_menu_entry
 	xorw	%bx, %bx
 1:
 	cmpb	device_count, %bl
@@ -593,6 +689,7 @@ build_menu:
 	movb	$MENU_TYPE_PART, current_menu_type
 	movb	%dl, current_partition
 	call	append_menu
+	call	consider_active_partition
 	call	consider_boot_partition
 7:
 	incw	%dx
@@ -697,6 +794,25 @@ consider_boot_partition:
 	popw	%di
 	popw	%si
 	popw	%bx
+	popw	%ax
+	ret
+
+/* MID bit 7 is the PC-98 active/bootable flag.  Retain the first active
+ * partition in stable probe order for unattended fallback boot. */
+consider_active_partition:
+	pushw	%ax
+	pushw	%di
+	testb	$0x80, (%si)
+	jz	1f
+	cmpw	$0, active_menu_entry
+	jne	1f
+	movzbl	menu_count, %edi
+	decw	%di
+	shlw	$4, %di
+	addw	$menu_table, %di
+	movw	%di, active_menu_entry
+1:
+	popw	%di
 	popw	%ax
 	ret
 
@@ -941,13 +1057,16 @@ append_shell_menu:
 	ret
 
 show_menu:
-	movw	$found_label, %si
+	movw	$probing_label, %si
 	movw	$(6 * 160), %di
+	call	print_string
+	movw	$found_label, %si
+	movw	$(7 * 160), %di
 	call	print_string
 	movb	device_count, %al
 	call	print_hex8
 	movw	$menu_label, %si
-	movw	$(7 * 160), %di
+	movw	$(8 * 160), %di
 	call	print_string
 	xorw	%bx, %bx
 1:
@@ -959,7 +1078,7 @@ show_menu:
 	shlw	$4, %si
 	addw	$menu_table, %si
 	movw	%bx, %di
-	addw	$8, %di
+	addw	$9, %di
 	imulw	$160, %di, %di
 	movb	%bl, %al
 	addb	$'1', %al
@@ -1025,7 +1144,9 @@ show_menu:
 	jmp	1b
 7:
 	movw	$select_label, %si
-	movw	$(18 * 160), %di
+	movw	%bx, %di
+	addw	$9, %di
+	imulw	$160, %di, %di
 	call	print_string
 	ret
 
@@ -1431,6 +1552,8 @@ gateway_real:
 	shrl	$4, %eax
 	movw	%ax, %es
 	movw	%es:(%bx), %ax
+	cmpw	$9, %ax
+	je	gateway_clock_second
 	cmpw	$8, %ax
 	je	gateway_chain_boot
 	cmpw	$7, %ax
@@ -1448,6 +1571,12 @@ gateway_real:
 	cmpw	$1, %ax
 	je	gateway_disk_read
 	movl	$0xffffffff, gateway_result
+	jmp	gateway_real_return
+
+gateway_clock_second:
+	call	read_clock_second
+	movzbl	%al, %eax
+	movl	%eax, %cs:gateway_result
 	jmp	gateway_real_return
 
 gateway_key_read:
@@ -1829,6 +1958,8 @@ sense_flags:      .word 0
 sense_status:     .byte 0
 read_flags:       .word 0
 read_status:      .byte 0
+timeout_start:    .byte 0
+timeout_calendar: .space 6
 device_count:     .byte 0
 current_class:    .byte 0
 current_index:    .byte 0
@@ -1857,6 +1988,8 @@ stage2_entry_offset: .long 0
 stage2_target:     .long 0
 	.balign 2
 boot_menu_entry:   .word 0
+active_menu_entry: .word 0
+timeout_budget:    .word 0
 fat_root_entries:  .word 0
 fat_root_sectors:  .word 0
 fat_cluster:       .word 0

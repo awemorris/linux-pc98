@@ -1,7 +1,10 @@
 /build/
 /dist/
-/loader/*.bin
-/loader/*.elf
-/loader/*.o
+/bootloader/*.bin
+/bootloader/*.elf
+/bootloader/*.o
+/bootloader/*.BIN
+/bootloader/*.com
+*~
 __pycache__/
 *.py[cod]

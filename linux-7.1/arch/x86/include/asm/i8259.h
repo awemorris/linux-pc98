@@ -34,11 +34,13 @@ extern unsigned int cached_irq_mask;
 /* i8259A PIC related value */
 #ifdef CONFIG_X86_PC9800
 #define PIC_CASCADE_IR		7
+#define MASTER_ICW4_DEFAULT	0x1d
+#define SLAVE_ICW4_DEFAULT	0x09
 #else
 #define PIC_CASCADE_IR		2
-#endif
 #define MASTER_ICW4_DEFAULT	0x01
 #define SLAVE_ICW4_DEFAULT	0x01
+#endif
 #define PIC_ICW4_AEOI		2
 
 extern raw_spinlock_t i8259A_lock;

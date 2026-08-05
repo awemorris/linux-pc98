@@ -149,7 +149,7 @@ case "$profile" in
 		kind=boot98
 		cpu_family=386
 		root_device=/dev/sda2
-		kernel_extra_args=pc9801_scsi=55
+		kernel_extra_args=pc9801_scsi=55,irq=5,dma=0,clock=12
 		default_swap=32
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
 		;;
@@ -180,7 +180,7 @@ case "$profile" in
 		;;
 	debian13-i486-scsi55)
 		kind=boot98
-		kernel_extra_args=pc9801_scsi=55
+		kernel_extra_args=pc9801_scsi=55,irq=5,dma=0,clock=12
 		default_rootfs="$repo/build/boot98/debian13-i486-root"
 		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
 		;;

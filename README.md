@@ -240,6 +240,22 @@ that value when decoding the boot disk's NEC98 partition table. For an older
 loader which does not provide the record, `pc9801_scsi=55` selects the 8/17
 fallback; the default `pc9801_scsi=92` fallback is 8/32.
 
+The same argument can override the Linux IRQ and PC-98 DMA channel for a
+fixed-configuration or compatible board:
+
+```text
+pc9801_scsi=55,irq=5,dma=0,clock=12
+pc9801_scsi=92,irq=5,dma=0,clock=8
+```
+
+Valid Linux IRQ values are 3, 5, 6, 9, 12, and 13; valid DMA channels are
+0, 2, and 3.  A plain `pc9801_scsi=55` selects the fixed WINnote98/
+PC-9801-55 defaults IRQ 5 (board INT1), DMA 0, and the WD33C93 12--15 MHz
+clock range used by the historical Linux/98 driver. `clock=` accepts 8, 12,
+or 16 for the controller's 8--10, 12--15, or 16--20 MHz range. With the 92
+profile, omitted IRQ and DMA values continue to be read from the board
+configuration registers and the clock defaults to the 8--10 MHz range.
+
 The BusyBox H=8 profiles install the three-stage BOOT98 environment.  The
 silent LBA 0 IPL immediately enters the LBA 2 second stage, which loads
 `BOOT98.BIN`.  The first third-stage menu selection has a three-second

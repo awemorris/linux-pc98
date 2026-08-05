@@ -15,7 +15,8 @@ boot extensions without making the disk IPL difficult to maintain.
 - Present a boot menu for disks and their PC-98 partitions.
 - Chain-load an existing disk IPL or partition PBR, including DOS partitions.
 - Locate a FAT16 partition named `BOOT` and load `BOOT98.BIN` from it.
-- Display `Auto` and `Shell` only after `BOOT98.BIN` has loaded successfully.
+- Display the boot menu and Escape-to-shell hint only after `BOOT98.BIN` has
+  loaded successfully.
 - Execute `BOOT98.CFG` only when the user selects `Auto`.
 - Load an uncompressed Linux kernel and pass its command line.
 - Execute existing IPLware modules through the published IPLware ABI.
@@ -87,8 +88,9 @@ traditional IPL/menu area.
 
 - Stored as a normal file in the FAT16 `BOOT` partition.
 - Loaded only after its header, size, and checksum have been validated.
-- Displays `Auto`, `FDD 1`, `FDD 2`, `HDD 1`, `HDD 2`, and `Shell`.
-- `Auto` executes `BOOT98.CFG`; `Shell` bypasses it and opens the prompt.
+- Displays `Auto`, `FDD 1`, `FDD 2`, `HDD 1`, and `HDD 2`; the `Auto` entry
+  identifies the selected HDD, partition, and configuration file.
+- `Auto` executes `BOOT98.CFG`; Escape bypasses it and opens the prompt.
 - Waits three seconds for the first selection and chooses `Auto` on timeout.
 - Implements the lower-half-screen interactive shell.
 - Implements FAT16 file access, `BOOT98.CFG`, the Linux loader, BOOT98
@@ -107,9 +109,9 @@ The selected source must be displayed so that an unexpected duplicate
 ## User interface
 
 The current Stage 2 menu uses number keys.  Cursor-key selection is planned
-but is not part of the first implementation.  The lower half contains the
-shell after `Shell` is selected.  Pressing Escape from the shell returns to
-the menu; there is no `menu` command.
+but is not part of the first implementation.  Escape at the menu enters the
+shell.  Pressing Escape from the shell returns to the menu; there is no `menu`
+command.
 
 The prompt includes the current disk and partition and ends with the OpenBoot
 style `ok` marker:
@@ -118,9 +120,9 @@ style `ok` marker:
 ide0:BOOT ok
 ```
 
-Selecting `Auto` runs `source BOOT98.CFG`.  Selecting `Shell` never executes
-the file.  If automatic execution fails, the user is left in the interactive
-shell with the error visible.
+Selecting `Auto` runs `source BOOT98.CFG`.  Entering the shell with Escape
+never executes the file.  If automatic execution fails, the user is left in
+the interactive shell with the error visible.
 
 ## Device names and aliases
 
@@ -376,7 +378,7 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 - A missing or invalid `BOOT98.BIN` leaves the Stage 1 fallback device/PBR
   menu usable.
 - A missing `BOOT98.CFG` selected through `Auto` reports the error and enters
-  the shell; selecting `Shell` is always independent of the file.
+  the shell; entering the shell with Escape is always independent of the file.
 - A syntax or command failure in automatic configuration stops execution and
   leaves the user in the shell with the failing line number displayed.
 - Disk reads are bounded and checked for BIOS carry/error status.
@@ -491,7 +493,8 @@ Do not reopen these choices without new hardware evidence:
 2. The generic IPL loads exactly one LBA 2 sector and does not know BOOT98's
    format or length.  The BOOT98 second stage retains a fallback
    device/partition/PBR menu when `BOOT98.BIN` is missing or damaged.
-   `Auto` and `Shell` appear only after `BOOT98.BIN` loads successfully.
+   The `Auto` menu and Escape-to-shell hint appear only after `BOOT98.BIN`
+   loads successfully.
 3. BIOS-visible devices are presented as FDD 0-3, IDE 0-3, and SCSI 0-7.
 4. Disk access in the first boot-environment implementation uses INT 1Bh.
    Per-disk BIOS SENSE geometry is used to interpret each PC-98 partition
@@ -501,8 +504,9 @@ Do not reopen these choices without new hardware evidence:
    The PC-98 IDE drivers prefer LBA for data I/O and fall back to CHS when LBA
    is unavailable.
 6. `BOOT98.CFG` is a normal multi-line command file, loaded completely before
-   execution.  It is executed by the `Auto` menu entry; `Shell` explicitly
-   bypasses it.  It is not restricted to a single kernel-command-line record.
+   execution.  It is executed by the `Auto` menu entry; Escape-to-shell
+   explicitly bypasses it.  It is not restricted to a single
+   kernel-command-line record.
 7. The shell is stateful.  The intended pattern is:
 
    ```text

@@ -232,7 +232,8 @@ The BusyBox H=8 profiles install the three-stage BOOT98 environment.  The
 silent LBA 0 IPL immediately enters the LBA 2 second stage, which loads
 `BOOT98.BIN`.  The first third-stage menu selection has a three-second
 timeout: it executes `Auto`, reads `BOOT98.CFG`, and boots `VMLINUX`.  Select
-`Shell` (item 6) before the timeout to enter the interactive shell instead.
+Escape before the timeout to enter the interactive shell instead.  The `Auto`
+entry identifies the selected HDD, partition, and `BOOT98.CFG` source.
 The headless `busybox-i386` smoke test uses this unattended path without
 synthetic keyboard input.
 

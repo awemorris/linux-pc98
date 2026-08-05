@@ -57,18 +57,23 @@ written sequentially from the next text row.  `BOOT98.BIN` is the third stage
 and displays this menu:
 
 ```text
-Auto
-FDD 1
-FDD 2
-HDD 1
-HDD 2
-Shell
+Boot from:
+  1) Auto (HDD 1 partition 1 boot98.cfg)
+  2) FDD 1
+  3) FDD 2
+  4) HDD 1
+  5) HDD 2
+
+Press ESC key to fallback to shell.
 ```
 
-`Auto` executes `BOOT98.CFG`.  `Shell` skips automatic configuration and
-enters the interactive command shell.  FDD and HDD entries chain-load the
-selected device's boot record.  Cursor-key selection is a planned user-
-interface improvement; the current menu uses number keys.
+`Auto` executes `BOOT98.CFG`.  Escape skips automatic configuration and enters
+the interactive command shell.  FDD and HDD entries chain-load the selected
+device's boot record.  Cursor-key selection is a planned user-interface
+improvement; the current menu uses number keys.
+
+The Linux loader prints the ELF file size and updates separate `text` and
+`data` transferred-size counters while reading the kernel.
 
 The first partition remains marked active (`MID=0xa1`) and contains
 `partition-pbr.bin` for compatibility and recovery.  The loaders do not
@@ -142,10 +147,13 @@ as the kernel starts and unregisters when the normal PC-98 console is ready.
 | `0x00100000`     | bzImage payload, or first ELF `PT_LOAD` segment    |
 
 The second stage obtains the memory sizes used for the e820 map from the
-PC-98 BIOS work area. It enables A20 and uses a flat unreal-mode segment to
-copy data above 1 MiB. It then enters the kernel according to the Linux x86
-boot protocol with `CS=0x10`, `DS/ES/SS=0x18`, and `ESI` pointing to
-`boot_params`.
+PC-98 BIOS work area: `0:0501h` describes conventional RAM, `0:0401h`
+describes RAM from 1 MiB through the 16 MiB boundary, and `0:0594h` describes
+MiB above 16 MiB.  Omitting the last range makes a 64 MiB machine appear to
+Linux as roughly 17 MiB and causes severe swapping. It enables A20 and uses a
+flat unreal-mode segment to copy data above 1 MiB. It then enters the kernel
+according to the Linux x86 boot protocol with `CS=0x10`, `DS/ES/SS=0x18`, and
+`ESI` pointing to `boot_params`.
 
 Linux uses the handed BIOS H/S values to interpret the NEC98 partition table.
 The native `pc98_ide` block driver and `pata_pc9800`/libata then access the

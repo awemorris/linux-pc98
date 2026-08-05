@@ -15,6 +15,7 @@
 #define PC98_ADDR 0x72000U
 #define CONSOLE_FIRST_ROW 8
 #define STARTUP_TIMEOUT_SECONDS 3
+#define LOAD_PROGRESS_INTERVAL (64U * 1024U)
 
 /*
  * Stage 2 runs without a C library or operating-system services.  Text and
@@ -29,6 +30,9 @@ static const struct boot98_device *devs;
 static struct boot98_bios_request rq;
 static uint8_t sec[512], cfg[CFG_MAX];
 static unsigned row = CONSOLE_FIRST_ROW, col;
+static uint32_t load_text_done, load_text_total;
+static uint32_t load_data_done, load_data_total;
+static unsigned load_text_row, load_data_row;
 
 struct part {
 	uint8_t valid, index;
@@ -91,22 +95,36 @@ static void port_out8(uint16_t port, uint8_t value)
 	asm volatile("outb %0, %w1" : : "a" (value), "Nd" (port));
 }
 
-/* Keep the hardware text cursor at the position used by the direct-VRAM
- * console.  Without this, the interactive shell accepts input but looks
- * frozen on real machines because no cursor or prompt activity is visible. */
-static void update_cursor(void)
+/* Wait for room in the uPD7220 FIFO before every command/parameter byte. */
+static int gdc_write(uint16_t port, uint8_t value)
 {
-	unsigned addr = row * 80 + col;
 	unsigned timeout;
 
 	for (timeout = 100000; timeout; timeout--)
 		if (!(port_in8(0x60) & 0x02))
 			break;
 	if (!timeout)
+		return 0;
+	port_out8(port, value);
+	return 1;
+}
+
+/* Keep a visible 16-raster blinking cursor at the direct-VRAM console
+ * position. CSRW only moves a cursor whose CSRFORM may still be disabled by
+ * firmware, so program both commands just like the Linux pc98con driver. */
+static void update_cursor(void)
+{
+	unsigned addr = row * 80 + col;
+
+	if (!gdc_write(0x62, 0x4b) ||
+	    !gdc_write(0x60, 0x8f) ||
+	    /* Bit 5 selects a steady cursor, avoiding an invisible blink phase. */
+	    !gdc_write(0x60, 0x20) ||
+	    !gdc_write(0x60, 0x7b) ||
+	    !gdc_write(0x62, 0x49) ||
+	    !gdc_write(0x60, (uint8_t)addr))
 		return;
-	port_out8(0x62, 0x49);
-	port_out8(0x60, (uint8_t)addr);
-	port_out8(0x60, (uint8_t)(addr >> 8));
+	gdc_write(0x60, (uint8_t)(addr >> 8));
 }
 
 /* Sequential console below the Stage 1 probe message. */
@@ -182,6 +200,54 @@ static void dec(unsigned v)
 	}
 	while (n)
 		putc(b[--n]);
+}
+
+static unsigned kib(uint32_t bytes)
+{
+	return (bytes >> 10) + !!(bytes & 1023);
+}
+
+/* Rewrite one fixed progress row so the transferred count visibly changes
+ * instead of scrolling one message per disk read. */
+static void progress_line(unsigned target, const char *name,
+			  uint32_t done, uint32_t total)
+{
+	unsigned saved_row = row, saved_col = col;
+
+	for (unsigned c = 0; c < 80; c++) {
+		tv[target * 80 + c] = ' ';
+		av[(target * 80 + c) * 2] = 0xe1;
+	}
+	row = target;
+	col = 0;
+	puts(name);
+	putc(' ');
+	dec(kib(done));
+	puts(" / ");
+	dec(kib(total));
+	puts(" KB");
+	row = saved_row;
+	col = saved_col;
+}
+
+static void show_load_progress(void)
+{
+	progress_line(load_text_row, "text", load_text_done, load_text_total);
+	progress_line(load_data_row, "data", load_data_done, load_data_total);
+}
+
+static void begin_load_progress(uint32_t kernel_size)
+{
+	if (row > 21)
+		clear_lower();
+	puts("\nKernel size: ");
+	dec(kib(kernel_size));
+	puts(" KB\n");
+	load_text_row = row;
+	nl();
+	load_data_row = row;
+	nl();
+	show_load_progress();
 }
 
 /* Stage 1 BIOS gateway and little-endian disk-field helpers. */
@@ -344,10 +410,12 @@ static int contiguous(const struct dent *d)
 	}
 	return 1;
 }
-static int file_read(const struct dent *d, uint32_t off, void *dst, uint32_t n)
+static int file_read_internal(const struct dent *d, uint32_t off, void *dst,
+			      uint32_t n, int load_class)
 {
 	uint16_t c = d->cluster;
 	uint32_t skip = off / 512, within = off & 511;
+	uint32_t since_update = 0;
 	while (skip >= fs.spc) {
 		c = nextcl(c);
 		if (c >= 0xfff8)
@@ -365,6 +433,17 @@ static int file_read(const struct dent *d, uint32_t off, void *dst, uint32_t n)
 		memcopy(out, sec + within, k);
 		out += k;
 		n -= k;
+		if (load_class >= 0) {
+			if (load_class)
+				load_data_done += k;
+			else
+				load_text_done += k;
+			since_update += k;
+			if (since_update >= LOAD_PROGRESS_INTERVAL || !n) {
+				show_load_progress();
+				since_update = 0;
+			}
+		}
 		within = 0;
 		if (++skip >= fs.spc && n) {
 			skip = 0;
@@ -374,6 +453,17 @@ static int file_read(const struct dent *d, uint32_t off, void *dst, uint32_t n)
 		}
 	}
 	return 1;
+}
+
+static int file_read(const struct dent *d, uint32_t off, void *dst, uint32_t n)
+{
+	return file_read_internal(d, off, dst, n, -1);
+}
+
+static int file_read_load(const struct dent *d, uint32_t off, void *dst,
+			  uint32_t n, int data)
+{
+	return file_read_internal(d, off, dst, n, data);
 }
 
 /* Keyboard input, parser, and stateful shell selection helpers. */
@@ -717,6 +807,13 @@ static uint8_t low8(uint32_t a)
 	return v;
 }
 
+static uint16_t low16(uint32_t a)
+{
+	uint16_t v;
+	asm volatile("movw (%1),%0" : "=r"(v) : "r"(a));
+	return v;
+}
+
 /*
  * Load every PT_LOAD segment, construct Linux boot_params and the PC-98
  * extension block, then enter the ELF entry point.  BIOS logical H/S and the
@@ -727,12 +824,37 @@ static int linuxboot(void)
 	struct dent d;
 	struct eh e;
 	struct ph p;
+	unsigned load_segments = 0;
 	if (curpart < 0 || !kernel_name[0] || !findfile(kernel_name, &d) ||
 	    !file_read(&d, 0, &e, sizeof(e)))
 		return 0;
 	if (w32(e.id) != 0x464c457f || e.id[4] != 1 || e.id[5] != 1 ||
 	    e.machine != 3 || e.phsize != sizeof(p) || e.phnum > 16)
 		return 0;
+	load_text_done = load_text_total = 0;
+	load_data_done = load_data_total = 0;
+	for (unsigned i = 0; i < e.phnum; i++) {
+		if (!file_read(&d, e.phoff + i * sizeof(p), &p, sizeof(p)))
+			return 0;
+		if (p.type != 1)
+			continue;
+		if (p.filesz > p.memsz || p.paddr < 0x100000 ||
+		    p.off + p.filesz < p.off || p.off + p.filesz > d.size)
+			return 0;
+		if (p.flags & 2) {
+			if (load_data_total + p.filesz < load_data_total)
+				return 0;
+			load_data_total += p.filesz;
+		} else {
+			if (load_text_total + p.filesz < load_text_total)
+				return 0;
+			load_text_total += p.filesz;
+		}
+		load_segments++;
+	}
+	if (!load_segments)
+		return 0;
+	begin_load_progress(d.size);
 	enable_highmem();
 	for (unsigned i = 0; i < e.phnum; i++) {
 		if (!file_read(&d, e.phoff + i * sizeof(p), &p, sizeof(p)))
@@ -742,7 +864,8 @@ static int linuxboot(void)
 		if (p.filesz > p.memsz || p.paddr < 0x100000 ||
 		    p.off + p.filesz > d.size)
 			return 0;
-		if (!file_read(&d, p.off, (void *)p.paddr, p.filesz))
+		if (!file_read_load(&d, p.off, (void *)p.paddr, p.filesz,
+				    !!(p.flags & 2)))
 			return 0;
 		memzero((void *)(p.paddr + p.filesz), p.memsz - p.filesz);
 	}
@@ -772,7 +895,21 @@ static int linuxboot(void)
 	*(uint64_t *)(em + 20) = 0x100000;
 	*(uint64_t *)(em + 28) = ext;
 	*(uint32_t *)(em + 36) = 1;
-	bp[0x1e8] = 2;
+	/*
+	 * 0:0594h reports the number of MiB above the PC-98 16 MiB boundary.
+	 * The first C implementation accidentally omitted this third E820 entry,
+	 * limiting a 64 MiB machine to the memory described by 0:0401 (about
+	 * 16 MiB) and causing severe swap thrashing during Debian login.
+	 */
+	uint16_t high_mib = low16(0x594);
+	if (high_mib) {
+		*(uint64_t *)(em + 40) = 0x1000000;
+		*(uint64_t *)(em + 48) = (uint64_t)high_mib << 20;
+		*(uint32_t *)(em + 56) = 1;
+		bp[0x1e8] = 3;
+	} else {
+		bp[0x1e8] = 2;
+	}
 	jump_linux(e.entry);
 }
 
@@ -986,6 +1123,16 @@ static int menu_device(int floppy, unsigned ordinal)
 	return -1;
 }
 
+static unsigned fixed_device_ordinal(int device)
+{
+	unsigned ordinal = 0;
+
+	for (int i = 0; i <= device; i++)
+		if (devs[i].device_class != BOOT98_DEV_FDD)
+			ordinal++;
+	return ordinal;
+}
+
 static void chain_menu_device(int floppy, unsigned ordinal)
 {
 	int di = menu_device(floppy, ordinal);
@@ -1010,18 +1157,28 @@ static int startup_menu(void)
 	int first = 1;
 	for (;;) {
 		clear_lower();
-		puts("BOOT98\n\n"
-		     "1) Auto\n"
-		     "2) FDD 1\n"
-		     "3) FDD 2\n"
-		     "4) HDD 1\n"
-		     "5) HDD 2\n"
-		     "6) Shell\n\n"
+		puts("\nBoot from:\n"
+		     "  1) Auto (HDD ");
+		if (curdev >= 0 && curpart >= 0) {
+			dec(fixed_device_ordinal(curdev));
+			puts(" partition ");
+			dec((unsigned)parts[curpart].index + 1);
+		} else {
+			puts("? partition ?");
+		}
+		puts(" boot98.cfg)\n"
+		     "  2) FDD 1\n"
+		     "  3) FDD 2\n"
+		     "  4) HDD 1\n"
+		     "  5) HDD 2\n\n"
+		     "Press ESC key to fallback to shell.\n\n"
 		     "Select: ");
 		int k = first ? initial_key() : key();
 		first = 0;
 		if (k < 0)
 			return 1;
+		if (k == 0x1b)
+			return 0;
 		putc((char)k);
 		putc('\n');
 		switch (k) {
@@ -1039,8 +1196,6 @@ static int startup_menu(void)
 		case '5':
 			chain_menu_device(0, 2);
 			break;
-		case '6':
-			return 0;
 		default:
 			continue;
 		}

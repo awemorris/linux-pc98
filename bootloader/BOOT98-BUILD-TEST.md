@@ -43,6 +43,15 @@ the kernel reaches the BusyBox shell; it does not inject keyboard input. QEMU us
 `snapshot=on` for user-provided images and terminate only the exact QEMU
 instance started by the test.
 
+At the menu, Escape enters the interactive shell.  Kernel loading displays the
+ELF file size and live `text` and `data` transferred-size counters.
+
+The 64 MiB Debian/i486 regression test must report substantially more than
+16 MiB in `/proc/meminfo`.  BOOT98 builds three E820 RAM entries when BIOS work
+area `0:0594h` is nonzero.  A verified 64 MiB QEMU run reported 47,460 KiB of
+managed memory after kernel reservations, reached the root login, and used no
+swap after login.
+
 Earlier development tests covered missing/corrupt third-stage fallback, FDD/IDE/SCSI and
 secondary-IDE chain loading, non-default logical geometry, CFG execution,
 FAT listing, Escape return, applet CRC/entry execution, IPLware type 1 and

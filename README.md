@@ -224,6 +224,26 @@ created through a named profile, for example:
 ./build.sh image debian13-i486-scsi55
 ```
 
+The commands above are intended for development and may use `--output` for
+temporary experiments.  Images handed to testers or uploaded as release
+artifacts must instead be generated with the canonical command:
+
+```sh
+./build.sh release-image busybox-i386-ide
+./build.sh release-image busybox-i386-scsi55
+./build.sh release-image busybox-i386-scsi92
+./build.sh release-image debian13-i486-ide
+./build.sh release-image debian13-i486-scsi55
+./build.sh release-image debian13-i486-scsi92
+```
+
+Each command writes only its fixed filename under `build/releases/`.  It
+builds a temporary image in the same directory and atomically replaces the
+canonical image after successful completion, together with its SHA-256 file.
+`./build.sh release-image all` rebuilds all six variants.  This is the only
+supported path for producing test and release images; diagnostic suffixes
+must not be added to files in `build/releases/`.
+
 IDE profiles use the NEC logical geometry H=8/S=17. PC-9801-92 SCSI
 profiles use H=8/S=32 and therefore require a separate disk image even when
 the files stored in the partitions are identical. PC-9801-55-compatible

@@ -54,9 +54,6 @@ jobs="${JOBS:-$(nproc)}"
 timeout_seconds=0
 log=""
 qemu="${QEMU:-$repo/qemu-pc98/build/qemu-system-i386}"
-if test ! -x "$qemu" && test -x "$HOME/qemu-pc98/build/qemu-system-i386"; then
-	qemu="$HOME/qemu-pc98/build/qemu-system-i386"
-fi
 bios_dir="${BIOS_DIR:-$(dirname "$qemu")/../pc-bios}"
 memory=""
 storage=ide

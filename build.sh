@@ -16,6 +16,8 @@ Primary commands:
   rootfs PROFILE              build a root filesystem
   image PROFILE [options]     create or update a named disk-image variant
   image list                  list image profiles
+  release-image PROFILE       build a canonical image under build/releases
+  release-image all           rebuild every canonical release/test image
   test PROFILE [options]      prepare/run a headless serial-console test
   test list                   list serial test profiles
   cache fetch NAME            cache a package-server base image
@@ -133,6 +135,7 @@ case "$command" in
 	kernel) build_kernel "$@" ;;
 	rootfs) build_rootfs "$@" ;;
 	image) "$repo/scripts/build-image.sh" "$@" ;;
+	release-image) "$repo/scripts/build-release-image.sh" "$@" ;;
 	test) "$repo/scripts/test-image.sh" "$@" ;;
 	cache) "$repo/scripts/image-cache.sh" "$@" ;;
 	debian) "$repo/scripts/build-debian.sh" "$@" ;;

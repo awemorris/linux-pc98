@@ -104,6 +104,12 @@ enum boot98_device_flags {
 	BOOT98_DEV_BOOT_ORIGIN = 1U << 2,
 };
 
+/* flags in the Linux SETUP_PC98_DISK payload */
+enum boot98_linux_disk_flags {
+	BOOT98_LINUX_DISK_F_FALLBACK = 1U << 0,
+	BOOT98_LINUX_DISK_F_BOOT = 1U << 1,
+};
+
 struct boot98_device {
 	uint8_t device_class;
 	uint8_t display_index;

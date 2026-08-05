@@ -41,38 +41,96 @@
 unsigned long pc9800_pit_tick_rate = PC98_CLOCK_5MHZ;
 EXPORT_SYMBOL_GPL(pc9800_pit_tick_rate);
 
-static u8 pc9800_boot_drive;
-static u8 pc9800_boot_heads;
-static u8 pc9800_boot_sectors;
-static u8 pc9800_boot_flags;
+#define PC9800_MAX_DISK_GEOMETRIES	12
+
+struct pc9800_disk_geometry {
+	u8 bios_drive;
+	u8 heads;
+	u8 sectors;
+	u8 flags;
+};
+
+static struct pc9800_disk_geometry
+	pc9800_disk_geometries[PC9800_MAX_DISK_GEOMETRIES];
+static unsigned int pc9800_disk_geometry_count;
+static int pc9800_boot_geometry_index = -1;
 
 void __init pc9800_set_boot_disk_info(const struct pc98_boot_disk_setup *info)
 {
+	struct pc9800_disk_geometry *geometry = NULL;
+	unsigned int i;
+
 	if (info->magic != PC98_BOOT_DISK_MAGIC ||
 	    info->version != PC98_BOOT_DISK_VERSION ||
 	    info->size < sizeof(*info) || !info->heads || !info->sectors)
 		return;
 
-	pc9800_boot_drive = info->bios_drive;
-	pc9800_boot_heads = info->heads;
-	pc9800_boot_sectors = info->sectors;
-	pc9800_boot_flags = info->flags;
-	pr_info("PC-98 boot disk: BIOS drive %u, logical CHS */%u/%u%s\n",
-		pc9800_boot_drive, pc9800_boot_heads, pc9800_boot_sectors,
-		pc9800_boot_flags & 1 ? " (8/17 fallback)" : "");
+	for (i = 0; i < pc9800_disk_geometry_count; i++) {
+		if (pc9800_disk_geometries[i].bios_drive == info->bios_drive) {
+			geometry = &pc9800_disk_geometries[i];
+			break;
+		}
+	}
+	if (!geometry) {
+		if (pc9800_disk_geometry_count >= PC9800_MAX_DISK_GEOMETRIES) {
+			pr_warn("PC-98 disk geometry table is full; ignoring BIOS drive %02x\n",
+				info->bios_drive);
+			return;
+		}
+		i = pc9800_disk_geometry_count++;
+		geometry = &pc9800_disk_geometries[i];
+	}
+
+	geometry->bios_drive = info->bios_drive;
+	geometry->heads = info->heads;
+	geometry->sectors = info->sectors;
+	geometry->flags = info->flags;
+
+	/* A single record from an older loader always describes the boot disk. */
+	if (pc9800_boot_geometry_index < 0 ||
+	    info->flags & PC98_BOOT_DISK_F_BOOT)
+		pc9800_boot_geometry_index = i;
+
+	pr_info("PC-98 disk: BIOS drive %02x, logical CHS */%u/%u%s%s\n",
+		geometry->bios_drive, geometry->heads, geometry->sectors,
+		geometry->flags & PC98_BOOT_DISK_F_BOOT ? " (boot)" : "",
+		geometry->flags & PC98_BOOT_DISK_F_FALLBACK ?
+		" (fallback)" : "");
 }
 
 bool pc9800_get_boot_disk_geometry(unsigned int *heads,
 				   unsigned int *sectors)
 {
-	if (!pc9800_boot_heads || !pc9800_boot_sectors)
+	const struct pc9800_disk_geometry *geometry;
+
+	if (pc9800_boot_geometry_index < 0)
 		return false;
 
-	*heads = pc9800_boot_heads;
-	*sectors = pc9800_boot_sectors;
+	geometry = &pc9800_disk_geometries[pc9800_boot_geometry_index];
+	*heads = geometry->heads;
+	*sectors = geometry->sectors;
 	return true;
 }
 EXPORT_SYMBOL_GPL(pc9800_get_boot_disk_geometry);
+
+bool pc9800_get_boot_disk_geometry_for(unsigned int bios_base,
+				       unsigned int unit,
+				       unsigned int *heads,
+				       unsigned int *sectors)
+{
+	u8 bios_drive = (bios_base & 0xf8) | (unit & 7);
+	unsigned int i;
+
+	for (i = 0; i < pc9800_disk_geometry_count; i++) {
+		if (pc9800_disk_geometries[i].bios_drive != bios_drive)
+			continue;
+		*heads = pc9800_disk_geometries[i].heads;
+		*sectors = pc9800_disk_geometries[i].sectors;
+		return true;
+	}
+	return false;
+}
+EXPORT_SYMBOL_GPL(pc9800_get_boot_disk_geometry_for);
 
 #define PC98_RTC_CTRL	0x20		/* W: command bits, CLK, STB, data */
 #define PC98_RTC_MODE	0x22		/* bit 5: uPD4993 extended format */

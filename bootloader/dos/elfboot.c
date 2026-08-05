@@ -21,6 +21,8 @@
 #define SETUP_PC98_DISK         11
 #define PC98_BOOT_DISK_MAGIC    0x44383950UL
 #define PC98_BOOT_DISK_VERSION  1
+#define PC98_BOOT_DISK_F_BOOT   0x02
+#define MAX_PC98_DISKS          12
 
 typedef unsigned long u32;
 typedef unsigned short u16;
@@ -79,7 +81,8 @@ static u8 gdtr[6];
 static u8 seg_buf[SEG_BUF_SIZE];
 static u8 boot_params[BOOT_PARAMS_SIZE];
 static char command_line[128];
-static struct setup_data_pc98 pc98_data;
+static struct setup_data_pc98 pc98_data[MAX_PC98_DISKS];
+static unsigned pc98_data_count;
 static struct elf_header ehdr;
 static FILE *kernel_file;
 static u32 kernel_entry;
@@ -250,22 +253,111 @@ failed:
 	return -1;
 }
 
-static int sense_boot_disk(unsigned requested_drive)
+static int sense_disk(unsigned requested_drive, u8 *heads, u8 *sectors)
 {
 	union REGS inregs, outregs;
 
 	memset(&inregs, 0, sizeof(inregs));
 	inregs.h.ah = 0x84;
-	inregs.h.al = 0x80 | (requested_drive & 0x7f);
+	inregs.h.al = requested_drive;
 	inregs.x.bx = 0x0100;
 	int86(0x1b, &inregs, &outregs);
 	if (outregs.x.cflag || outregs.x.bx != 512 ||
 	    !outregs.h.dh || !outregs.h.dl)
 		return -1;
-	bios_drive = requested_drive & 0x7f;
-	bios_heads = outregs.h.dh;
-	bios_sectors = outregs.h.dl;
+	*heads = outregs.h.dh;
+	*sectors = outregs.h.dl;
 	return 0;
+}
+
+static void remember_disk(u8 drive, u8 heads, u8 sectors, u8 flags)
+{
+	struct setup_data_pc98 *data;
+	unsigned i;
+
+	for (i = 0; i < pc98_data_count; i++) {
+		if (pc98_data[i].bios_drive == drive) {
+			pc98_data[i].heads = heads;
+			pc98_data[i].sectors = sectors;
+			pc98_data[i].flags = flags;
+			return;
+		}
+	}
+	if (pc98_data_count >= MAX_PC98_DISKS)
+		return;
+	data = &pc98_data[pc98_data_count++];
+	memset(data, 0, sizeof(*data));
+	data->type = SETUP_PC98_DISK;
+	data->len = 12;
+	data->magic = PC98_BOOT_DISK_MAGIC;
+	data->version = PC98_BOOT_DISK_VERSION;
+	data->size = 12;
+	data->bios_drive = drive;
+	data->heads = heads;
+	data->sectors = sectors;
+	data->flags = flags;
+}
+
+/*
+ * Pass every BIOS-visible fixed disk to Linux.  NEC98 partition entries use
+ * BIOS logical CHS, which can differ per controller and per disk.  The boot
+ * drive is appended last and marked explicitly; failed SENSE calls simply
+ * mean that the corresponding BIOS unit is absent.
+ */
+static void probe_disks(void)
+{
+	u8 heads, sectors, drive;
+	unsigned unit;
+
+	pc98_data_count = 0;
+	printf("Probing BIOS fixed disks...\n");
+	for (unit = 0; unit < 4; unit++) {
+		drive = 0x80 + unit;
+		if (drive == bios_drive || sense_disk(drive, &heads, &sectors))
+			continue;
+		remember_disk(drive, heads, sectors, 0);
+		printf("  %02Xh: */%u/%u\n", drive, heads, sectors);
+	}
+	for (unit = 0; unit < 8; unit++) {
+		drive = 0xa0 + unit;
+		if (drive == bios_drive || sense_disk(drive, &heads, &sectors))
+			continue;
+		remember_disk(drive, heads, sectors, 0);
+		printf("  %02Xh: */%u/%u\n", drive, heads, sectors);
+	}
+	remember_disk(bios_drive, bios_heads, bios_sectors,
+		      PC98_BOOT_DISK_F_BOOT);
+	printf("  %02Xh: */%u/%u (boot)\n", bios_drive, bios_heads,
+	       bios_sectors);
+}
+
+static int drive_prefix(const char *text, char a, char b, char c)
+{
+	return (text[0] | 0x20) == a && (text[1] | 0x20) == b &&
+	       (text[2] | 0x20) == c;
+}
+
+static int parse_bios_drive(const char *text, unsigned *drive)
+{
+	size_t len = strlen(text);
+
+	if (len == 1 && text[0] >= '0' && text[0] <= '3') {
+		*drive = 0x80 + text[0] - '0';
+		return 0;
+	}
+	if (len == 4 && drive_prefix(text, 'i', 'd', 'e') &&
+	    text[3] >= '0' && text[3] <= '3') {
+		*drive = 0x80 + text[3] - '0';
+		return 0;
+	}
+	if (len == 5 && (text[0] | 0x20) == 's' &&
+	    (text[1] | 0x20) == 'c' &&
+	    (text[2] | 0x20) == 's' && (text[3] | 0x20) == 'i' &&
+	    text[4] >= '0' && text[4] <= '7') {
+		*drive = 0xa0 + text[4] - '0';
+		return 0;
+	}
+	return -1;
 }
 
 static void put_e820(u16 offset, u32 addr, u32 size)
@@ -286,11 +378,12 @@ static void build_boot_params(void)
 	u32 high_size = (u32)*b401 << 17;
 	u32 top_size = (u32)*w594 << 20;
 	u32 command_addr = linear_address((void far *)command_line);
-	u32 setup_addr = linear_address((void far *)&pc98_data);
+	u32 setup_addr = pc98_data_count ?
+		linear_address((void far *)&pc98_data[0]) : 0;
 	u8 entries = 2;
+	unsigned i;
 
 	memset(boot_params, 0, sizeof(boot_params));
-	memset(&pc98_data, 0, sizeof(pc98_data));
 	boot_params[0x210] = 0xff;
 	*(u32 *)&boot_params[0x228] = command_addr;
 	*(u32 *)&boot_params[0x250] = setup_addr;
@@ -303,14 +396,14 @@ static void build_boot_params(void)
 	}
 	boot_params[0x1e8] = entries;
 
-	pc98_data.type = SETUP_PC98_DISK;
-	pc98_data.len = 12;
-	pc98_data.magic = PC98_BOOT_DISK_MAGIC;
-	pc98_data.version = PC98_BOOT_DISK_VERSION;
-	pc98_data.size = 12;
-	pc98_data.bios_drive = bios_drive;
-	pc98_data.heads = bios_heads;
-	pc98_data.sectors = bios_sectors;
+	for (i = 0; i < pc98_data_count; i++) {
+		if (i + 1 < pc98_data_count)
+			pc98_data[i].next_lo =
+				linear_address((void far *)&pc98_data[i + 1]);
+		else
+			pc98_data[i].next_lo = 0;
+		pc98_data[i].next_hi = 0;
+	}
 }
 
 static void boot_kernel(void)
@@ -319,7 +412,7 @@ static void boot_kernel(void)
 	u32 entry_addr = kernel_entry;
 	u16 gdtr_addr = FP_OFF((void far *)gdtr);
 
-	printf("BIOS drive %u, logical CHS */%u/%u\n", bios_drive,
+	printf("BIOS drive %02Xh, logical CHS */%u/%u\n", bios_drive,
 	       bios_heads, bios_sectors);
 	printf("Starting Linux at %08lX...\n", entry_addr);
 	enable_a20();
@@ -362,25 +455,32 @@ static void boot_kernel(void)
 int main(int argc, char **argv)
 {
 	u8 far *bios_work_drive = (u8 far *)MK_FP(0, 0x584);
+	u8 work_drive;
 	unsigned drive;
 	int i, arg_index = 2;
 
 	if (argc < 2) {
-		printf("Usage: LINUX98 VMLINUX [drive 0-3] [kernel arguments]\n");
+		printf("Usage: LINUX98 VMLINUX [ide0-ide3|scsi0-scsi7] "
+		       "[kernel arguments]\n");
 		return 1;
 	}
 	printf("PC-98 Linux ELF loader for DOS\n");
 	printf("Copyright (C) 2005, 2026, Awe Morris.\n\n");
-	drive = *bios_work_drive & 0x7f;
-	if (argc >= 3 && argv[2][0] >= '0' && argv[2][0] <= '3' &&
-	    argv[2][1] == 0) {
-		drive = argv[2][0] - '0';
+	work_drive = *bios_work_drive;
+	if ((work_drive & 0xf8) == 0xa0 ||
+	    (work_drive & 0xfc) == 0x80)
+		drive = work_drive;
+	else
+		drive = 0x80 | (work_drive & 3);
+	if (argc >= 3 && !parse_bios_drive(argv[2], &drive)) {
 		arg_index = 3;
 	}
-	if (drive > 3 || sense_boot_disk(drive)) {
-		printf("INT 1Bh SENSE failed for drive %u\n", drive);
+	bios_drive = drive;
+	if (sense_disk(drive, &bios_heads, &bios_sectors)) {
+		printf("INT 1Bh SENSE failed for BIOS drive %02Xh\n", drive);
 		return 1;
 	}
+	probe_disks();
 	command_line[0] = 0;
 	for (i = arg_index; i < argc; i++) {
 		if (strlen(command_line) + strlen(argv[i]) + 2 >= sizeof(command_line)) {

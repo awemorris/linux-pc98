@@ -13,6 +13,7 @@
 #define BP_ADDR 0x70000U
 #define CMD_ADDR 0x71000U
 #define PC98_ADDR 0x72000U
+#define PC98_SETUP_NODE_SIZE 32U
 #define CONSOLE_FIRST_ROW 8
 #define STARTUP_TIMEOUT_SECONDS 3
 #define LOAD_PROGRESS_INTERVAL (64U * 1024U)
@@ -815,6 +816,51 @@ static uint16_t low16(uint32_t a)
 }
 
 /*
+ * Publish one SETUP_PC98_DISK node for every BIOS-visible fixed disk.  Linux
+ * needs each disk's own logical geometry to decode its NEC98 partition table;
+ * passing only the boot disk is insufficient when IDE and SCSI disks coexist.
+ * The device descriptors already contain the Stage 1 SENSE results, so this
+ * does not issue more BIOS calls or lengthen the handoff path.
+ */
+static void build_pc98_disk_setup(uint8_t *bp)
+{
+	uint8_t *previous = 0;
+	unsigned count = 0;
+
+	*(uint32_t *)(bp + 0x250) = 0;
+	*(uint32_t *)(bp + 0x254) = 0;
+	for (unsigned i = 0; i < ho->device_count; i++) {
+		const struct boot98_device *d = &devs[i];
+		uint8_t *x;
+
+		if ((d->device_class != BOOT98_DEV_IDE &&
+		     d->device_class != BOOT98_DEV_SCSI) ||
+		    !(d->flags & BOOT98_DEV_HAS_GEOMETRY) ||
+		    !d->heads || !d->sectors || count >= 12)
+			continue;
+
+		x = (uint8_t *)(PC98_ADDR + count * PC98_SETUP_NODE_SIZE);
+		memzero(x, PC98_SETUP_NODE_SIZE);
+		if (!count)
+			*(uint32_t *)(bp + 0x250) = (uint32_t)x;
+		if (previous)
+			*(uint32_t *)(previous + 0) = (uint32_t)x;
+		*(uint32_t *)(x + 8) = 11;
+		*(uint32_t *)(x + 12) = 12;
+		*(uint32_t *)(x + 16) = 0x44383950;
+		*(uint16_t *)(x + 20) = 1;
+		*(uint16_t *)(x + 22) = 12;
+		x[24] = d->bios_id;
+		x[25] = d->heads;
+		x[26] = d->sectors;
+		if ((int)i == curdev)
+			x[27] = BOOT98_LINUX_DISK_F_BOOT;
+		previous = x;
+		count++;
+	}
+}
+
+/*
  * Load every PT_LOAD segment, construct Linux boot_params and the PC-98
  * extension block, then enter the ELF entry point.  BIOS logical H/S and the
  * original BIOS drive number are preserved for the kernel partition parser.
@@ -875,17 +921,7 @@ static int linuxboot(void)
 	*(uint32_t *)(bp + 0x228) = CMD_ADDR;
 	bp[0x210] = 0xff;
 	bp[0x1e8] = 2;
-	*(uint32_t *)(bp + 0x250) = PC98_ADDR;
-	uint8_t *x = (uint8_t *)PC98_ADDR;
-	memzero(x, 32);
-	*(uint32_t *)(x + 8) = 11;
-	*(uint32_t *)(x + 12) = 12;
-	*(uint32_t *)(x + 16) = 0x44383950;
-	*(uint16_t *)(x + 20) = 1;
-	*(uint16_t *)(x + 22) = 12;
-	x[24] = devs[curdev].bios_id;
-	x[25] = devs[curdev].heads;
-	x[26] = devs[curdev].sectors;
+	build_pc98_disk_setup(bp);
 	uint32_t conv = ((low8(0x501) & 7) + 1) << 17;
 	uint32_t ext = low8(0x401) << 17;
 	uint8_t *em = bp + 0x2d0;

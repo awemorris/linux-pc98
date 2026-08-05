@@ -42,24 +42,35 @@ case "$heads:$sectors:$swap_mb" in
 		;;
 esac
 
-# BOOT98 uses BIOS logical CHS for the PC-98 partition table.  The first
-# cylinder is the NEC system area.  The FAT16 BOOT volume ends at cylinder
-# 2048 and the ext4 root volume ends at cylinder 15419.  Swap is appended so
-# adding it cannot change the offsets of an existing root filesystem layout.
+# BOOT98 uses BIOS logical CHS for the PC-98 partition table.  The first two
+# cylinders are the NEC system area and the beginning of the FAT16 BOOT
+# volume.  Keep the original H=8/S=17 image's BOOT and root byte capacities,
+# then round each one up to whole cylinders for the selected geometry.  Fixed
+# ending cylinder numbers would make an H=8/S=32 SCSI image about 1.88 times
+# larger than the IDE image even though both contain the same files.
 cylinder_sectors=$((heads * sectors))
 cylinder_bytes=$((cylinder_sectors * 512))
-ipl_start=$((1 * cylinder_sectors))
-boot_start=$((2 * cylinder_sectors))
-root_start=$((2049 * cylinder_sectors))
-root_last_cylinder=15419
+baseline_cylinder_bytes=$((8 * 17 * 512))
+boot_target_bytes=$((2047 * baseline_cylinder_bytes))
+root_target_bytes=$((13371 * baseline_cylinder_bytes))
+
+boot_start_cylinder=2
+boot_cylinders=$(((boot_target_bytes + cylinder_bytes - 1) / cylinder_bytes))
+boot_last_cylinder=$((boot_start_cylinder + boot_cylinders - 1))
+root_start_cylinder=$((boot_last_cylinder + 1))
+root_cylinders=$(((root_target_bytes + cylinder_bytes - 1) / cylinder_bytes))
+root_last_cylinder=$((root_start_cylinder + root_cylinders - 1))
 swap_start_cylinder=$((root_last_cylinder + 1))
 swap_cylinders=$(((swap_mb * 1024 * 1024 + cylinder_bytes - 1) /
 	cylinder_bytes))
 swap_last_cylinder=$((swap_start_cylinder + swap_cylinders - 1))
 total_cylinders=$((swap_last_cylinder + 1))
 
-boot_sectors=$((root_start - boot_start))
-root_sectors=$(((root_last_cylinder - 2049 + 1) * cylinder_sectors))
+ipl_start=$((1 * cylinder_sectors))
+boot_start=$((boot_start_cylinder * cylinder_sectors))
+root_start=$((root_start_cylinder * cylinder_sectors))
+boot_sectors=$((boot_cylinders * cylinder_sectors))
+root_sectors=$((root_cylinders * cylinder_sectors))
 swap_start=$((swap_start_cylinder * cylinder_sectors))
 swap_sectors=$((swap_cylinders * cylinder_sectors))
 total_bytes=$((total_cylinders * cylinder_bytes))
@@ -71,6 +82,7 @@ root_image="$work/root.ext4"
 swap_image="$work/swap.img"
 mount_dir="$work/root"
 cfg="$work/BOOT98.CFG"
+kernel_extra_args="${KERNEL_EXTRA_ARGS:-}"
 mounted=0
 
 cleanup()
@@ -93,17 +105,20 @@ dd if="$bootloader_dir/boot98-stage1.bin" of="$output" bs=512 seek=2 \
 	conv=notrunc status=none
 dd if="$bootloader_dir/boot98-chain-test.bin" of="$output" bs=512 \
 	seek="$ipl_start" count=1 conv=notrunc status=none
-python3 - "$output" "$root_last_cylinder" "$swap_start_cylinder" \
+python3 - "$output" "$boot_last_cylinder" "$root_start_cylinder" \
+	"$root_last_cylinder" "$swap_start_cylinder" \
 	"$swap_last_cylinder" "$heads" "$sectors" <<'PY'
 import struct
 import sys
 
 image = sys.argv[1]
-root_last = int(sys.argv[2])
-swap_start = int(sys.argv[3])
-swap_last = int(sys.argv[4])
-last_head = int(sys.argv[5]) - 1
-last_sector = int(sys.argv[6]) - 1
+boot_last = int(sys.argv[2])
+root_start = int(sys.argv[3])
+root_last = int(sys.argv[4])
+swap_start = int(sys.argv[5])
+swap_last = int(sys.argv[6])
+last_head = int(sys.argv[7]) - 1
+last_sector = int(sys.argv[8]) - 1
 
 
 def chs(cylinder, head=0, sector=0):
@@ -122,8 +137,9 @@ def entry(flags, kind, first_ipl, first_data, last, name):
 
 
 table = bytearray(512)
-table[0:32] = entry(0xA1, 0x20, 1, 2, 2048, "BOOT")
-table[32:64] = entry(0x21, 0x83, 2049, 2049, root_last, "DEBIAN13")
+table[0:32] = entry(0xA1, 0x20, 1, 2, boot_last, "BOOT")
+table[32:64] = entry(0x21, 0x83, root_start, root_start, root_last,
+                     "DEBIAN13")
 table[64:96] = entry(0x21, 0x82, swap_start, swap_start, swap_last,
                      "LINUXSWAP")
 with open(image, "r+b") as stream:
@@ -136,7 +152,7 @@ mformat -i "$output@@$((boot_start * 512))" -c 8 -h "$heads" \
 printf '%s\n' \
 	'echo Booting Debian 13 i486...' \
 	'kernel VMLINUX' \
-	'arg root=/dev/sda2 rootfstype=ext4 rw' \
+	"arg root=/dev/sda2 rootfstype=ext4 rw${kernel_extra_args:+ $kernel_extra_args}" \
 	'boot' >"$cfg"
 mcopy -i "$output@@$((boot_start * 512))" \
 	"$bootloader_dir/BOOT98.BIN" ::BOOT98.BIN
@@ -195,4 +211,6 @@ sha256sum "$output"
 printf 'BOOT98 Debian 13 i486 image: %s\n' "$output"
 printf 'Geometry: C=%d H=%d S=%d, root=/dev/sda2, swap=/dev/sda3 (%d MiB)\n' \
 	"$total_cylinders" "$heads" "$sectors" "$swap_mb"
+printf 'Partition bytes: BOOT=%d, root=%d, swap=%d\n' \
+	"$((boot_sectors * 512))" "$root_bytes" "$swap_bytes"
 printf 'Login: root / %s\n' "$root_password"

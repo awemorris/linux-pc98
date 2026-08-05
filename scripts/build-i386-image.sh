@@ -40,6 +40,7 @@ boot_vmlinux="$kernel_build/vmlinux.boot"
 root_stage="${ROOT_STAGE:-$buildroot_work/output/target}"
 skip_rootfs_build="${SKIP_ROOTFS_BUILD:-0}"
 root_device="${ROOT_DEVICE:-/dev/hd98a2}"
+kernel_extra_args="${KERNEL_EXTRA_ARGS:-}"
 
 case "$root_device" in
 /dev/*2) swap_device="${root_device%2}3" ;;
@@ -116,7 +117,7 @@ OUTPUT_IMAGE="$output" \
 printf '%s\n' \
 	"echo Booting Linux 7.1 i${cpu_family}..." \
 	'kernel VMLINUX' \
-	"arg root=$root_device rootfstype=ext4 rw" \
+	"arg root=$root_device rootfstype=ext4 rw${kernel_extra_args:+ $kernel_extra_args}" \
 	'boot' >"$cfg"
 DISK_HEADS="${DISK_HEADS:-8}" DISK_SECTORS="${DISK_SECTORS:-17}" \
 	"$repo/scripts/install-boot98-image.sh" "$output" "$boot_vmlinux" "$cfg"

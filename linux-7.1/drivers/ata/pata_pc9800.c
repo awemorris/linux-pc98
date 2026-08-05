@@ -16,6 +16,7 @@
 #include <linux/io.h>
 #include <linux/ioport.h>
 #include <linux/libata.h>
+#include <scsi/scsi_device.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/ata_platform.h>
@@ -42,6 +43,7 @@ static int pc98_pata_bios_param(struct scsi_device *sdev,
 				struct gendisk *disk, sector_t capacity,
 				int geometry[])
 {
+	struct ata_port *ap = ata_shost_to_port(sdev->host);
 	unsigned int heads = 8;
 	unsigned int sectors = 17;
 
@@ -50,7 +52,9 @@ static int pc98_pata_bios_param(struct scsi_device *sdev,
 	 * the loader. ATA commands remain LBA-first in libata; this callback is
 	 * only the legacy geometry reported to upper layers.
 	 */
-	pc9800_get_boot_disk_geometry(&heads, &sectors);
+	pc9800_get_boot_disk_geometry_for(0x80,
+					   ap->port_no * 2 + sdev->id,
+					   &heads, &sectors);
 	geometry[0] = heads;
 	geometry[1] = sectors;
 	sector_div(capacity, geometry[0] * geometry[1]);

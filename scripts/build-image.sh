@@ -11,14 +11,18 @@ Usage: ./build.sh image PROFILE [options]
 
 Profiles:
   busybox-i386-ide      i386 BusyBox, IDE H=8/S=17, 32 MiB swap
-  busybox-i386-scsi     i386 BusyBox, 92 SCSI H=8/S=32, 32 MiB swap
+  busybox-i386-scsi92   i386 BusyBox, 92 SCSI H=8/S=32, 32 MiB swap
+  busybox-i386-scsi55   i386 BusyBox, 55 SCSI H=8/S=17, 32 MiB swap
+  busybox-i386-scsi     alias for busybox-i386-scsi92
   busybox-i386-h8       i386 BusyBox, H=8/S=17, 32 MiB swap
   busybox-i486-h8       i486 kernel + BusyBox, H=8/S=17, 32 MiB swap
   debian13-i486-h8      legacy loader, Debian/i486, 128 MiB swap
   debian13-i686-h8      legacy loader, Debian/i686, 128 MiB swap
   debian13-i486-boot98  BOOT98, Debian/i486, 128 MiB swap
   debian13-i486-ide     BOOT98, Debian/i486, IDE H=8/S=17
-  debian13-i486-scsi    BOOT98, Debian/i486, 92 SCSI H=8/S=32
+  debian13-i486-scsi92  BOOT98, Debian/i486, 92 SCSI H=8/S=32
+  debian13-i486-scsi55  BOOT98, Debian/i486, 55 SCSI H=8/S=17
+  debian13-i486-scsi    alias for debian13-i486-scsi92
 
 Options:
   --kernel FILE         use a specific uncompressed ELF kernel
@@ -38,13 +42,17 @@ list_profiles()
 	printf '%s\n' \
 		busybox-i386-ide \
 		busybox-i386-scsi \
+		busybox-i386-scsi92 \
+		busybox-i386-scsi55 \
 		busybox-i386-h8 \
 		busybox-i486-h8 \
 		debian13-i486-h8 \
 		debian13-i686-h8 \
 		debian13-i486-boot98 \
 		debian13-i486-ide \
-		debian13-i486-scsi
+		debian13-i486-scsi \
+		debian13-i486-scsi92 \
+		debian13-i486-scsi55
 }
 
 materialize_path()
@@ -120,6 +128,7 @@ default_rootfs=""
 default_kernel=""
 default_swap=128
 root_device=/dev/hd98a2
+kernel_extra_args=""
 
 case "$profile" in
 	busybox-i386-h8 | busybox-i386-ide)
@@ -128,11 +137,19 @@ case "$profile" in
 		default_swap=32
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
 		;;
-	busybox-i386-scsi)
+	busybox-i386-scsi | busybox-i386-scsi92)
 		kind=boot98
 		cpu_family=386
 		sectors=32
 		root_device=/dev/sda2
+		default_swap=32
+		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
+		;;
+	busybox-i386-scsi55)
+		kind=boot98
+		cpu_family=386
+		root_device=/dev/sda2
+		kernel_extra_args=pc9801_scsi=55
 		default_swap=32
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
 		;;
@@ -155,9 +172,15 @@ case "$profile" in
 		default_rootfs="$repo/build/boot98/debian13-i486-root"
 		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
 		;;
-	debian13-i486-scsi)
+	debian13-i486-scsi | debian13-i486-scsi92)
 		kind=boot98
 		sectors=32
+		default_rootfs="$repo/build/boot98/debian13-i486-root"
+		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
+		;;
+	debian13-i486-scsi55)
+		kind=boot98
+		kernel_extra_args=pc9801_scsi=55
 		default_rootfs="$repo/build/boot98/debian13-i486-root"
 		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
 		;;
@@ -190,9 +213,10 @@ if test -n "$base_image"; then
 	fi
 else
 	case "$profile" in
-		busybox-i386-h8 | busybox-i386-ide | busybox-i386-scsi | busybox-i486-h8)
+		busybox-i386-h8 | busybox-i386-ide | busybox-i386-scsi | busybox-i386-scsi92 | busybox-i386-scsi55 | busybox-i486-h8)
 			CPU_FAMILY="$cpu_family" I386_CONSOLE=video JOBS="$jobs" \
 				ROOT_DEVICE="$root_device" \
+				KERNEL_EXTRA_ARGS="$kernel_extra_args" \
 				DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
 				SWAP_MB="$swap_mb" OUTPUT_IMAGE="$output" \
 				"$repo/scripts/build-i386-image.sh"
@@ -201,9 +225,10 @@ else
 					"$repo/scripts/update-kernel.sh" "$output" "$kernel"
 			fi
 			;;
-		debian13-i486-boot98 | debian13-i486-ide | debian13-i486-scsi)
+		debian13-i486-boot98 | debian13-i486-ide | debian13-i486-scsi | debian13-i486-scsi92 | debian13-i486-scsi55)
 			SWAP_MB="$swap_mb" DISK_HEADS="$heads" \
 				DISK_SECTORS="$sectors" \
+				KERNEL_EXTRA_ARGS="$kernel_extra_args" \
 				"$repo/scripts/make-boot98-debian-image.sh" \
 				"$rootfs" "$output" "$kernel"
 			;;

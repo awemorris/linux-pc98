@@ -35,6 +35,8 @@ struct setup_data {
 /* NEC PC-9800 BIOS logical disk geometry passed by a boot loader. */
 #define PC98_BOOT_DISK_MAGIC		0x44383950U /* "P98D" */
 #define PC98_BOOT_DISK_VERSION		1
+#define PC98_BOOT_DISK_F_FALLBACK	(1U << 0)
+#define PC98_BOOT_DISK_F_BOOT		(1U << 1)
 
 struct pc98_boot_disk_setup {
 	__u32 magic;

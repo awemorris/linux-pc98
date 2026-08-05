@@ -217,16 +217,28 @@ created through a named profile, for example:
 
 ```sh
 ./build.sh image busybox-i386-ide
-./build.sh image busybox-i386-scsi
+./build.sh image busybox-i386-scsi92
+./build.sh image busybox-i386-scsi55
 ./build.sh image debian13-i486-ide
-./build.sh image debian13-i486-scsi
+./build.sh image debian13-i486-scsi92
+./build.sh image debian13-i486-scsi55
 ```
 
 IDE profiles use the NEC logical geometry H=8/S=17. PC-9801-92 SCSI
 profiles use H=8/S=32 and therefore require a separate disk image even when
-the files stored in the partitions are identical. The i386 IDE image uses
-the small `pc98_ide` driver (`/dev/hd98a`); i386 SCSI and both i486/libata
-images use the standard SCSI disk namespace (`/dev/sda`).
+the files stored in the partitions are identical. PC-9801-55-compatible
+profiles, including WINnote98, use H=8/S=17. The old profile names ending in
+plain `-scsi` remain aliases for `-scsi92`. Partition sizes are defined in
+bytes and rounded up to whole cylinders, so changing geometry does not nearly
+double the SCSI image capacity. The i386 IDE image uses the small `pc98_ide`
+driver (`/dev/hd98a`); i386 SCSI and both i486/libata images use the standard
+SCSI disk namespace (`/dev/sda`).
+
+BOOT98 and `LINUX98.EXE` pass the BIOS SENSE drive number and logical H/S to
+Linux in a `SETUP_PC98_DISK` setup-data record. The PC-9801-55/92 driver uses
+that value when decoding the boot disk's NEC98 partition table. For an older
+loader which does not provide the record, `pc9801_scsi=55` selects the 8/17
+fallback; the default `pc9801_scsi=92` fallback is 8/32.
 
 The BusyBox H=8 profiles install the three-stage BOOT98 environment.  The
 silent LBA 0 IPL immediately enters the LBA 2 second stage, which loads

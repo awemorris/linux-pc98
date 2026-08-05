@@ -1,11 +1,21 @@
 # Linux/PC-98 Agent Handoff
 
-Status date: 2026-08-01 (JST)
+Status date: 2026-08-06 (JST)
 
 This document is the entry point for agents continuing the Linux/PC-98 work.
 Read it before changing files. The repository contains several years' worth of
 work compressed into a small number of large commits, and many apparently
 unusual choices are deliberate compatibility decisions.
+
+## Urgent hardware handoff: PC-9801-55/92 SCSI
+
+Before changing the Linux or QEMU SCSI implementations, read
+[`SCSI-55-92-HANDOFF.md`](SCSI-55-92-HANDOFF.md).  A real WINnote98/55-compatible
+adapter already detects its BlueSCSI disk and NEC98 partitions, but fails after
+attachment on a `WRITE(10)`/disconnect transition.  DMA, asynchronous PIO,
+negotiation, disconnect and IRQ-drain experiments have not fixed it.  The
+specific handoff records the dirty files, fixed test image, QEMU-only success,
+failed experiments and the bounded trace required for the next investigation.
 
 ## 1. Mission and current milestone
 

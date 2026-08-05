@@ -80,6 +80,7 @@ static int pc980155_irq_override = -1;
 static int pc980155_dma_override = -1;
 static u8 pc980155_clock = WD33C93_FS_8_10;
 static enum pc980155_profile pc980155_profile = PC980155_PROFILE_92;
+/* Match the Linux/98 2.6.7 driver unless async PIO is requested explicitly. */
 static bool pc980155_async_pio;
 
 module_param(io, uint, 0444);
@@ -326,12 +327,39 @@ static irqreturn_t pc980155_intr(int irq, void *dev_id)
 {
 	struct Scsi_Host *host = dev_id;
 	unsigned long flags;
+	unsigned int pass;
 
 	if (!(inb(host->base) & ASR_INT))
 		return IRQ_NONE;
 
 	spin_lock_irqsave(host->host_lock, flags);
-	wd33c93_intr(host);
+	for (pass = 0; pass < 8; pass++) {
+		unsigned int wait;
+		u8 asr;
+
+		wd33c93_intr(host);
+		if (!pc980155_async_pio)
+			goto out;
+
+		/*
+		 * transfer_pio() deliberately returns with the interrupt for the
+		 * following SCSI phase pending.  On the PC-98 edge-triggered PIC,
+		 * that edge can occur before this handler sends its EOI.  Wait for
+		 * the WD33C93 command-in-progress indication to clear, then consume
+		 * the pending STATUS/MESSAGE IN/DISCONNECT phases here.
+		 */
+		for (wait = 0; wait < 1000; wait++) {
+			asr = inb(host->base);
+			if (!(asr & ASR_INT))
+				goto out;
+			if (!(asr & ASR_BSY))
+				break;
+			udelay(1);
+		}
+		if (wait == 1000)
+			break;
+	}
+out:
 	spin_unlock_irqrestore(host->host_lock, flags);
 	return IRQ_HANDLED;
 }
@@ -477,10 +505,18 @@ static int __init pc980155_init(void)
 		 * wd33c93_init() deliberately owns the generic defaults.  Override
 		 * them before scsi_scan_host() starts the first command so every
 		 * target negotiates an offset of zero and transfer_bytes() selects
-		 * the standard WD33C93 polled-PIO path.
+		 * the standard WD33C93 polled-PIO path.  Disable level-2 combination
+		 * commands so the original controller exposes every bus phase to the
+		 * driver.  Do not grant disconnect privilege in this compatibility
+		 * mode.  The historical 55-board driver normally ran one command at a
+		 * time and did not need disconnect/reselect; keeping the target
+		 * connected also avoids losing the STATUS/MESSAGE IN transition on
+		 * early WD33C93/55-board combinations.
 		 */
 		hdata->wh.no_sync = 0xff;
 		hdata->wh.no_dma = 1;
+		hdata->wh.disconnect = DIS_NEVER;
+		hdata->wh.level2 = L2_NONE;
 		for (i = 0; i < 8; i++)
 			hdata->wh.sync_stat[i] = SS_UNSET;
 	}
@@ -492,7 +528,9 @@ static int __init pc980155_init(void)
 	pr_info(DRV_NAME ": I/O %#lx, IRQ %u, DMA %u, SCSI ID %u; %s profile, %s\n",
 		base_io, irq, dma, scsi_id,
 		pc980155_profile == PC980155_PROFILE_55 ? "55" : "92",
-		pc980155_async_pio ? "asynchronous PIO" : "DMA");
+		pc980155_async_pio ?
+			"asynchronous PIO (level 2 and disconnect disabled)" :
+			"DMA");
 	pr_info(DRV_NAME ": probing SCSI targets 0-6; absent targets may take several seconds\n");
 	scsi_scan_host(pc980155_host);
 	return 0;

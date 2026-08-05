@@ -696,6 +696,7 @@ transfer_pio(const wd33c93_regs regs, uchar * buf, int cnt,
 	     int data_in_dir, struct WD33C93_hostdata *hostdata)
 {
 	uchar asr;
+	int remaining = cnt;
 
 	DB(DB_TRANSFER,
 	   printk("(%p,%d,%s:", buf, cnt, data_in_dir ? "in" : "out"))
@@ -706,14 +707,25 @@ transfer_pio(const wd33c93_regs regs, uchar * buf, int cnt,
 	if (data_in_dir) {
 		do {
 			asr = read_aux_stat(regs);
-			if (asr & ASR_DBR)
+			/*
+			 * Some real WD33C93 revisions keep DBR asserted when the
+			 * final transfer byte and the phase-change interrupt overlap.
+			 * Never acknowledge more bytes than were programmed in the
+			 * transfer counter: doing so consumes status/message bytes as
+			 * data (or overruns the caller's buffer on DATA OUT).
+			 */
+			if ((asr & ASR_DBR) && remaining) {
 				*buf++ = read_wd33c93(regs, WD_DATA);
+				remaining--;
+			}
 		} while (!(asr & ASR_INT));
 	} else {
 		do {
 			asr = read_aux_stat(regs);
-			if (asr & ASR_DBR)
+			if ((asr & ASR_DBR) && remaining) {
 				write_wd33c93(regs, WD_DATA, *buf++);
+				remaining--;
+			}
 		} while (!(asr & ASR_INT));
 	}
 
@@ -1334,7 +1346,15 @@ wd33c93_intr(struct Scsi_Host *instance)
 
 			break;
 		default:
-			printk("*** Unexpected DISCONNECT interrupt! ***");
+			printk("*** Unexpected DISCONNECT: state=%u cdb=%02x "
+			       "status=%02x message=%02x phase=%02x residual=%u/%d "
+			       "disconnect=%u level2=%u ***",
+			       hostdata->state, cmd ? cmd->cmnd[0] : 0xff,
+			       cmd ? scsi_pointer->Status : 0xff,
+			       cmd ? scsi_pointer->Message : 0xff, phs,
+			       cmd ? scsi_pointer->this_residual : 0,
+			       cmd ? scsi_pointer->buffers_residual : 0,
+			       hostdata->disconnect, hostdata->level2);
 			hostdata->state = S_UNCONNECTED;
 		}
 

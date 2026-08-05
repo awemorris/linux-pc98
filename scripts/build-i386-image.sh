@@ -39,6 +39,7 @@ output="${OUTPUT_IMAGE:-$default_output}"
 boot_vmlinux="$kernel_build/vmlinux.boot"
 root_stage="${ROOT_STAGE:-$buildroot_work/output/target}"
 skip_rootfs_build="${SKIP_ROOTFS_BUILD:-0}"
+skip_kernel_build="${SKIP_KERNEL_BUILD:-0}"
 root_device="${ROOT_DEVICE:-/dev/hd98a2}"
 kernel_extra_args="${KERNEL_EXTRA_ARGS:-}"
 
@@ -47,14 +48,24 @@ case "$root_device" in
 *) echo "ROOT_DEVICE must be an absolute /dev path: $root_device" >&2; exit 1 ;;
 esac
 
-I386_CONSOLE="$console_mode" \
-CPU_FAMILY="$cpu_family" \
-I386_KERNEL_BUILD="$kernel_build" \
-I386_CONFIG_OUTPUT="$config_output" \
-	"$repo/scripts/configure-i386-busybox.sh"
-make -C "$repo/linux-7.1" O="$kernel_build" ARCH=i386 -j"$jobs" vmlinux
-objcopy --strip-all "$kernel_build/vmlinux" "$boot_vmlinux"
-chmod 0644 "$boot_vmlinux"
+if [ "$skip_kernel_build" = 0 ]; then
+	I386_CONSOLE="$console_mode" \
+	CPU_FAMILY="$cpu_family" \
+	I386_KERNEL_BUILD="$kernel_build" \
+	I386_CONFIG_OUTPUT="$config_output" \
+		"$repo/scripts/configure-i386-busybox.sh"
+	make -C "$repo/linux-7.1" O="$kernel_build" ARCH=i386 -j"$jobs" vmlinux
+	objcopy --strip-all "$kernel_build/vmlinux" "$boot_vmlinux"
+	chmod 0644 "$boot_vmlinux"
+elif [ "$skip_kernel_build" = 1 ]; then
+	if [ ! -f "$boot_vmlinux" ]; then
+		echo "Reusable i386 kernel is missing: $boot_vmlinux" >&2
+		exit 1
+	fi
+else
+	echo "unsupported SKIP_KERNEL_BUILD value: $skip_kernel_build" >&2
+	exit 1
+fi
 
 if [ "$skip_rootfs_build" = 0 ]; then
 	I386_CONSOLE="$console_mode" \

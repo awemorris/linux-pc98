@@ -1,0 +1,22 @@
+# Debian 13/i486 PC-98 rootfs package profile.
+#
+# Keep this list declarative: changing it invalidates the reusable rootfs
+# cache and all three Debian release images are rebuilt from the new profile.
+
+# Boot, devices, storage, and networking.
+sysvinit-core
+e2fsprogs
+kmod
+udev
+ifupdown
+iproute2
+dhcpcd-base
+ca-certificates
+
+# Minimum interactive and network-recovery tools.
+vim-tiny
+iputils-ping
+wget
+openssh-server
+ucf
+runit-helper

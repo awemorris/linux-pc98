@@ -199,16 +199,18 @@ The individual build stages can also be run separately:
 ./build.sh image debian13-i686-h8
 ```
 
-To create an xz-compressed Release artifact and its SHA-256 file:
+To build the complete public artifact set with canonical filenames:
 
 ```sh
-./build.sh dist
+./build.sh release --version v0.6.0
 ```
 
-The Linux 7.1 artifact is named
-`dist/qemu-pc98-debian13-i386-linux-7.1.raw.xz`. `DIST_BASENAME`,
-`XZ_LEVEL`, and `XZ_THREADS` can override the name and compression settings.
-Existing dist files are never overwritten.
+This is the only supported command for a public Release. It builds all six
+disk images, standalone kernels and loaders, and `qemu-pc98-win64.zip` under
+`build/releases/`. `XZ_LEVEL` and `XZ_THREADS` can override compression.
+The fixed Release text is read from `releases/v0.6.0.md`. Maintainers may also
+pass `--publish-rootfs-cache` to refresh the reusable rootfs archives on the
+package server.
 
 ### Named image profiles and reusable bases
 
@@ -217,8 +219,8 @@ created through a named profile, for example:
 
 ```sh
 ./build.sh image busybox-i386-ide
-./build.sh image busybox-i386-scsi92
 ./build.sh image busybox-i386-scsi55
+./build.sh image busybox-i386-scsi92
 ./build.sh image debian13-i486-ide
 ./build.sh image debian13-i486-scsi92
 ./build.sh image debian13-i486-scsi55
@@ -240,9 +242,9 @@ artifacts must instead be generated with the canonical command:
 Each command writes only its fixed filename under `build/releases/`.  It
 builds a temporary image in the same directory and atomically replaces the
 canonical image after successful completion, together with its SHA-256 file.
-`./build.sh release-image all` rebuilds all six variants.  This is the only
-supported path for producing test and release images; diagnostic suffixes
-must not be added to files in `build/releases/`.
+`./build.sh release-image all` rebuilds all six variants. Diagnostic suffixes
+must not be added to files in `build/releases/`. Use `./build.sh release` for
+the complete compressed public artifact set.
 
 IDE profiles use the NEC logical geometry H=8/S=17. PC-9801-92 SCSI
 profiles use H=8/S=32 and therefore require a separate disk image even when
@@ -316,24 +318,40 @@ This updates only the documented
 `www/noctvm.io/debian-i486/images/pc98/bases/` directory and its matching
 SHA-256 file.
 
-The v0.4 Release set consists of the following persistent CF-card images.
-The Debian images use the full PC-98 kernel configuration. The low-memory
-Debian experiment is not published because login is not reliable below
-64 MiB.
+Root filesystem trees are cached independently from complete disk images:
 
-| Image | Userland | Minimum RAM |
-| --- | --- | ---: |
-| `linux-7.1-pc98-i386-busybox.img.xz` | static musl/BusyBox | 5 MiB |
-| `linux-7.1-pc98-i486-busybox.img.xz` | static musl/BusyBox | 5 MiB |
-| `debian13-pc98-i486-live-cfcard.img.xz` | Debian 13/i486 | 64 MiB |
-| `debian13-pc98-i686-live-cfcard.img.xz` | Debian 13/i686 | 64 MiB |
+```sh
+./build.sh rootfs-cache fetch busybox-i386-video-buildroot-2026.05
+./build.sh rootfs-cache materialize debian13-i486-trixie-v1 build/rootfs-copy
+./build.sh rootfs-cache store NAME ROOTFS-DIR
+./build.sh rootfs-cache publish NAME ROOTFS-DIR
+```
 
-Each archive has a matching `.sha256` file. Public images use the GDC screen
-and PC-98 keyboard as the console.
+Local archives live under `${XDG_CACHE_HOME:-~/.cache}/linux-pc98/rootfs`.
+Fetches use HTTPS and verify both SHA-256 and xz integrity. Publication writes
+only to `www/noctvm.io/debian-i486/images/pc98/rootfs/`.
 
-The i386 BusyBox kernel includes the PC-9801-92 host adapter, SCSI core, and
-SCSI disk support as built-ins (`=y`), so a SCSI root or utility disk does not
-depend on modules from the low-memory root filesystem.
+The v0.6.0 Release set consists of the following persistent CF/HDD images.
+The Debian images use the full PC-98 kernel configuration and require 64 MiB.
+
+| Image | Geometry and purpose | Userland | Minimum RAM | Raw size limit |
+| --- | --- | --- | ---: | ---: |
+| `linux-pc98-i386sx-busybox-ide.img.xz` | IDE H=8/S=17 on i386SX/DX machines | static musl/BusyBox | 5 MiB | below 40 MB |
+| `linux-pc98-i386sx-busybox-scsi55.img.xz` | PC-9801-55-compatible SCSI H=8/S=17, including WINnote98 | static musl/BusyBox | 5 MiB | below 40 MB |
+| `linux-pc98-i386sx-busybox-scsi92.img.xz` | PC-9801-92 SCSI H=8/S=32 | static musl/BusyBox | 5 MiB | below 40 MB |
+| `linux-pc98-i486dx-debian13-ide.img.xz` | IDE H=8/S=17 on i486DX or newer | Debian 13/i486DX | 64 MiB | below 2 GB |
+| `linux-pc98-i486dx-debian13-scsi55.img.xz` | PC-9801-55-compatible SCSI H=8/S=17 | Debian 13/i486DX | 64 MiB | below 2 GB |
+| `linux-pc98-i486dx-debian13-scsi92.img.xz` | PC-9801-92 SCSI H=8/S=32 | Debian 13/i486DX | 64 MiB | below 2 GB |
+
+Public images use the GDC screen and PC-98 keyboard as the console. The same
+release also contains `vmlinux-i386`, `vmlinux-i486-debian`, `linux98.exe`,
+the LBA 0 and LBA 2 loader sectors, `boot98.bin`, `boot98.cfg`, and
+`qemu-pc98-win64.zip`. The Windows ZIP contains both i386 and x86_64 QEMU,
+`virtpc98.exe`, required DLLs, and the free PC-98 BIOS/SCSI BIOS files.
+
+The i386 BusyBox kernel includes the PC-9801-55/92-compatible host adapter,
+SCSI core, and SCSI disk support as built-ins (`=y`), so a SCSI root or
+utility disk does not depend on modules from the low-memory root filesystem.
 
 ## Disk layout
 

@@ -14,10 +14,12 @@ Primary commands:
   dos-loader                  rebuild LINUX98.EXE (requires OpenWatcom 1.9)
   kernel [options]            configure and build Linux 7.1
   rootfs PROFILE              build a root filesystem
+  rootfs-cache COMMAND        fetch/store/publish reusable rootfs archives
   image PROFILE [options]     create or update a named disk-image variant
   image list                  list image profiles
   release-image PROFILE       build a canonical image under build/releases
   release-image all           rebuild every canonical release/test image
+  release [options]           build the complete public Release artifact set
   test PROFILE [options]      prepare/run a headless serial-console test
   test list                   list serial test profiles
   cache fetch NAME            cache a package-server base image
@@ -107,8 +109,8 @@ build_rootfs()
 	shift || true
 	case "$profile" in
 		debian13-i486)
-			OUTPUT_DIR="${OUTPUT_DIR:-$repo/build/debian-i486-bootstrap}" \
-				"$repo/debian-i486/scripts/create-public-rootfs.sh" "$@"
+			ROOT_STAGE="${ROOT_STAGE:-$repo/build/boot98/debian13-i486-root}" \
+				"$repo/scripts/build-debian-i486-rootfs.sh" "$@"
 			;;
 		debian13-i686)
 			"$repo/scripts/build-debian-rootfs.sh" "$@"
@@ -134,8 +136,10 @@ case "$command" in
 	dos-loader) make -C "$repo/bootloader/dos" "$@" ;;
 	kernel) build_kernel "$@" ;;
 	rootfs) build_rootfs "$@" ;;
+	rootfs-cache) "$repo/scripts/rootfs-cache.sh" "$@" ;;
 	image) "$repo/scripts/build-image.sh" "$@" ;;
 	release-image) "$repo/scripts/build-release-image.sh" "$@" ;;
+	release) "$repo/scripts/build-release.sh" "$@" ;;
 	test) "$repo/scripts/test-image.sh" "$@" ;;
 	cache) "$repo/scripts/image-cache.sh" "$@" ;;
 	debian) "$repo/scripts/build-debian.sh" "$@" ;;

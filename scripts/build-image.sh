@@ -10,7 +10,7 @@ Usage: ./build.sh image PROFILE [options]
        ./build.sh image list
 
 Profiles:
-  busybox-i386-ide      i386 BusyBox, IDE H=8/S=17, 32 MiB swap
+  busybox-i386-ide      i386 BusyBox, IDE H=8/S=17, below 40 MB
   busybox-i386-scsi92   i386 BusyBox, 92 SCSI H=8/S=32, 32 MiB swap
   busybox-i386-scsi55   i386 BusyBox, 55 SCSI H=8/S=17, 32 MiB swap
   busybox-i386-scsi     alias for busybox-i386-scsi92
@@ -32,6 +32,8 @@ Options:
   --output FILE         output path (must not already exist)
   --config FILE         BOOT98.CFG replacement for a BOOT98 base image
   --swap-mb N           swap size for newly created images
+  --boot-mb N           FAT16 BOOT size for newly created BusyBox images
+  --root-mb N           ext4 root size for newly created BusyBox images
   --jobs N              parallel kernel/rootfs build jobs
   --publish-base NAME   cache and publish the finished image under NAME
 EOF
@@ -89,12 +91,14 @@ base_image=""
 output=""
 cfg=""
 swap_mb=""
+boot_mb="${BOOT_MB:-200}"
+root_mb="${ROOT_MB:-200}"
 jobs="${JOBS:-$(nproc)}"
 publish_base=""
 
 while test "$#" -gt 0; do
 	case "$1" in
-		--kernel | --rootfs | --base-image | --output | --config | --swap-mb | --jobs | --publish-base)
+		--kernel | --rootfs | --base-image | --output | --config | --swap-mb | --boot-mb | --root-mb | --jobs | --publish-base)
 			test "$#" -ge 2 || { echo "Missing value for $1" >&2; exit 2; }
 			case "$1" in
 				--kernel) kernel="$2" ;;
@@ -103,6 +107,8 @@ while test "$#" -gt 0; do
 				--output) output="$2" ;;
 				--config) cfg="$2" ;;
 				--swap-mb) swap_mb="$2" ;;
+				--boot-mb) boot_mb="$2" ;;
+				--root-mb) root_mb="$2" ;;
 				--jobs) jobs="$2" ;;
 				--publish-base) publish_base="$2" ;;
 			esac
@@ -131,10 +137,18 @@ root_device=/dev/hd98a2
 kernel_extra_args=""
 
 case "$profile" in
-	busybox-i386-h8 | busybox-i386-ide)
+	busybox-i386-h8)
 		kind=boot98
 		cpu_family=386
 		default_swap=32
+		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
+		;;
+	busybox-i386-ide)
+		kind=boot98
+		cpu_family=386
+		boot_mb=8
+		root_mb=20
+		default_swap=8
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
 		;;
 	busybox-i386-scsi | busybox-i386-scsi92)
@@ -142,15 +156,20 @@ case "$profile" in
 		cpu_family=386
 		sectors=32
 		root_device=/dev/sda2
-		default_swap=32
+		kernel_extra_args=rootwait
+		boot_mb=8
+		root_mb=20
+		default_swap=8
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
 		;;
 	busybox-i386-scsi55)
 		kind=boot98
 		cpu_family=386
 		root_device=/dev/sda2
-		kernel_extra_args=pc9801_scsi=55,irq=5,dma=0,clock=12
-		default_swap=32
+		kernel_extra_args="rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=async-pio"
+		boot_mb=8
+		root_mb=20
+		default_swap=8
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
 		;;
 	busybox-i486-h8)
@@ -175,12 +194,13 @@ case "$profile" in
 	debian13-i486-scsi | debian13-i486-scsi92)
 		kind=boot98
 		sectors=32
+		kernel_extra_args=rootwait
 		default_rootfs="$repo/build/boot98/debian13-i486-root"
 		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
 		;;
 	debian13-i486-scsi55)
 		kind=boot98
-		kernel_extra_args=pc9801_scsi=55,irq=5,dma=0,clock=12
+		kernel_extra_args="rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=async-pio"
 		default_rootfs="$repo/build/boot98/debian13-i486-root"
 		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
 		;;
@@ -214,12 +234,23 @@ if test -n "$base_image"; then
 else
 	case "$profile" in
 		busybox-i386-h8 | busybox-i386-ide | busybox-i386-scsi | busybox-i386-scsi92 | busybox-i386-scsi55 | busybox-i486-h8)
-			CPU_FAMILY="$cpu_family" I386_CONSOLE=video JOBS="$jobs" \
-				ROOT_DEVICE="$root_device" \
-				KERNEL_EXTRA_ARGS="$kernel_extra_args" \
-				DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
-				SWAP_MB="$swap_mb" OUTPUT_IMAGE="$output" \
-				"$repo/scripts/build-i386-image.sh"
+			busybox_env=(
+				CPU_FAMILY="$cpu_family"
+				I386_CONSOLE=video
+				JOBS="$jobs"
+				ROOT_DEVICE="$root_device"
+				KERNEL_EXTRA_ARGS="$kernel_extra_args"
+				DISK_HEADS="$heads"
+				DISK_SECTORS="$sectors"
+				BOOT_MB="$boot_mb"
+				ROOT_MB="$root_mb"
+				SWAP_MB="$swap_mb"
+				OUTPUT_IMAGE="$output"
+			)
+			if test -n "$rootfs"; then
+				busybox_env+=(ROOT_STAGE="$rootfs" SKIP_ROOTFS_BUILD=1)
+			fi
+			env "${busybox_env[@]}" "$repo/scripts/build-i386-image.sh"
 			if test -n "${kernel:-}" && test "$kernel" != "$default_kernel"; then
 				DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
 					"$repo/scripts/update-kernel.sh" "$output" "$kernel"

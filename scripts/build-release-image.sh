@@ -55,11 +55,11 @@ canonical_name()
 		busybox-i386-scsi92)
 			printf '%s\n' linux-pc98-i386sx-busybox-scsi92.img ;;
 		debian13-i486-ide)
-			printf '%s\n' linux-pc98-i486-debian13-ide.img ;;
+			printf '%s\n' linux-pc98-i486dx-debian13-ide.img ;;
 		debian13-i486-scsi55)
-			printf '%s\n' linux-pc98-i486-debian13-scsi55.img ;;
+			printf '%s\n' linux-pc98-i486dx-debian13-scsi55.img ;;
 		debian13-i486-scsi92)
-			printf '%s\n' linux-pc98-i486-debian13-scsi92.img ;;
+			printf '%s\n' linux-pc98-i486dx-debian13-scsi92.img ;;
 		*) return 1 ;;
 	esac
 }

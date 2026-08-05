@@ -80,6 +80,7 @@ static int pc980155_irq_override = -1;
 static int pc980155_dma_override = -1;
 static u8 pc980155_clock = WD33C93_FS_8_10;
 static enum pc980155_profile pc980155_profile = PC980155_PROFILE_92;
+static bool pc980155_async_pio;
 
 module_param(io, uint, 0444);
 MODULE_PARM_DESC(io, "PC-9801-55/92 base I/O port (default: probe 0xcc0-0xcf0)");
@@ -147,6 +148,16 @@ static int __init pc980155_setup(char *value)
 			default:
 				pr_warn(DRV_NAME ": unsupported %s\n", option);
 			}
+		} else if (!strcmp(option, "mode=async-pio")) {
+			/*
+			 * Diagnostic and compatibility path for adapters whose DMA or
+			 * synchronous-transfer wiring is not yet known to work.  Data
+			 * travels through the WD33C93 WD_DATA register at SASR/SCMD;
+			 * this does not use QEMU's optional base+6 data port.
+			 */
+			pc980155_async_pio = true;
+		} else if (!strcmp(option, "mode=dma")) {
+			pc980155_async_pio = false;
 		} else if (*option) {
 			pr_warn(DRV_NAME ": unknown option %s\n", option);
 		}
@@ -461,14 +472,27 @@ static int __init pc980155_init(void)
 	pc980155_int_enable(regs);
 	wd33c93_init(pc980155_host, regs, pc980155_dma_setup,
 		      pc980155_dma_stop, pc980155_clock);
+	if (pc980155_async_pio) {
+		/*
+		 * wd33c93_init() deliberately owns the generic defaults.  Override
+		 * them before scsi_scan_host() starts the first command so every
+		 * target negotiates an offset of zero and transfer_bytes() selects
+		 * the standard WD33C93 polled-PIO path.
+		 */
+		hdata->wh.no_sync = 0xff;
+		hdata->wh.no_dma = 1;
+		for (i = 0; i < 8; i++)
+			hdata->wh.sync_stat[i] = SS_UNSET;
+	}
 
 	error = scsi_add_host(pc980155_host, NULL);
 	if (error)
 		goto err_irq_enabled;
 
-	pr_info(DRV_NAME ": I/O %#lx, IRQ %u, DMA %u, SCSI ID %u; %s profile\n",
+	pr_info(DRV_NAME ": I/O %#lx, IRQ %u, DMA %u, SCSI ID %u; %s profile, %s\n",
 		base_io, irq, dma, scsi_id,
-		pc980155_profile == PC980155_PROFILE_55 ? "55" : "92");
+		pc980155_profile == PC980155_PROFILE_55 ? "55" : "92",
+		pc980155_async_pio ? "asynchronous PIO" : "DMA");
 	pr_info(DRV_NAME ": probing SCSI targets 0-6; absent targets may take several seconds\n");
 	scsi_scan_host(pc980155_host);
 	return 0;

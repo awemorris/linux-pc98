@@ -29,7 +29,9 @@ Compatibility/developer commands:
   glibc FAMILY                build glibc for i386 or i486
   glibc-tests FAMILY          build glibc tests
   glibc-image FAMILY          build a glibc validation image
-  qemu-win64                  build Windows QEMU and dependencies
+  qemu-win64 COMMAND          build Windows QEMU and dependencies
+  virtpc98-win64 [COMMAND]    build virtpc98.exe with PyInstaller
+  win64-dist [build]          build the complete Windows ZIP distribution
   run [IMAGE]                 start qemu-pc98 with an image
   clean [current|stale]       clean active outputs or superseded build trees
 
@@ -139,6 +141,8 @@ case "$command" in
 	glibc-tests) "$repo/scripts/build-glibc-tests.sh" "$@" ;;
 	glibc-image) "$repo/scripts/build-glibc-validation-image.sh" "$@" ;;
 	qemu-win64) "$repo/scripts/build-qemu-win64.sh" "$@" ;;
+	virtpc98-win64) "$repo/scripts/build-virtpc98.sh" "$@" ;;
+	win64-dist) "$repo/scripts/build-win64-dist.sh" "$@" ;;
 	run) "$repo/scripts/run-qemu.sh" "$@" ;;
 	clean) "$repo/scripts/clean-build.sh" "$@" ;;
 	*)

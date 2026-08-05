@@ -93,9 +93,6 @@ dd if="$bootloader_dir/boot98-stage1.bin" of="$output" bs=512 seek=2 \
 	conv=notrunc status=none
 dd if="$bootloader_dir/boot98-chain-test.bin" of="$output" bs=512 \
 	seek="$ipl_start" count=1 conv=notrunc status=none
-printf '\016\000' | dd of="$output" bs=1 seek=496 count=2 \
-	conv=notrunc status=none
-
 python3 - "$output" "$root_last_cylinder" "$swap_start_cylinder" \
 	"$swap_last_cylinder" "$heads" "$sectors" <<'PY'
 import struct

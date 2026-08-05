@@ -903,6 +903,80 @@ static void findboot(void)
 		}
 }
 
+/* Fixed third-stage menu. FDD numbering is separate from the combined
+ * fixed-disk order, so IDE and SCSI media can both appear as HDD 1/2. */
+static int menu_device(int floppy, unsigned ordinal)
+{
+	unsigned found = 0;
+	for (unsigned i = 0; i < ho->device_count; i++) {
+		int is_floppy = devs[i].device_class == BOOT98_DEV_FDD;
+		if (is_floppy != floppy)
+			continue;
+		if (++found == ordinal)
+			return (int)i;
+	}
+	return -1;
+}
+
+static void chain_menu_device(int floppy, unsigned ordinal)
+{
+	int di = menu_device(floppy, ordinal);
+	if (di < 0) {
+		puts("Device is not present.\n");
+		return;
+	}
+	curdev = di;
+	curpart = -1;
+	kernel_name[0] = kernel_arg[0] = 0;
+	rq.status = 0;
+	rq.bios_id = devs[di].bios_id;
+	rq.lba = 0;
+	if (call(BOOT98_BIOS_CHAIN_BOOT) != 0)
+		puts("Boot failed.\n");
+}
+
+/* Return one for Auto and zero for an interactive Shell. Successful chain
+ * boots do not return through the BIOS gateway. */
+static int startup_menu(void)
+{
+	for (;;) {
+		clear_lower();
+		puts("BOOT98\n\n"
+		     "1) Auto\n"
+		     "2) FDD 1\n"
+		     "3) FDD 2\n"
+		     "4) HDD 1\n"
+		     "5) HDD 2\n"
+		     "6) Shell\n\n"
+		     "Select: ");
+		int k = key();
+		putc((char)k);
+		putc('\n');
+		switch (k) {
+		case '1':
+			return 1;
+		case '2':
+			chain_menu_device(1, 1);
+			break;
+		case '3':
+			chain_menu_device(1, 2);
+			break;
+		case '4':
+			chain_menu_device(0, 1);
+			break;
+		case '5':
+			chain_menu_device(0, 2);
+			break;
+		case '6':
+			return 0;
+		default:
+			continue;
+		}
+		puts("Press any key to return to the menu.\n");
+		key();
+	}
+}
+
 /* Validated Stage 1 handoff and top-level Stage 2 command loop. */
 void boot98_main(const struct boot98_handoff *h)
 {
@@ -915,27 +989,20 @@ void boot98_main(const struct boot98_handoff *h)
 	gw = (boot98_bios_gateway_t)h->bios_gateway;
 	findboot();
 	call(BOOT98_BIOS_DISPLAY_RESET);
+	int automatic = startup_menu();
 	clear_lower();
-	puts("BOOT98 Stage 2 (32-bit C)\n");
+	puts("BOOT98 Stage 3 (32-bit C)\n");
 	if (curpart >= 0) {
 		puts("source: ");
 		devname(curdev);
 		putc(':');
 		puts(parts[curpart].name);
 		putc('\n');
-		struct dent d;
-		if (findfile("BOOT98.CFG", &d) && d.size < CFG_MAX &&
-		    file_read(&d, 0, cfg, d.size)) {
-			cfg[d.size] = 0;
-			call(BOOT98_BIOS_DISPLAY_RESET);
-			puts("BOOT98.CFG found. Press any key to stop "
-			     "automatic boot...\n");
-			int cancel = 0;
-			for (unsigned i = 0; i < 2000 && !cancel; i++)
-				cancel = poll() >= 0;
-			if (!cancel)
-				command("source BOOT98.CFG");
-		}
+	}
+	if (automatic) {
+		char source_cfg[] = "source BOOT98.CFG";
+		if (curpart < 0 || !command(source_cfg))
+			puts("BOOT98.CFG automatic boot failed.\n");
 	}
 	for (;;) {
 		prompt();

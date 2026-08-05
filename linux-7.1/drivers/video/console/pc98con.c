@@ -32,12 +32,33 @@
 #define PC98_GDC_COMMAND	0x0062
 #define PC98_GDC_FIFO_FULL	0x02
 #define PC98_GDC_CSRW		0x49
+#define PC98_GDC_CSRFORM		0x4b
 #define PC98_GDC_TIMEOUT	100000
 #define PC98_IO_WAIT		0x005f
+#define PC98_CURSOR_RASTER	0x0f
+#define PC98_CURSOR_START	0x00
+#define PC98_CURSOR_END		0x7b
 
 static u16 *pc98_chars;
 static u16 *pc98_attrs;
 static struct vc_data *pc98_foreground;
+
+static bool pc98_gdc_write(u16 port, u8 value)
+{
+	int timeout;
+
+	for (timeout = PC98_GDC_TIMEOUT; timeout > 0; timeout--)
+		if (!(inb(PC98_GDC_STATUS) & PC98_GDC_FIFO_FULL))
+			break;
+	if (!timeout)
+		return false;
+
+	outb(value, port);
+	/* Port 0x5f provides the fixed GDC recovery delay used on PC-98. */
+	outb(0, PC98_IO_WAIT);
+	outb(0, PC98_IO_WAIT);
+	return true;
+}
 
 static inline u16 *pc98_char_at(unsigned int x, unsigned int y)
 {
@@ -151,37 +172,26 @@ static bool pc98con_scroll(struct vc_data *vc, unsigned int top,
 static void pc98con_cursor(struct vc_data *vc, bool enable)
 {
 	unsigned int address;
-	int timeout;
 
 	/*
-	 * Keep the cursor form selected by firmware.  The project's independent
-	 * kernel uses this CSRW sequence to move the text GDC cursor; disabling
-	 * the cursor is intentionally left alone until CSRFORM is implemented
-	 * from an independently documented source.
+	 * The loader is allowed to leave the firmware cursor disabled.  Program
+	 * CSRFORM explicitly so that taking over the console always restores a
+	 * visible 16-raster blinking cursor.  Clearing bit 7 hides it when the VT
+	 * core asks us to undraw the cursor.
 	 */
-	if (!enable)
+	if (!pc98_gdc_write(PC98_GDC_COMMAND, PC98_GDC_CSRFORM) ||
+	    !pc98_gdc_write(PC98_GDC_PARAMETER,
+			      PC98_CURSOR_RASTER | (enable ? 0x80 : 0)) ||
+	    !pc98_gdc_write(PC98_GDC_PARAMETER, PC98_CURSOR_START) ||
+	    !pc98_gdc_write(PC98_GDC_PARAMETER, PC98_CURSOR_END) ||
+	    !enable)
 		return;
 
 	address = vc->state.y * PC98_COLUMNS + vc->state.x;
-	for (timeout = PC98_GDC_TIMEOUT; timeout > 0; timeout--)
-		if (!(inb(PC98_GDC_STATUS) & PC98_GDC_FIFO_FULL))
-			break;
-	if (!timeout)
+	if (!pc98_gdc_write(PC98_GDC_COMMAND, PC98_GDC_CSRW) ||
+	    !pc98_gdc_write(PC98_GDC_PARAMETER, address & 0xff))
 		return;
-
-	/*
-	 * The real GDC needs recovery time even when FIFO-full is clear.  Port
-	 * 0x5f supplies a machine-defined fixed delay independent of CPU speed.
-	 */
-	outb(PC98_GDC_CSRW, PC98_GDC_COMMAND);
-	outb(0, PC98_IO_WAIT);
-	outb(0, PC98_IO_WAIT);
-	outb(address & 0xff, PC98_GDC_PARAMETER);
-	outb(0, PC98_IO_WAIT);
-	outb(0, PC98_IO_WAIT);
-	outb((address >> 8) & 0xff, PC98_GDC_PARAMETER);
-	outb(0, PC98_IO_WAIT);
-	outb(0, PC98_IO_WAIT);
+	pc98_gdc_write(PC98_GDC_PARAMETER, (address >> 8) & 0xff);
 }
 
 static bool pc98con_switch(struct vc_data *vc)

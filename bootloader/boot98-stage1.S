@@ -74,6 +74,58 @@
 	.set MENU_DATA_LBA,    12
 
 _start:
+	/*
+	 * A generic disk IPL loads only the LBA 2 entry sector at the normal
+	 * firmware address 1fc0:0000.  That sector owns its continuation format:
+	 * BOOT98 reloads LBA 2..15 at 1000:0000 and then enters the full real-mode
+	 * second stage.  Older development IPLs which preloaded the whole image at
+	 * 1000:0000 may still enter it directly.
+	 */
+	movw	%cs, %ax
+	cmpw	$0x1000, %ax
+	je	stage1_main
+	cli
+	cld
+	movb	$2, %cs:bootstrap_sector
+	movw	$0, %cs:bootstrap_offset
+bootstrap_load:
+	movw	$0x1000, %ax
+	movw	%ax, %es
+	movw	%cs:bootstrap_offset, %bp
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	movb	HANDOFF+8, %al
+	movb	$0x06, %ah
+	movw	$512, %bx
+	xorw	%cx, %cx
+	xorw	%dx, %dx
+	movb	%cs:bootstrap_sector, %dl
+	movw	HANDOFF+12, %si
+	movw	HANDOFF+14, %di
+	int	$0x1b
+	jc	bootstrap_failure
+	addw	$512, %cs:bootstrap_offset
+	incb	%cs:bootstrap_sector
+	cmpb	$16, %cs:bootstrap_sector
+	jb	bootstrap_load
+	ljmp	$0x1000, $stage1_main
+
+bootstrap_failure:
+	movb	$0x06, %al
+	outb	%al, $0x37
+1:
+	hlt
+	jmp	1b
+
+bootstrap_sector:
+	.byte	0
+bootstrap_offset:
+	.word	0
+
+	/* Keep the complete LBA 2 bootstrap in its first 512-byte sector. */
+	.org	512
+
+stage1_main:
 	cli
 	cld
 	movw	$STACK_SEG, %ax
@@ -100,6 +152,9 @@ _start:
 	popw	%ds
 	jne	bad_handoff
 
+	movw	$probing_label, %si
+	movw	$(6 * 160), %di
+	call	print_string
 	call	probe_all
 	pushw	%cs
 	popw	%ds
@@ -109,6 +164,8 @@ _start:
 	call	load_stage2
 	pushw	%cs
 	popw	%ds
+	cmpb	$1, stage2_valid
+	je	enter_stage2
 	/* Disk option ROMs need not preserve display state or extended segments. */
 	movb	$0x42, %ah
 	movb	$0xc0, %ch
@@ -1742,6 +1799,7 @@ banner_loader:
 	.byte	0
 banner_copyright:
 	.asciz	"Copyright (C) 2026 NEC FANS on X.com"
+probing_label:   .asciz "Probing disks..."
 found_label:     .asciz "Detected devices: "
 fd_name:         .asciz "fd"
 ide_name:        .asciz "ide"

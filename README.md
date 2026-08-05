@@ -220,6 +220,13 @@ created through a named profile, for example:
 ./build.sh image busybox-i386-h8
 ```
 
+The BusyBox H=8 profiles install the three-stage BOOT98 environment.  On the
+generic LBA 0 menu select `HDD 1` (item 2).  After the LBA 2 second stage has
+loaded `BOOT98.BIN`, select `Auto` (item 1) to execute `BOOT98.CFG` and boot
+`VMLINUX`.  Select `Shell` (item 6) to bypass automatic configuration and
+enter the interactive shell.  The headless `busybox-i386` smoke test injects
+the `HDD 1` and `Auto` selections through its private QEMU monitor.
+
 A test kernel can be installed while creating an image:
 
 ```sh

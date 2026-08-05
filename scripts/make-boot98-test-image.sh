@@ -27,7 +27,6 @@ dd if="$bootloader_dir/disk-ipl.bin" of="$output" bs=512 count=1 \
 dd if="$bootloader_dir/boot98-stage1.bin" of="$output" bs=512 seek=2 \
 	conv=notrunc status=none
 
-printf '\016\000' | dd of="$output" bs=1 seek=496 count=2 conv=notrunc status=none
 printf '\241\040\000\000\000\000\020\000\003\002\020\000\020\007\177\000BOOT            ' | \
 	dd of="$output" bs=1 seek=512 count=32 conv=notrunc status=none
 

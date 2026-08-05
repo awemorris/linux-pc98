@@ -1,164 +1,182 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * PC-98 fixed-disk IPL for the Mirai98 Linux disk.
+ * Generic PC-98 disk IPL selector.
+ * Copyright (C) 2026 Awe Morris
  *
- * The firmware loads LBA 0 and LBA 1 at 1fc0:0000.  LBA 1 contains the
- * sixteen-entry NEC98 partition table.  The gap at LBA 2..135 contains a
- * small FAT-aware second-stage loader; load it and transfer control.
+ * The ROM loads this 512-byte sector at 1fc0:0000.  It relocates itself,
+ * then loads either the first floppy boot sector or exactly one sector from
+ * LBA 2 of the current fixed disk back at the firmware load address.  Code
+ * installed at LBA 2 is therefore independent of BOOT98 and may implement
+ * its own continuation-sector format.
  */
 
 	.code16
 	.section .text
 	.globl _start
 
-	.set STAGE_SEG,        0x1000
-	.set HANDOFF,          0x0700
-	.set HANDOFF_MAGIC,    0x4839384c	/* "L98H" */
-	.set LOADER_SECTORS,   0x01f0
+	.set RELOC_SEG,       0x9000
+	.set LOAD_SEG,        0x1fc0
+	.set TEXT_SEG,        0xa000
+	.set ATTR_SEG,        0xa200
+	.set HANDOFF,         0x0700
+	.set HANDOFF_MAGIC,   0x4839384c /* "L98H" */
 
 _start:
-	jmp	ipl_start
+	jmp	relocate
 	nop
 	nop
 	.ascii	"IPL1"
 	.byte	0, 0, 0
 	.byte	0x1e
 
-ipl_start:
+relocate:
+	cli
 	cld
 	pushw	%cs
 	popw	%ds
+	movw	%si, saved_si
+	movw	%di, saved_di
+	movw	$RELOC_SEG, %ax
+	movw	%ax, %es
+	xorw	%si, %si
+	xorw	%di, %di
+	movw	$256, %cx
+	rep movsw
+	ljmp	$RELOC_SEG, $relocated
 
-	/*
-	 * Keep the firmware-provided stack.  Use segment zero explicitly for
-	 * the BIOS work area and place the handoff block at 0:0700; 0:0500
-	 * overlaps genuine IDE BIOS work data and makes AH=06h time out.
-	 */
-	pushw	%ds
-	xorw	%dx, %dx
-	movw	%dx, %ds
-	movw	%si, HANDOFF+12
-	movw	%di, HANDOFF+14
-	movb	0x0584, %dl
-	andb	$0x7f, %dl
-	movb	%dl, HANDOFF+8
-	movl	$HANDOFF_MAGIC, HANDOFF
-
-	/* Initialise the selected fixed disk and obtain its sector size. */
-	movb	0x0584, %al
-	orb	$0x80, %al
-	movw	$0x0100, %bx
-	movb	$0x84, %ah
-	int	$0x1b
+relocated:
+	pushw	%cs
 	popw	%ds
-	jc	1f
-	cmpw	$512, %bx
-	jne	1f
-	testb	%dh, %dh
-	jz	1f
-	testb	%dl, %dl
-	jz	1f
-	movb	%dh, %cs:disk_heads
-	movb	%dl, %cs:disk_sectors
-	movb	$0, %cs:disk_flags
-	jmp	2f
-1:
-	movb	$8, %cs:disk_heads
-	movb	$17, %cs:disk_sectors
-	movb	$1, %cs:disk_flags
-2:
-	pushw	%ds
-	xorw	%dx, %dx
-	movw	%dx, %ds
-	movb	%cs:disk_heads, %al
-	movb	%al, HANDOFF+9
-	movb	%cs:disk_sectors, %al
-	movb	%al, HANDOFF+10
-	movb	$1, HANDOFF+11
-	movb	%cs:disk_flags, %al
-	movb	%al, HANDOFF+16
-	popw	%ds
+	sti
+	movb	$0x42, %ah
+	movb	$0xc0, %ch
+	int	$0x18
+	movb	$0x40, %ah
+	int	$0x18
+	call	clear_menu
+	movw	$title_text, %si
+	movw	$(2 * 160), %di
+	call	print_string
+	movw	$fdd_text, %si
+	movw	$(4 * 160), %di
+	call	print_string
+	movw	$hdd_text, %si
+	movw	$(5 * 160), %di
+	call	print_string
 
-	/* Convert the selected partition's BIOS CHS using sensed geometry. */
-	movzbl	%cs:disk_heads, %edi
-	movzbl	%cs:disk_sectors, %ebx
-	imull	%ebx, %edi
-	movzwl	0x0206, %eax
-	imull	%edi, %eax
-	movzbl	0x0205, %ecx
-	imull	%ebx, %ecx
-	addl	%ecx, %eax
-	movzbl	0x0204, %ecx
-	addl	%ecx, %eax
-	pushw	%ds
-	xorw	%dx, %dx
-	movw	%dx, %ds
-	movl	%eax, HANDOFF+4
-	popw	%ds
+menu_input:
+	xorb	%ah, %ah
+	int	$0x18
+	cmpb	$'1', %al
+	je	boot_fdd1
+	cmpb	$'2', %al
+	je	boot_hdd1
+	jmp	menu_input
 
-	movl	$2, %eax
-	movw	LOADER_SECTORS, %si
-	movw	$STAGE_SEG, %dx
-	movw	%dx, %es
-	xorw	%bp, %bp
-
-load_stage:
-	testw	%si, %si
-	jz	stage_loaded
+boot_fdd1:
+	movb	$0x30, boot_id
+	call	prepare_target
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	movb	$0x30, %al
+	movb	$0x56, %ah
 	movw	$512, %bx
-	call	read_disk
+	movw	$0x0200, %cx
+	movw	$0x0001, %dx
+	movw	%cs:saved_si, %si
+	movw	%cs:saved_di, %di
+	int	$0x1b
 	jc	boot_failure
-	incl	%eax
-	addw	$512, %bp
-	decw	%si
-	jmp	load_stage
+	jmp	enter_target
 
-stage_loaded:
-	ljmp	$STAGE_SEG, $0
-
-read_disk:
-	pushl	%eax
-	pushw	%bx
-	pushw	%cx
-	pushw	%dx
-	pushw	%si
-	pushw	%di
+boot_hdd1:
 	pushw	%ds
-	pushw	%es
-	pushw	%bp
-	xorl	%edx, %edx
-	movzbl	%cs:disk_heads, %edi
-	movzbl	%cs:disk_sectors, %ecx
-	imull	%ecx, %edi
-	divl	%edi
-	movw	%ax, %cx
-	movl	%edx, %eax
-	xorl	%edx, %edx
-	movzbl	%cs:disk_sectors, %edi
-	divl	%edi
-	movb	%al, %dh
 	xorw	%ax, %ax
 	movw	%ax, %ds
 	movb	0x0584, %al
-	orb	$0x80, %al
-	movb	$0x06, %ah
-	movw	HANDOFF+12, %si
-	movw	HANDOFF+14, %di
-	int	$0x1b
-	pushfw
-	popw	%ax
-	movw	%ax, %cs:read_flags
-	popw	%bp
-	popw	%es
 	popw	%ds
-	popw	%di
-	popw	%si
-	popw	%dx
-	popw	%cx
-	popw	%bx
-	popl	%eax
-	pushw	%cs:read_flags
-	popfw
+	andb	$0x7f, %al
+	orb	$0x80, %al
+	movb	%al, boot_id
+	call	write_handoff
+	call	prepare_target
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	movb	%cs:boot_id, %al
+	movb	$0x06, %ah
+	movw	$512, %bx
+	xorw	%cx, %cx
+	movw	$0x0002, %dx /* C=0, H=0, zero-based sector 2 */
+	movw	%cs:saved_si, %si
+	movw	%cs:saved_di, %di
+	int	$0x1b
+	jc	boot_failure
+
+enter_target:
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	movb	%cs:boot_id, %al
+	movb	%al, 0x0584
+	movw	%cs:saved_si, %si
+	movw	%cs:saved_di, %di
+	sti
+	ljmp	$LOAD_SEG, $0
+
+prepare_target:
+	movw	$LOAD_SEG, %ax
+	movw	%ax, %es
+	xorw	%bp, %bp
+	ret
+
+write_handoff:
+	pushw	%es
+	xorw	%ax, %ax
+	movw	%ax, %es
+	movl	$0, %es:HANDOFF
+	movl	$0, %es:HANDOFF+4
+	movl	$0, %es:HANDOFF+8
+	movl	$0, %es:HANDOFF+12
+	movl	$HANDOFF_MAGIC, %es:HANDOFF
+	movb	%cs:boot_id, %al
+	movb	%al, %es:HANDOFF+8
+	movb	$1, %es:HANDOFF+11
+	movw	%cs:saved_si, %ax
+	movw	%ax, %es:HANDOFF+12
+	movw	%cs:saved_di, %ax
+	movw	%ax, %es:HANDOFF+14
+	popw	%es
+	ret
+
+clear_menu:
+	movw	$TEXT_SEG, %ax
+	movw	%ax, %es
+	movw	$ATTR_SEG, %ax
+	movw	%ax, %gs
+	xorw	%di, %di
+	movw	$(80 * 10), %cx
+1:
+	movb	$0x20, %es:(%di)
+	movb	$0, %es:1(%di)
+	movb	$0xe1, %gs:(%di)
+	addw	$2, %di
+	loop	1b
+	ret
+
+print_string:
+	movw	$TEXT_SEG, %ax
+	movw	%ax, %es
+	movw	$ATTR_SEG, %ax
+	movw	%ax, %gs
+1:
+	lodsb
+	testb	%al, %al
+	jz	2f
+	movb	%al, %es:(%di)
+	movb	$0, %es:1(%di)
+	movb	$0xe1, %gs:(%di)
+	addw	$2, %di
+	jmp	1b
+2:
 	ret
 
 boot_failure:
@@ -168,17 +186,19 @@ boot_failure:
 	hlt
 	jmp	1b
 
-read_flags:
+title_text:
+	.asciz	"PC-98 IPL"
+fdd_text:
+	.asciz	"1) FDD 1"
+hdd_text:
+	.asciz	"2) HDD 1"
+saved_si:
 	.word	0
-disk_heads:
-	.byte	0
-disk_sectors:
-	.byte	0
-disk_flags:
+saved_di:
+	.word	0
+boot_id:
 	.byte	0
 
-	.org	LOADER_SECTORS
-	.word	0			/* patched second-stage sector count */
 	.org	0x01fc
 	.word	9
 	.word	0xaa55

@@ -63,6 +63,15 @@ if [ ! -x "$root_stage/bin/busybox" ]; then
 	exit 1
 fi
 
+# Reapply the small runtime overlay even when an existing Buildroot target is
+# reused. This keeps init/profile fixes synchronized without forcing a costly
+# toolchain rebuild merely to regenerate the disk image.
+case "$console_mode" in
+	dual) runtime_overlay="$repo/rootfs/i386" ;;
+	video) runtime_overlay="$repo/rootfs/i386-video" ;;
+esac
+cp -a "$runtime_overlay"/. "$root_stage"/
+
 if [ -e "$output" ]; then
 	echo "Refusing to overwrite existing image: $output" >&2
 	exit 1
@@ -78,3 +87,13 @@ SWAP_MB="${SWAP_MB:-32}" \
 SMALL_EXT4="${SMALL_EXT4:-1}" \
 OUTPUT_IMAGE="$output" \
 	"$repo/scripts/build-images.sh"
+
+cfg="$(mktemp "${TMPDIR:-/tmp}/boot98-i${cpu_family}.XXXXXX")"
+trap 'rm -f "$cfg"' EXIT INT TERM
+printf '%s\n' \
+	"echo Booting Linux 7.1 i${cpu_family}..." \
+	'kernel VMLINUX' \
+	'arg root=/dev/hd98a2 rootfstype=ext4 rw' \
+	'boot' >"$cfg"
+DISK_HEADS="${DISK_HEADS:-8}" DISK_SECTORS="${DISK_SECTORS:-17}" \
+	"$repo/scripts/install-boot98-image.sh" "$output" "$boot_vmlinux" "$cfg"

@@ -6,15 +6,16 @@ DOWNLOAD_DIR="$BASE_DIR/build/downloads"
 SOURCE_DIR="$BASE_DIR/build/qemu-deps-src"
 DEPS_BUILD_DIR="$BASE_DIR/build/qemu-deps-build"
 ROOT_DIR="$BASE_DIR/build/qemu-deps-root"
-QEMU_SOURCE_DIR="$BASE_DIR/qemu-pc98-src"
+QEMU_SOURCE_DIR="$BASE_DIR/qemu-pc98"
 QEMU_BUILD_DIR="$BASE_DIR/build/qemu-win64"
 STAGE_DIR="$BASE_DIR/build/qemu-stage"
-DIST_DIR="$BASE_DIR/build/qemu-pc98-bin"
-PACKAGE_ASSET_DIR=${PACKAGE_ASSET_DIR:-"$BASE_DIR/package-assets"}
+DIST_DIR="$BASE_DIR/build/qemu-pc98-win64"
+VIRTPC98_EXE=${VIRTPC98_EXE:-"$BASE_DIR/build/virtpc98-win64/virtpc98.exe"}
+RELEASE_DIR="$BASE_DIR/build/releases"
 LICENSE_DIR="$BASE_DIR/build/licenses"
 STAMP_DIR="$ROOT_DIR/.stamps"
 CROSS_FILE="$BASE_DIR/build/cross-mingw.ini"
-CMAKE_TOOLCHAIN="$BASE_DIR/cmake/toolchain-mingw.cmake"
+CMAKE_TOOLCHAIN="$BASE_DIR/build/toolchain-mingw.cmake"
 PKG_CONFIG_WRAPPER="$ROOT_DIR/bin/x86_64-w64-mingw32-pkg-config"
 
 TARGET=x86_64-w64-mingw32
@@ -35,8 +36,8 @@ if (( detected_jobs > 16 )); then
 fi
 JOBS=${JOBS:-$detected_jobs}
 
-# shellcheck source=versions.conf
-. "$BASE_DIR/versions.conf"
+# shellcheck source=qemu-win64-versions.conf
+. "$BASE_DIR/scripts/qemu-win64-versions.conf"
 
 log()
 {
@@ -59,7 +60,8 @@ ensure_layout()
 {
     mkdir -p "$DOWNLOAD_DIR" "$SOURCE_DIR" "$DEPS_BUILD_DIR" \
         "$ROOT_DIR/bin" "$ROOT_DIR/lib/pkgconfig" "$ROOT_DIR/share/pkgconfig" \
-        "$STAMP_DIR" "$QEMU_BUILD_DIR" "$STAGE_DIR" "$DIST_DIR" "$LICENSE_DIR"
+        "$STAMP_DIR" "$QEMU_BUILD_DIR" "$STAGE_DIR" "$DIST_DIR" \
+        "$LICENSE_DIR" "$RELEASE_DIR"
 }
 
 write_toolchain_files()
@@ -137,7 +139,7 @@ check_tools()
     local tool
     for tool in "$CC" "$CXX" "$AR" "$RANLIB" "$STRIP" "$WINDRES" \
                 "$OBJDUMP" "$STRINGS" meson ninja cmake pkg-config python3 \
-                curl tar; do
+                curl tar file zip sha256sum; do
         require_command "$tool"
     done
 }
@@ -567,12 +569,11 @@ reset_owned_dir()
 
 copy_package_assets()
 {
-    local name
-    for name in README.txt virtpc98.py virtpc98.exe; do
-        [[ -f "$PACKAGE_ASSET_DIR/$name" ]] ||
-            die "package asset not found: $PACKAGE_ASSET_DIR/$name"
-        cp -p "$PACKAGE_ASSET_DIR/$name" "$DIST_DIR/$name"
-    done
+    [[ -f "$VIRTPC98_EXE" ]] ||
+        die "virtpc98.exe not found: $VIRTPC98_EXE (run: ./build.sh virtpc98-win64)"
+    cp -p "$BASE_DIR/scripts/README-win64.txt" "$DIST_DIR/README.txt"
+    cp -p "$BASE_DIR/scripts/virtpc98.py" "$DIST_DIR/virtpc98.py"
+    cp -p "$VIRTPC98_EXE" "$DIST_DIR/virtpc98.exe"
 }
 
 organize_pc98_roms()
@@ -581,7 +582,7 @@ organize_pc98_roms()
     local source="$DIST_DIR/share"
     local destination="$source/pc98bios"
     mkdir -p "$destination"
-    for name in pc98bios.bin pc98itf.bin pc98ide.bin pc98pci.bin \
+    for name in pc98bios.bin pc98itf.bin pc98ide.bin pc98scsi.bin pc98pci.bin \
                 pc98font.bin pc98basic.bin; do
         [[ -f "$source/$name" ]] ||
             die "installed PC-98 ROM not found: $source/$name"
@@ -623,7 +624,7 @@ make_dist()
     local exe
     local suffix
     local qemu_commit
-    local archive="$BASE_DIR/qemu-pc98-bin.zip"
+    local archive="$RELEASE_DIR/qemu-pc98-win64.zip"
     local -a exes=()
     local -a qemu_exes=()
 
@@ -650,7 +651,7 @@ make_dist()
     exes=("${qemu_exes[@]}" "$DIST_DIR/virtpc98.exe")
 
     log "Collecting recursive DLL dependencies"
-    python3 "$BASE_DIR/bundle-deps.py" \
+    python3 "$BASE_DIR/scripts/bundle-win64-deps.py" \
         --objdump "$OBJDUMP" \
         --search "$ROOT_DIR/bin" \
         --search "$ROOT_DIR/lib" \
@@ -690,7 +691,7 @@ make_dist()
     )
     rm -f "$archive"
     (
-        cd "$BASE_DIR"
+        cd "$(dirname "$DIST_DIR")"
         zip -X -q -r "$archive" "$(basename "$DIST_DIR")"
     )
     sha256sum "$archive" >"$archive.sha256"
@@ -742,7 +743,7 @@ verify()
     (cd "$DIST_DIR" && sha256sum -c SHA256SUMS)
 
     log "Checking bundled DLL closure"
-    python3 "$BASE_DIR/bundle-deps.py" \
+    python3 "$BASE_DIR/scripts/bundle-win64-deps.py" \
         --objdump "$OBJDUMP" \
         --search "$DIST_DIR" \
         --dest "$DIST_DIR" \
@@ -760,7 +761,7 @@ Commands:
   bootstrap  Install Debian host packages with apt
   deps       Download, verify and build target dependencies
   qemu       Cross-build i386 and x86_64 QEMU system executables
-  dist       Assemble qemu-pc98-bin/ and qemu-pc98-bin.zip
+  dist       Assemble qemu-pc98-win64/ and qemu-pc98-win64.zip
   verify     Inspect PE architecture, checksums and DLL closure
   all        Run deps, qemu, dist and verify
 EOF

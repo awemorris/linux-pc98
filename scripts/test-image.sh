@@ -157,9 +157,59 @@ fi
 qemu_args=(
 	-M pc9801 -cpu "$cpu" -m "$memory" -accel tcg -L "$bios_dir"
 	-nic none
-	-drive "if=ide,bus=0,unit=0,format=raw,file=$image"
-	-display none -serial stdio -monitor none -no-reboot
+	-drive "if=ide,bus=0,unit=0,format=raw,file=$image,snapshot=on"
+	-display none -serial stdio -no-reboot
 )
+
+monitor_dir=""
+injector_pid=""
+cleanup_monitor()
+{
+	if test -n "$injector_pid"; then
+		kill "$injector_pid" 2>/dev/null || true
+		wait "$injector_pid" 2>/dev/null || true
+	fi
+	test -z "$monitor_dir" || rm -rf -- "$monitor_dir"
+}
+
+# The generic LBA 0 IPL first asks for FDD 1 or HDD 1. BOOT98 then presents
+# its third-stage menu, where Auto executes BOOT98.CFG. Inject HDD 1 followed
+# by Auto over a private HMP socket before waiting for serial kernel output.
+boot98_stage1="$repo/bootloader/boot98-stage1.bin"
+boot98_image=0
+if test "$profile" = busybox-i386 && test -f "$boot98_stage1"; then
+	stage1_size="$(stat -c %s "$boot98_stage1")"
+	if cmp -s "$boot98_stage1" \
+		<(dd if="$image" bs=1 skip=1024 count="$stage1_size" status=none); then
+		boot98_image=1
+	fi
+fi
+if test "$boot98_image" -eq 1; then
+	command -v socat >/dev/null || {
+		echo "socat is required to select the BOOT98 test entry" >&2
+		exit 1
+	}
+	monitor_dir="$(mktemp -d "$work/monitor.XXXXXX")"
+	monitor_socket="$monitor_dir/hmp.sock"
+	qemu_args+=( -monitor "unix:$monitor_socket,server=on,wait=off" )
+	(
+		for unused in $(seq 1 100); do
+			test -S "$monitor_socket" && break
+			sleep 0.1
+		done
+		test -S "$monitor_socket" || exit 1
+		sleep 2
+		printf 'sendkey 2\n' | socat - "UNIX-CONNECT:$monitor_socket" \
+			>/dev/null
+		sleep 3
+		printf 'sendkey 1\n' | socat - "UNIX-CONNECT:$monitor_socket" \
+			>/dev/null
+	) &
+	injector_pid=$!
+	trap cleanup_monitor EXIT INT TERM
+else
+	qemu_args+=( -monitor none )
+fi
 if test -n "$log"; then
 	mkdir -p "$(dirname "$log")"
 	if test "$timeout_seconds" -gt 0; then

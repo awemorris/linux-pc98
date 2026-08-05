@@ -286,6 +286,8 @@ static int __init pc9801_92_init(void)
 		error = -ENODEV;
 		goto err_release_region;
 	}
+	pr_info(DRV_NAME ": probing controller at I/O 0x%x...\n",
+		PC9801_92_IO);
 
 	pc9801_92_host = scsi_host_alloc(&pc9801_92_template, 0);
 	if (!pc9801_92_host) {
@@ -304,6 +306,9 @@ static int __init pc9801_92_init(void)
 		goto err_put_host;
 
 	pr_info(DRV_NAME ": I/O 0x%x, polled PIO mode\n", PC9801_92_IO);
+	pr_info(DRV_NAME ": probing SCSI targets 0-%u; "
+		"absent targets may take several seconds\n",
+		PC9801_92_HOST_ID - 1);
 	scsi_scan_host(pc9801_92_host);
 	return 0;
 

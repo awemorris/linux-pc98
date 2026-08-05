@@ -1,6 +1,7 @@
 # BOOT98 Boot Environment Design
 
-Status: design draft; no BOOT98 implementation has been started.
+Status: initial three-stage boot chain implemented and QEMU-tested; cursor-key
+menu selection and hardware coverage remain future work.
 
 This document records the agreed design for a new PC-9800 boot environment.
 The design deliberately separates a small, firmware-facing boot core from a
@@ -14,8 +15,8 @@ boot extensions without making the disk IPL difficult to maintain.
 - Present a boot menu for disks and their PC-98 partitions.
 - Chain-load an existing disk IPL or partition PBR, including DOS partitions.
 - Locate a FAT16 partition named `BOOT` and load `BOOT98.BIN` from it.
-- Add `Shell` to the menu only after `BOOT98.BIN` has loaded successfully.
-- Automatically execute `BOOT98.CFG` when it exists.
+- Display `Auto` and `Shell` only after `BOOT98.BIN` has loaded successfully.
+- Execute `BOOT98.CFG` only when the user selects `Auto`.
 - Load an uncompressed Linux kernel and pass its command line.
 - Execute existing IPLware modules through the published IPLware ABI.
 - Load BOOT98 applets from the `BOOT` partition on demand.
@@ -58,16 +59,21 @@ traditional IPL/menu area.
 
 ## Boot architecture
 
-### Stage 0: disk IPL
+### Stage 0: generic disk IPL (`disk-ipl.bin`)
 
 - One 512-byte `IPL1` record.
 - Uses PC-98 BIOS disk services.
-- Loads the small boot core from the system area.
-- Contains only enough recovery behavior to report a load failure.
+- Displays `FDD 1` and `HDD 1`.
+- `FDD 1` loads and enters the first floppy's boot sector.
+- `HDD 1` loads exactly LBA 2 of the first fixed disk at `1fc0:0000`.
+- Has no BOOT98-specific sector count, filesystem code, or next-stage format.
+  Another project may install its own one-sector bootstrap at LBA 2.
 
-### Stage 1: small boot core
+### Stage 1: self-loading BOOT98 boot core (`boot98-stage1.bin`)
 
 - Target maximum: sectors 2-15, approximately 7 KiB.
+- Its LBA 2 sector loads the remainder through LBA 15 and enters the complete
+  stage at `1000:0000`.
 - Enumerates BIOS-visible devices.
 - Reads PC-98 partition tables.
 - Displays the basic device and partition menu.
@@ -78,11 +84,12 @@ traditional IPL/menu area.
   invalid.
 - Does not contain the interactive shell.
 
-### Stage 2: `BOOT98.BIN`
+### Stage 2: `BOOT98.BIN` (third on-disk execution stage)
 
 - Stored as a normal file in the FAT16 `BOOT` partition.
 - Loaded only after its header, size, and checksum have been validated.
-- Adds `Shell` to the existing boot menu.
+- Displays `Auto`, `FDD 1`, `FDD 2`, `HDD 1`, `HDD 2`, and `Shell`.
+- `Auto` executes `BOOT98.CFG`; `Shell` bypasses it and opens the prompt.
 - Implements the lower-half-screen interactive shell.
 - Implements FAT16 file access, `BOOT98.CFG`, the Linux loader, BOOT98
   applets, and IPLware compatibility.
@@ -99,9 +106,10 @@ The selected source must be displayed so that an unexpected duplicate
 
 ## User interface
 
-The upper half of the 80x25 text screen contains the device/partition menu.
-The lower half contains the shell when Stage 2 is available.  Pressing Escape
-from the shell returns to the upper menu; there is no `menu` command.
+The current Stage 2 menu uses number keys.  Cursor-key selection is planned
+but is not part of the first implementation.  The lower half contains the
+shell after `Shell` is selected.  Pressing Escape from the shell returns to
+the menu; there is no `menu` command.
 
 The prompt includes the current disk and partition and ends with the OpenBoot
 style `ok` marker:
@@ -110,15 +118,9 @@ style `ok` marker:
 ide0:BOOT ok
 ```
 
-Before automatic configuration execution, BOOT98 should provide a short
-cancel interval:
-
-```text
-BOOT98.CFG found. Press any key to stop automatic boot...
-```
-
-If no key is pressed, the file is executed.  If execution is cancelled or a
-command fails, the user is left in the interactive shell.
+Selecting `Auto` runs `source BOOT98.CFG`.  Selecting `Shell` never executes
+the file.  If automatic execution fails, the user is left in the interactive
+shell with the error visible.
 
 ## Device names and aliases
 
@@ -371,8 +373,10 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 
 ## Error behavior
 
-- A missing or invalid `BOOT98.BIN` leaves the Stage 1 device/PBR menu usable.
-- A missing `BOOT98.CFG` enters the Shell-enabled menu without error.
+- A missing or invalid `BOOT98.BIN` leaves the Stage 1 fallback device/PBR
+  menu usable.
+- A missing `BOOT98.CFG` selected through `Auto` reports the error and enters
+  the shell; selecting `Shell` is always independent of the file.
 - A syntax or command failure in automatic configuration stops execution and
   leaves the user in the shell with the failing line number displayed.
 - Disk reads are bounded and checked for BIOS carry/error status.
@@ -383,7 +387,7 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 
 ## Implementation phases
 
-### Phase 1: Stage 1 foundation
+### Phase 1: Stage 1 foundation (implemented)
 
 1. Define an internal BIOS device descriptor.
 2. Enumerate FDD, IDE, and SCSI through INT 1Bh SENSE.
@@ -391,7 +395,7 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 4. Implement the upper menu and PBR/disk-IPL chain loading.
 5. Verify primary and secondary IDE and PC-9801-92 SCSI on QEMU.
 
-### Phase 2: Stage 2 loading
+### Phase 2: Stage 2 loading (implemented)
 
 1. Find a `BOOT` partition.
 2. Implement the minimal FAT16 path needed to find `BOOT98.BIN`.
@@ -399,12 +403,12 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 4. Load and enter Stage 2 while retaining the device table and boot origin.
 5. Add `Shell` only after successful entry.
 
-### Phase 3: shell and configuration
+### Phase 3: shell and configuration (implemented baseline)
 
 1. Implement the lower-half text console and Escape return.
 2. Implement parser, command dispatch, and selection state.
 3. Add `devalias`, probe, `disk`, `part`, `ls`, and `cat`.
-4. Load all of `BOOT98.CFG`, offer cancellation, and execute it.
+4. Load all of `BOOT98.CFG` and execute it only through `Auto`.
 5. Integrate the existing ELF Linux loader with `kernel`, `arg`, and `boot`.
 
 ### Phase 4: extensions
@@ -481,11 +485,13 @@ the normal workflow is to prepare a reviewable change and let the user commit.
 
 Do not reopen these choices without new hardware evidence:
 
-1. BOOT98 is split into Stage 0, a small Stage 1, and FAT16-hosted
-   `BOOT98.BIN` Stage 2.  The full shell is not forced into the NEC system
-   area.
-2. Stage 1 retains a useful device/partition/PBR menu when Stage 2 is missing
-   or damaged.  `Shell` appears only after Stage 2 loads successfully.
+1. BOOT98 is split into the generic LBA 0 IPL, a self-loading LBA 2 boot core,
+   and FAT16-hosted `BOOT98.BIN`.  The full shell is not forced into the NEC
+   system area.
+2. The generic IPL loads exactly one LBA 2 sector and does not know BOOT98's
+   format or length.  The BOOT98 second stage retains a fallback
+   device/partition/PBR menu when `BOOT98.BIN` is missing or damaged.
+   `Auto` and `Shell` appear only after `BOOT98.BIN` loads successfully.
 3. BIOS-visible devices are presented as FDD 0-3, IDE 0-3, and SCSI 0-7.
 4. Disk access in the first boot-environment implementation uses INT 1Bh.
    Per-disk BIOS SENSE geometry is used to interpret each PC-98 partition
@@ -495,7 +501,8 @@ Do not reopen these choices without new hardware evidence:
    The PC-98 IDE drivers prefer LBA for data I/O and fall back to CHS when LBA
    is unavailable.
 6. `BOOT98.CFG` is a normal multi-line command file, loaded completely before
-   execution.  It is not restricted to a single kernel-command-line record.
+   execution.  It is executed by the `Auto` menu entry; `Shell` explicitly
+   bypasses it.  It is not restricted to a single kernel-command-line record.
 7. The shell is stateful.  The intended pattern is:
 
    ```text
@@ -517,25 +524,25 @@ Do not reopen these choices without new hardware evidence:
     geometry is established after DOS boot.  BOOT98 does not make that loader
     obsolete.
 
-### Immediate next work
+### Current implementation and next work
 
-Continue with Phase 1 only.  Keep the first review small enough to inspect:
+The initial chain is implemented and has reached a Linux 7.1 i386 BusyBox
+prompt under QEMU:
 
-1. Audit the existing `bootloader/` sources, linker layout, installation scripts,
-   and image-building scripts.  Report which pieces can be retained before
-   rewriting them.
-2. Define one internal BIOS-device descriptor containing at least device
-   class, display index, DA/UA or equivalent BIOS identifier, sector size,
-   logical H/S geometry, and boot-origin flags.
-3. Implement read-only INT 1Bh SENSE probing and bounded enumeration for FDD,
-   IDE, and PC-9801-92 SCSI devices.  A failed SENSE is absence, not a fatal
-   boot error.
-4. Refactor PC-98 partition parsing to consume geometry from the selected
-   device descriptor.  Do not use a global or fixed head count.
-5. Implement the basic upper-half menu and chain loading for disk IPLs and
-   partition PBRs.  Secondary IDE must be included.
-6. Build a test image and verify the smallest useful matrix before proceeding
-   to FAT16 Stage 2 loading.
+1. LBA 0 displays `FDD 1` and `HDD 1`; `HDD 1` enters LBA 2.
+2. The LBA 2 bootstrap loads the remainder of sectors 2-15.
+3. The boot core finds `BOOT`, validates and loads `BOOT98.BIN`.
+4. The third-stage menu separates `Auto` from the interactive `Shell`.
+5. The headless test injects `HDD 1`, then `Auto`, and verifies the BusyBox
+   prompt.
+
+The next work is deliberately hardware-facing:
+
+1. Verify this exact three-stage image on a real PC-98.
+2. Test FDD and HDD chain loading with NEC and compatible BIOSes.
+3. Extend the third-stage menu to cursor-key selection without changing the
+   on-disk stage boundaries.
+4. Retain the number-key path as a recovery interface.
 
 Minimum Phase 1 QEMU matrix:
 
@@ -570,9 +577,11 @@ Use the same SSH server and start the next Codex task with:
 > Work in `awe@10.0.10.101:~/linux-pc98`. Read
 > `bootloader/BOOT98-DESIGN.md` completely, especially the handoff section. Check
 > `git status` in both `~/linux-pc98` and `~/qemu-pc98`; preserve all existing
-> changes and untracked files. Begin only BOOT98 Phase 1, first auditing the
-> existing loader and reporting the proposed small first patch. Do not commit
-> or push until I review it.
+> changes and untracked files. The initial three-stage chain is implemented;
+> first inspect the current diff and reproduce the `busybox-i386` headless
+> smoke test. Continue with real-machine regression fixes or cursor-key menu
+> selection only after reporting the result. Do not commit or push until I
+> review it.
 
 If chat handoff is unavailable, the repository, this document, and current
 server-side worktree are the authoritative continuation state.

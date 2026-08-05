@@ -1,0 +1,13 @@
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin"
+export EDITOR="/bin/vi"
+
+# This image has only the root account. Avoid Buildroot's generic `id -u`
+# prompt test because very small historical BusyBox builds may omit id.
+if test -n "${PS1:-}"; then
+	export PS1='# '
+fi
+
+for profile_fragment in /etc/profile.d/*.sh; do
+	test -r "$profile_fragment" && . "$profile_fragment"
+done
+unset profile_fragment

@@ -114,11 +114,13 @@ default_swap=128
 
 case "$profile" in
 	busybox-i386-h8)
+		kind=boot98
 		cpu_family=386
 		default_swap=32
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
 		;;
 	busybox-i486-h8)
+		kind=boot98
 		cpu_family=486
 		default_swap=32
 		default_kernel="$repo/build/i486-video/kernel/vmlinux.boot"

@@ -4,31 +4,45 @@ BOOT98 build and test
 Build on the Debian host:
 
 ```sh
-cd ~/work/boot98-phase1
-make -C loader
+cd ~/linux-pc98
+make -C bootloader
 ```
 
-The build reports the Stage 1 size against its 7 KiB limit and produces
+The build reports the LBA 2 second-stage size against its 7 KiB limit and produces
 `bootloader/BOOT98.BIN`, the applet self-test, and both IPLware return-style
 self-tests.
 
-Create a basic FAT16 test disk:
+Create a named BusyBox image with the complete three-stage chain:
 
 ```sh
-BOOT98_STAGE2=bootloader/BOOT98.BIN \
-  scripts/make-boot98-test-image.sh build/boot98/boot98.img
+./build.sh image busybox-i386-h8 \
+  --output build/images/boot98-i386-test.raw
 ```
+
+The installer writes the generic menu IPL to LBA 0, the self-loading second
+stage to LBA 2, and `BOOT98.BIN` plus `BOOT98.CFG` to the FAT16 `BOOT`
+partition.  LBA 0 loads only one LBA 2 sector, so the LBA 2 program may be
+replaced by another project's compatible bootstrap.
 
 Optional environment variables add `BOOT98.CFG`, an ELF kernel, the applet,
 or IPLware tests: `BOOT98_CFG`, `BOOT98_KERNEL`, `BOOT98_APPLET`,
 `BOOT98_IPLWARE_BIN`, `BOOT98_IPLWARE_COM`, and `BOOT98_FILES`.
 
-QEMU uses `~/qemu-pc98/build-i386-port/qemu-system-i386`, machine
+Run the automated headless smoke test with:
+
+```sh
+./build.sh test busybox-i386 \
+  --image build/images/boot98-i386-test.raw --timeout 55
+```
+
+The test selects `HDD 1` at the generic IPL menu and `Auto` at the third-stage
+menu.  It succeeds only after the kernel reaches the BusyBox shell.  QEMU uses
+`~/qemu-pc98/build-i386-port/qemu-system-i386`, machine
 `pc9821`, and ROMs from `~/qemu-pc98/roms/pc98bios`. Always use
 `snapshot=on` for user-provided images and terminate only the exact QEMU
 instance started by the test.
 
-Validated cases include missing/corrupt Stage 2 fallback, FDD/IDE/SCSI and
+Earlier development tests covered missing/corrupt third-stage fallback, FDD/IDE/SCSI and
 secondary-IDE chain loading, non-default logical geometry, CFG execution,
 FAT listing, Escape return, applet CRC/entry execution, IPLware type 1 and
 type 2 return, and ELF Linux entry through root-device discovery.
@@ -37,13 +51,13 @@ The shell's `boot` command has two paths.  After `kernel`, it loads and enters
 the selected ELF32/i386 Linux image.  Without a kernel selection, it asks the
 real-mode gateway to chain-load the currently selected disk IPL or partition
 PBR; this uses the same native partition-table and BIOS work-area handoff as
-the Stage 1 upper menu.
+the second-stage fallback menu.
 
 The completed QEMU matrix uses snapshot mode and covers:
 
 - primary and secondary IDE, FDD plus IDE, non-default logical H/S geometry,
   and PC-9801-92 SCSI using the preserved real option ROM;
-- absent and checksum-invalid `BOOT98.BIN`, both retaining the Stage 1 menu;
+- absent and checksum-invalid `BOOT98.BIN`, both retaining the second-stage fallback menu;
 - FAT16 CFG/fragmented-file reads, device reprobe, listing and Escape return;
 - direct Stage 2-to-PBR chain boot (`BOOT98-CHAIN.CFG.test`);
 - applet header/CRC/services/return and IPLware type 1/type 2 register/return

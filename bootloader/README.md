@@ -1,17 +1,19 @@
 # Boot Loaders
 
-The qemu-pc98 raw disk uses two custom loader stages to bridge the PC-98
-firmware interface and the Linux 32-bit boot protocol. The PC/AT real-mode
-setup code is not executed.
+The release images use a three-stage PC-98 boot environment.  The first two
+stages use PC-98 BIOS disk services; the FAT16-hosted third stage provides the
+menu, interactive shell, and Linux ELF loader.  The PC/AT real-mode setup code
+is not executed.
 
 ## Disk layout
 
 | LBA or region | Contents                                           |
 |---------------|----------------------------------------------------|
-| 0             | `disk-ipl.bin`, with `IPL1` at offset 4            |
+| 0             | Generic 512-byte `disk-ipl.bin`, with `IPL1` at offset 4 |
 | 1             | PC-98 partition table: sixteen 32-byte entries     |
-| 2 through 135 | `fat-loader.bin` followed by unused space          |
-| Partition 1   | PC-98 DOS-compatible FAT16 with `VMLINUX` and optional `LOGO.RAW` |
+| 2 through 15  | Self-loading `boot98-stage1.bin` second stage       |
+| 16 through 135 | Reserved system area                              |
+| Partition 1   | PC-98 DOS-compatible FAT16 `BOOT` partition with `BOOT98.BIN`, `BOOT98.CFG`, and `VMLINUX` |
 | Partition 2   | ext4 Debian root filesystem                        |
 
 The disk IPL and partition PBR obtain the BIOS CHS geometry with
@@ -41,17 +43,37 @@ on-disk partition CHS fields. The geometry actually returned by BIOS SENSE,
 the BIOS drive number, and an ABI version are also passed to Linux in a
 `SETUP_PC98_DISK` setup-data node attached to `boot_params`.
 
-`disk-ipl.bin` obtains the first-partition LBA from the first entry in the
-LBA 1 partition table, then loads the second stage from LBA 2 at `1000:0000`.
-The first partition is marked active (`MID=0xa1`) and contains
-`partition-pbr.bin`. This provides a second boot path for a genuine PC-98
-disk IPL: selecting the Linux partition loads the same second stage from
-LBA 2. The image builder writes the second-stage sector count into both
-boot records. In the disk IPL, this count is kept outside the `IPL1` header
-at offset `0x1f0`, leaving the firmware-visible reserved bytes at offsets
-8 through 10 clear. The loaders do not assume that BIOS service
-`INT 1Bh/AH=06h`
-preserves general registers; they save and restore them around every read.
+`disk-ipl.bin` is deliberately generic.  It offers only `FDD 1` and `HDD 1`.
+The former loads the first floppy boot sector; the latter loads exactly the
+sector at LBA 2 of the first fixed disk and transfers control to it at the
+conventional `1fc0:0000` address.  It has no knowledge of BOOT98, FAT, or the
+length of the next program.  Another project may replace LBA 2 with its own
+one-sector bootstrap without changing LBA 0.
+
+The BOOT98 sector at LBA 2 is a self-loading bootstrap.  It reads the
+remaining reserved BOOT98 sectors (through LBA 15), enters the complete
+second stage at `1000:0000`, probes BIOS-visible disks, locates a FAT16
+partition named `BOOT`, and loads `BOOT98.BIN`.  `BOOT98.BIN` is the third
+stage and displays this menu:
+
+```text
+Auto
+FDD 1
+FDD 2
+HDD 1
+HDD 2
+Shell
+```
+
+`Auto` executes `BOOT98.CFG`.  `Shell` skips automatic configuration and
+enters the interactive command shell.  FDD and HDD entries chain-load the
+selected device's boot record.  Cursor-key selection is a planned user-
+interface improvement; the current menu uses number keys.
+
+The first partition remains marked active (`MID=0xa1`) and contains
+`partition-pbr.bin` for compatibility and recovery.  The loaders do not
+assume that BIOS service `INT 1Bh/AH=06h` preserves general registers; they
+save and restore them around every read.
 
 The FAT BPB uses the PC-98 fixed-disk convention of 1024-byte logical DOS
 sectors over 512-byte physical IDE sectors. Its offsets `0x3e..0x45`
@@ -61,9 +83,9 @@ the PBR and filesystem to turn the first partition into a DOS system
 partition; that also replaces the Linux kernel file, so Linux must be restored
 afterwards if both uses are desired.
 
-## FAT16 second stage
+## Legacy FAT16 Linux loader
 
-`fat-loader.bin` reads 512- or 1024-byte logical-sector BPBs and the root
+`fat-loader.bin` is retained for legacy images.  It reads 512- or 1024-byte logical-sector BPBs and the root
 directory from Partition 1, then searches for the 8.3 name `VMLINUX`. It
 also recognizes `BZIMAGE` on disks made before release 0.3.0. It follows the
 FAT16 cluster chain, so the kernel file may be
@@ -110,8 +132,8 @@ as the kernel starts and unregisters when the normal PC-98 console is ready.
 
 | Physical address | Contents                                           |
 |------------------|----------------------------------------------------|
-| `0x00000700`     | Handoff data from the disk IPL to the second stage |
-| `0x00010000`     | FAT16 second-stage loader                          |
+| `0x00000700`     | Handoff data between BOOT98 stages                 |
+| `0x00010000`     | BOOT98 second stage or legacy FAT16 loader         |
 | `0x00020000`     | 4096-byte `boot_params` structure                  |
 | `0x00021000`     | Kernel command line                                |
 | `0x00022000`     | `SETUP_PC98_DISK` setup-data node                   |
@@ -143,7 +165,7 @@ current restrictions.
 ## Building and updating
 
 ```sh
-make -C loader
+make -C bootloader
 ./build.sh rootfs debian13-i686
 ./build.sh image debian13-i686-h8
 ```

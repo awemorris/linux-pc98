@@ -279,6 +279,26 @@ or 16 for the controller's 8--10, 12--15, or 16--20 MHz range. With the 92
 profile, omitted IRQ and DMA values continue to be read from the board
 configuration registers and the clock defaults to the 8--10 MHz range.
 
+`mode=dma` and `mode=async-pio` select the data-transfer path.  The 92
+profile defaults to the historical DMA path.  The 55 release images pass
+`mode=async-pio`: on the physically tested WINnote98 the board's DMA
+gate never delivers a request to the PC-98 DMA controller (its count
+register stays at the programmed value), so the DMA path cannot work
+there, while asynchronous PIO boots reliably.  Boards with a working
+DMA path can still request `mode=dma` explicitly.
+
+A BlueSCSI target on PC-98 requires a `bluescsi.ini` on its SD card;
+without it the firmware's Apple-oriented default quirks stall the
+PC-9801-55/92 driver at the phase level:
+
+```ini
+[SCSI]
+Quirks = 0
+EnableSCSI2 = 0
+MaxSyncSpeed = 5
+Debug = 0
+```
+
 The BusyBox H=8 profiles install the replaceable BOOT98 environment. The
 silent `ipl-lba0.bin` enters `ipl-lba2.bin`; that selector loads `boot.sys`
 from the raw IPL area of the partition named BOOT. `boot.sys` then opens the

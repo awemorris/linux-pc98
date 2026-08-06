@@ -166,7 +166,7 @@ case "$profile" in
 		kind=boot98
 		cpu_family=386
 		root_device=PARTLABEL=LINUXROOT
-		kernel_extra_args="rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=dma"
+		kernel_extra_args="rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=async-pio"
 		boot_mb=8
 		root_mb=20
 		default_swap=8
@@ -200,7 +200,7 @@ case "$profile" in
 		;;
 	debian13-i486-scsi55)
 		kind=boot98
-		kernel_extra_args="rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=dma"
+		kernel_extra_args="rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=async-pio"
 		default_rootfs="$repo/build/boot98/debian13-i486-root"
 		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
 		;;

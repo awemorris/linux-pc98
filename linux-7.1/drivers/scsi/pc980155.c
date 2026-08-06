@@ -48,6 +48,8 @@
 #define PC9801_DMA_MASK                 0x0015
 #define PC9801_DMA_MODE                 0x0017
 #define PC9801_DMA_CLEAR_FF             0x0019
+#define PC9801_DMA_BOUND                0x0029
+#define PC9801_DMA_ACCESS               0x0439
 
 #ifndef CMD_PER_LUN
 #define CMD_PER_LUN                     2
@@ -253,6 +255,18 @@ static void pc980155_mask_dma(unsigned int channel)
 	outb(channel | 0x04, PC9801_DMA_MASK);
 }
 
+/* Raw current-count readback from the PC-98 DMA controller (N-1 semantics). */
+static unsigned int pc9801_dma_count_readback(unsigned int channel)
+{
+	u16 count_port = 0x0003 + channel * 4;
+	unsigned int remaining;
+
+	outb(0, PC9801_DMA_CLEAR_FF);
+	remaining = inb(count_port);
+	remaining |= inb(count_port) << 8;
+	return remaining;
+}
+
 static unsigned int pc980155_transfer_residual(wd33c93_regs regs)
 {
 	unsigned int residual;
@@ -289,6 +303,7 @@ static int pc980155_dma_setup(struct scsi_cmnd *cmd, int dir_in)
 			       virt_to_phys(hdata->dma_buffer), len, mode);
 	release_dma_lock(flags);
 	pc980155_dma_enable(host->base);
+	wd33c93_trace('D', inb(host->base), 0, 0, dir_in, cmd->cmnd[0], len);
 	return 0;
 }
 
@@ -296,12 +311,26 @@ static void pc980155_dma_stop(struct Scsi_Host *host,
 			      struct scsi_cmnd *cmd, int status)
 {
 	struct pc980155_hostdata *hdata = shost_priv(host);
+	unsigned int dmac_count;
 	unsigned long flags;
 
 	pc980155_dma_disable(host->base);
 	flags = claim_dma_lock();
 	pc980155_mask_dma(host->dma_channel);
+	dmac_count = pc9801_dma_count_readback(host->dma_channel);
 	release_dma_lock(flags);
+
+	/*
+	 * 'S' events carry the DMA-controller current-count readback in the
+	 * sr/phs fields (high/low byte, N-1 semantics: 0xffff after a fully
+	 * completed transfer).  A WD transfer counter of zero combined with a
+	 * DMAC count that has not expired identifies a stalled final host-side
+	 * DACK cycle.
+	 */
+	if (hdata->dma_len)
+		wd33c93_trace('S', inb(host->base), dmac_count >> 8, dmac_count,
+			      status, cmd ? cmd->cmnd[0] : 0xff,
+			      pc980155_transfer_residual(hdata->wh.regs));
 
 	if (cmd && status && hdata->dma_dir_in && hdata->dma_len) {
 		struct scsi_pointer *scsi_pointer = WD33C93_scsi_pointer(cmd);
@@ -492,6 +521,22 @@ static int __init pc980155_init(void)
 		pr_err(DRV_NAME ": unable to allocate IRQ %u: %d\n", irq, error);
 		goto err_buffer;
 	}
+
+	/*
+	 * Linux/98's boot98/setup.S programmed the PC-98 DMA controller before
+	 * kernel entry: it cleared 0x439 bit 2 (allow DMA above 1 MiB) and set
+	 * every channel's bank-boundary register to the 16 MiB auto-increment
+	 * mode, because the controller powers up in the 64 KiB boundary mode.
+	 * The BOOT98 loader restores only the 0x439 clear, so restore the bank
+	 * boundary programming here.  Also report the physical buffer address
+	 * and the 0x439 value so a photographed boot screen shows whether the
+	 * 1 MiB confinement is still active on the tested machine.
+	 */
+	for (i = 0; i < 4; i++)
+		outb(0x0c | i, PC9801_DMA_BOUND);
+	pr_info(DRV_NAME ": DMA buffer phys %#lx, port 0x439 reads %#x\n",
+		(unsigned long)virt_to_phys(hdata->dma_buffer),
+		inb(PC9801_DMA_ACCESS));
 
 	/* Match the Linux/98 driver: enable the board and let wd33c93.c reset
 	 * and initialise the controller before the SCSI mid-layer scans it.

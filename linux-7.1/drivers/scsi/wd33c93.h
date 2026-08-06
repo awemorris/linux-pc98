@@ -329,6 +329,15 @@ static inline struct scsi_pointer *WD33C93_scsi_pointer(struct scsi_cmnd *cmd)
 #define PR_STOP      1<<7
 
 
+/*
+ * Bounded event trace for the PC-9801-55/92 hardware investigation.  One
+ * entry is recorded per serviced WD interrupt ('I') and per board DMA
+ * setup/stop transition ('D'/'S'); the ring is printed only on unexpected
+ * disconnect, unknown interrupt, abort, or host reset.
+ */
+void wd33c93_trace(u8 ev, u8 asr, u8 sr, u8 phs, u8 state, u8 cdb, u32 count);
+void wd33c93_trace_dump(const char *reason);
+
 void wd33c93_init (struct Scsi_Host *instance, const wd33c93_regs regs,
          dma_setup_t setup, dma_stop_t stop, int clock_freq);
 int wd33c93_abort (struct scsi_cmnd *cmd);

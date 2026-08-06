@@ -73,6 +73,7 @@
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
+#include <linux/jiffies.h>
 #include <linux/blkdev.h>
 #include <linux/io.h>
 
@@ -162,6 +163,69 @@ static char *setup_strings;
 module_param(setup_strings, charp, 0);
 
 static void wd33c93_execute(struct Scsi_Host *instance);
+
+/*
+ * Bounded event ring for the PC-9801-55/92 hardware investigation.  Every
+ * serviced interrupt and board DMA transition is recorded; nothing is
+ * printed during normal operation.  The ring is dumped only on unexpected
+ * disconnect, unknown interrupt, abort, or host reset, so the GDC console
+ * shows the events immediately preceding a failure.
+ */
+#define WD33C93_TRACE_ENTRIES	32
+#define WD33C93_TRACE_DUMP	16
+
+struct wd33c93_trace_entry {
+	u32 seq;
+	u32 count;
+	u32 msec;
+	u8 ev, asr, sr, phs;
+	u8 state, cdb;
+};
+
+static struct wd33c93_trace_entry wd33c93_trace_ring[WD33C93_TRACE_ENTRIES];
+static u32 wd33c93_trace_seq;
+
+void
+wd33c93_trace(u8 ev, u8 asr, u8 sr, u8 phs, u8 state, u8 cdb, u32 count)
+{
+	struct wd33c93_trace_entry *e =
+		&wd33c93_trace_ring[wd33c93_trace_seq % WD33C93_TRACE_ENTRIES];
+
+	e->seq = wd33c93_trace_seq++;
+	e->msec = jiffies_to_msecs(jiffies);
+	e->ev = ev;
+	e->asr = asr;
+	e->sr = sr;
+	e->phs = phs;
+	e->state = state;
+	e->cdb = cdb;
+	e->count = count;
+}
+EXPORT_SYMBOL(wd33c93_trace);
+
+void
+wd33c93_trace_dump(const char *reason)
+{
+	u32 first = 0, i, prev_msec = 0;
+	bool have_prev = false;
+
+	if (wd33c93_trace_seq > WD33C93_TRACE_DUMP)
+		first = wd33c93_trace_seq - WD33C93_TRACE_DUMP;
+	printk("wd33c93 trace (%s), %u events:\n", reason, wd33c93_trace_seq);
+	for (i = first; i < wd33c93_trace_seq; i++) {
+		struct wd33c93_trace_entry *e =
+			&wd33c93_trace_ring[i % WD33C93_TRACE_ENTRIES];
+
+		if (e->seq != i)
+			continue;
+		printk(" %u:%c +%u asr=%02x sr=%02x phs=%02x st=%u cdb=%02x cnt=%u\n",
+		       e->seq, e->ev, have_prev ? e->msec - prev_msec : 0,
+		       e->asr, e->sr, e->phs, e->state, e->cdb, e->count);
+		prev_msec = e->msec;
+		have_prev = true;
+	}
+}
+EXPORT_SYMBOL(wd33c93_trace_dump);
 
 #ifdef CONFIG_WD33C93_PIO
 /*
@@ -486,6 +550,7 @@ wd33c93_execute(struct Scsi_Host *instance)
 	    (struct WD33C93_hostdata *) instance->hostdata;
 	const wd33c93_regs regs = hostdata->regs;
 	struct scsi_cmnd *cmd, *prev;
+	int i;
 
 	DB(DB_EXECUTE, printk("EX("))
 	if (hostdata->selecting || hostdata->connected) {
@@ -591,6 +656,17 @@ wd33c93_execute(struct Scsi_Host *instance)
 #endif
 
  no:
+
+	/*
+	 * An abnormally ended transfer (stalled DMA handshake, unexpected
+	 * disconnect) can leave residue in the WD33C93 data-register FIFO.
+	 * Without this flush the stale byte is emitted on the bus as the
+	 * first COMMAND-phase byte of the next command, shifting the whole
+	 * CDB; a physical PC-9801-55 trace showed REQUEST SENSE turning into
+	 * a bogus READ(6) exactly this way.
+	 */
+	for (i = 0; i < 16 && (read_aux_stat(regs) & ASR_DBR); i++)
+		read_wd33c93(regs, WD_DATA);
 
 	write_wd33c93(regs, WD_SOURCE_ID, scsi_pointer->phase ? SRCID_ER : 0);
 
@@ -837,6 +913,9 @@ wd33c93_intr(struct Scsi_Host *instance)
 	scsi_pointer = WD33C93_scsi_pointer(cmd);
 	sr = read_wd33c93(regs, WD_SCSI_STATUS);	/* clear the interrupt */
 	phs = read_wd33c93(regs, WD_COMMAND_PHASE);
+
+	wd33c93_trace('I', asr, sr, phs, hostdata->state,
+		      cmd ? cmd->cmnd[0] : 0xff, read_wd33c93_count(regs));
 
 	DB(DB_INTR, printk("{%02x:%02x-", asr, sr))
 
@@ -1264,6 +1343,8 @@ wd33c93_intr(struct Scsi_Host *instance)
 
 	case CSR_UNEXP_DISC:
 
+		wd33c93_trace_dump("CSR_UNEXP_DISC");
+
 /* I think I've seen this after a request-sense that was in response
  * to an error condition, but not sure. We certainly need to do
  * something when we get this interrupt - the question is 'what?'.
@@ -1355,6 +1436,7 @@ wd33c93_intr(struct Scsi_Host *instance)
 			       cmd ? scsi_pointer->this_residual : 0,
 			       cmd ? scsi_pointer->buffers_residual : 0,
 			       hostdata->disconnect, hostdata->level2);
+			wd33c93_trace_dump("unexpected CSR_DISC");
 			hostdata->state = S_UNCONNECTED;
 		}
 
@@ -1524,6 +1606,7 @@ wd33c93_intr(struct Scsi_Host *instance)
 
 	default:
 		printk("--UNKNOWN INTERRUPT:%02x:%02x:%02x--", asr, sr, phs);
+		wd33c93_trace_dump("unknown interrupt");
 		spin_unlock_irqrestore(&hostdata->lock, flags);
 	}
 
@@ -1608,6 +1691,7 @@ wd33c93_host_reset(struct scsi_cmnd * SCpnt)
 	spin_lock_irq(instance->host_lock);
 	hostdata = (struct WD33C93_hostdata *) instance->hostdata;
 
+	wd33c93_trace_dump("host reset");
 	printk("scsi%d: reset. ", instance->host_no);
 	disable_irq(instance->irq);
 
@@ -1691,6 +1775,7 @@ wd33c93_abort(struct scsi_cmnd * cmd)
 		uchar sr, asr;
 		unsigned long timeout;
 
+		wd33c93_trace_dump("abort");
 		printk("scsi%d: Aborting connected command - ",
 		       instance->host_no);
 

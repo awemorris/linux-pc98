@@ -500,6 +500,15 @@ static int __init pc980155_init(void)
 	pc980155_int_enable(regs);
 	wd33c93_init(pc980155_host, regs, pc980155_dma_setup,
 		      pc980155_dma_stop, pc980155_clock);
+	/*
+	 * The Linux/98 2.6.7 core defaulted to no_sync = 0xff ("sync
+	 * defaults to off"), so the historical PC-9801-55/92 driver always
+	 * ran asynchronous transfers.  The modern wd33c93 core leaves this
+	 * to the board driver (a2091/a3000/gvp11/mvme147 all set 0xff);
+	 * without it the DMA path negotiates synchronous transfers, which
+	 * these boards and the historical driver never used.
+	 */
+	hdata->wh.no_sync = 0xff;
 	if (pc980155_async_pio) {
 		/*
 		 * wd33c93_init() deliberately owns the generic defaults.  Override
@@ -513,7 +522,6 @@ static int __init pc980155_init(void)
 		 * connected also avoids losing the STATUS/MESSAGE IN transition on
 		 * early WD33C93/55-board combinations.
 		 */
-		hdata->wh.no_sync = 0xff;
 		hdata->wh.no_dma = 1;
 		hdata->wh.disconnect = DIS_NEVER;
 		hdata->wh.level2 = L2_NONE;

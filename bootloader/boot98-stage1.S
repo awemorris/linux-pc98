@@ -948,8 +948,12 @@ gateway_chain_partition_found:
 
 gateway_chain_jump:
 	cli
+	/*
+	 * Keep the complete BIOS unit number in the BIOS work area.  In
+	 * particular, 0x81 must remain HDD 2: storing only its low seven bits
+	 * makes NEC's DOS PBR continue loading MSDOS.SYS from HDD 1.
+	 */
 	movb	gateway_menu+MENU_BIOS_ID, %al
-	andb	$0x7f, %al
 	pushw	%ds
 	xorw	%dx, %dx
 	movw	%dx, %ds

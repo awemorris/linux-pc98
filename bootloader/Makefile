@@ -6,7 +6,8 @@ HOSTCC ?= cc
 ASFLAGS := --32
 STAGE2_CFLAGS := -m32 -march=i386 -Os -ffreestanding -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -Wall -Wextra -Werror
 SCRIPTS_DIR := ../scripts
-STAGE2_OBJS := boot98-stage2-entry.o boot98-stage2.o boot98-fs.o \
+STAGE2_OBJS := boot98-stage2-entry.o boot98-stage2.o boot98-console.o \
+	boot98-fs.o \
 	boot98-fat.o boot98-fat16.o boot98-image.o
 
 all: boot2.bin ipl-lba0.bin ipl-lba2.bin ipl-lba0.img ipl-lba2.img \
@@ -115,8 +116,15 @@ boot98-fdd-ipl.bin: boot98-fdd-ipl.elf
 boot98-stage2-entry.o: boot98-stage2-entry.S
 	$(AS) $(ASFLAGS) $< -o $@
 
-boot98-stage2.o: boot98-stage2.c boot98-abi.h boot98-fat16.h boot98-fs.h \
-	boot98-image.h
+boot98-messages.h: boot98-messages.txt \
+	$(SCRIPTS_DIR)/generate-boot98-messages.py
+	python3 $(SCRIPTS_DIR)/generate-boot98-messages.py $< $@
+
+boot98-stage2.o: boot98-stage2.c boot98-abi.h boot98-console.h \
+	boot98-messages.h boot98-fat16.h boot98-fs.h boot98-image.h
+	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
+
+boot98-console.o: boot98-console.c boot98-console.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
 boot98-fs.o: boot98-fs.c boot98-fs.h

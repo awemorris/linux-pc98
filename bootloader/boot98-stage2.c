@@ -6,9 +6,11 @@
  */
 
 #include "boot98-abi.h"
+#include "boot98-console.h"
 #include "boot98-fat16.h"
 #include "boot98-fs.h"
 #include "boot98-image.h"
+#include "boot98-messages.h"
 
 #define MAX_PARTS 16
 #define CFG_MAX 8192
@@ -17,17 +19,14 @@
 #define CMD_ADDR 0x71000U
 #define PC98_ADDR 0x72000U
 #define PC98_SETUP_NODE_SIZE 32U
-#define CONSOLE_FIRST_ROW 8
 #define STARTUP_TIMEOUT_SECONDS 3
 #define MAX_FIXED_DEVICES 12
 
 /*
- * Stage 2 runs without a C library or operating-system services.  Text and
- * attribute VRAM are therefore accessed directly.  The request object is the
- * sole mutable argument passed through the real-mode BIOS gateway in Stage 1.
+ * Stage 2 runs without a C library or operating-system services.  The request
+ * object is the sole mutable argument passed through the real-mode BIOS
+ * gateway in Stage 1.
  */
-static volatile uint16_t *const tv = (volatile uint16_t *)0xa0000;
-static volatile uint8_t *const av = (volatile uint8_t *)0xa2000;
 static boot98_bios_gateway_t gw;
 static const struct boot98_handoff *ho;
 static const struct boot98_device *devs;
@@ -35,10 +34,9 @@ static struct boot98_device discovered_devices[MAX_FIXED_DEVICES];
 static unsigned device_count;
 static struct boot98_bios_request rq;
 static uint8_t sec[512], cfg[CFG_MAX];
-static unsigned row = CONSOLE_FIRST_ROW, col;
 static uint32_t load_text_done, load_text_total;
 static uint32_t load_data_done, load_data_total;
-static unsigned load_text_row, load_data_row;
+static int load_progress_class = -1;
 
 struct part {
 	uint8_t valid, index;
@@ -96,102 +94,18 @@ static int strcopy(char *destination, const char *source, unsigned capacity)
 	return 1;
 }
 
-static uint8_t port_in8(uint16_t port)
-{
-	uint8_t value;
-	asm volatile("inb %w1, %0" : "=a" (value) : "Nd" (port));
-	return value;
-}
-
-static void port_out8(uint16_t port, uint8_t value)
-{
-	asm volatile("outb %0, %w1" : : "a" (value), "Nd" (port));
-}
-
-/* Wait for room in the uPD7220 FIFO before every command/parameter byte. */
-static int gdc_write(uint16_t port, uint8_t value)
-{
-	unsigned timeout;
-
-	for (timeout = 100000; timeout; timeout--)
-		if (!(port_in8(0x60) & 0x02))
-			break;
-	if (!timeout)
-		return 0;
-	port_out8(port, value);
-	return 1;
-}
-
-/* Keep a visible 16-raster blinking cursor at the direct-VRAM console
- * position. CSRW only moves a cursor whose CSRFORM may still be disabled by
- * firmware, so program both commands just like the Linux pc98con driver. */
 static void update_cursor(void)
 {
-	unsigned addr = row * 80 + col;
-
-	if (!gdc_write(0x62, 0x4b) ||
-	    !gdc_write(0x60, 0x8f) ||
-	    /* Bit 5 selects a steady cursor, avoiding an invisible blink phase. */
-	    !gdc_write(0x60, 0x20) ||
-	    !gdc_write(0x60, 0x7b) ||
-	    !gdc_write(0x62, 0x49) ||
-	    !gdc_write(0x60, (uint8_t)addr))
-		return;
-	gdc_write(0x60, (uint8_t)(addr >> 8));
+	boot98_console_update_cursor();
 }
 
-/* Sequential console below the Stage 1 probe message. */
-static void clear_lower(void)
-{
-	unsigned p;
-	for (p = CONSOLE_FIRST_ROW * 80; p < 25 * 80; p++) {
-		tv[p] = ' ';
-		av[p * 2] = 0xe1;
-	}
-	row = CONSOLE_FIRST_ROW;
-	col = 0;
-}
-static void nl(void)
-{
-	col = 0;
-	if (++row < 25)
-		return;
-	for (unsigned r = CONSOLE_FIRST_ROW; r < 24; r++)
-		for (unsigned c = 0; c < 80; c++) {
-			tv[r * 80 + c] = tv[(r + 1) * 80 + c];
-			av[(r * 80 + c) * 2] = av[((r + 1) * 80 + c) * 2];
-		}
-	for (unsigned c = 0; c < 80; c++) {
-		tv[24 * 80 + c] = ' ';
-		av[(24 * 80 + c) * 2] = 0xe1;
-	}
-	row = 24;
-}
 static void putc(char c)
 {
-	if (c == '\n') {
-		nl();
-		return;
-	}
-	if (c == '\r')
-		return;
-	if (c == '\b') {
-		if (col) {
-			--col;
-			tv[row * 80 + col] = ' ';
-		}
-		return;
-	}
-	if (col >= 80)
-		nl();
-	tv[row * 80 + col] = (uint8_t)c;
-	av[(row * 80 + col) * 2] = 0xe1;
-	col++;
+	boot98_console_putc((uint8_t)c);
 }
 static void puts(const char *s)
 {
-	while (*s)
-		putc(*s++);
+	boot98_console_puts_sjis((const uint8_t *)s);
 }
 static void hex8(uint8_t v)
 {
@@ -220,47 +134,35 @@ static unsigned kib(uint32_t bytes)
 	return (bytes >> 10) + !!(bytes & 1023);
 }
 
-/* Rewrite one fixed progress row so the transferred count visibly changes
- * instead of scrolling one message per disk read. */
-static void progress_line(unsigned target, const char *name,
-			  uint32_t done, uint32_t total)
+/* Rewrite the current terminal line without scrolling for each disk read. */
+static void show_load_progress(int load_class)
 {
-	unsigned saved_row = row, saved_col = col;
+	uint32_t done = load_class ? load_data_done : load_text_done;
+	uint32_t total = load_class ? load_data_total : load_text_total;
 
-	for (unsigned c = 0; c < 80; c++) {
-		tv[target * 80 + c] = ' ';
-		av[(target * 80 + c) * 2] = 0xe1;
-	}
-	row = target;
-	col = 0;
-	puts(name);
-	putc(' ');
+	if (load_progress_class >= 0 && load_progress_class != load_class)
+		putc('\n');
+	load_progress_class = load_class;
+	putc('\r');
+	boot98_console_clear_to_eol();
+	putc('\r');
+	puts((const char *)(load_class ? boot98_msg_data : boot98_msg_code));
 	dec(kib(done));
 	puts(" / ");
 	dec(kib(total));
 	puts(" KB");
-	row = saved_row;
-	col = saved_col;
-}
-
-static void show_load_progress(void)
-{
-	progress_line(load_text_row, "text", load_text_done, load_text_total);
-	progress_line(load_data_row, "data", load_data_done, load_data_total);
+	if (done >= total) {
+		putc('\n');
+		load_progress_class = -1;
+	}
 }
 
 static void begin_load_progress(uint32_t kernel_size)
 {
-	if (row > 21)
-		clear_lower();
-	puts("\nKernel size: ");
+	puts((const char *)boot98_msg_kernel_size);
 	dec(kib(kernel_size));
 	puts(" KB\n");
-	load_text_row = row;
-	nl();
-	load_data_row = row;
-	nl();
-	show_load_progress();
+	load_progress_class = -1;
 }
 
 /* Stage 1 BIOS gateway and little-endian disk-field helpers. */
@@ -368,6 +270,8 @@ static void prompt(void)
 }
 static int key(void)
 {
+	/* A blocking read must never leave the hardware cursor stale or hidden. */
+	update_cursor();
 	return (int)call(BOOT98_BIOS_KEY_READ);
 }
 static uint32_t applet_key(void)
@@ -596,7 +500,8 @@ static int run_iplware(const char *n)
 		return 0;
 	findboot();
 	call(BOOT98_BIOS_DISPLAY_RESET);
-	clear_lower();
+	boot98_console_reset();
+	boot98_console_set_mode(BOOT98_CONSOLE_TERMINAL);
 	puts("IPLware returned; devices reprobed.\n");
 	return 1;
 }
@@ -793,11 +698,13 @@ static int vmlinux_probe(struct boot98_file *file)
 
 static void load_progress(void *context, uint32_t bytes)
 {
-	if (*(const int *)context)
+	int load_class = *(const int *)context;
+
+	if (load_class)
 		load_data_done += bytes;
 	else
 		load_text_done += bytes;
-	show_load_progress();
+	show_load_progress(load_class);
 }
 
 static int vmlinux_load(struct boot98_file *file, const char *arguments)
@@ -1116,6 +1023,68 @@ static unsigned fixed_device_ordinal(int device)
 	return ordinal;
 }
 
+static int automatic_config_available(void)
+{
+	struct boot98_file file;
+
+	return curdev >= 0 && curpart >= 0 &&
+	       boot98_fs_open(&mounted_fs, "BOOT.CFG", &file);
+}
+
+static void draw_startup_header(void)
+{
+	boot98_console_write_at(0, 0, boot98_msg_machine);
+	boot98_console_write_at(2, 0, boot98_msg_loader);
+	boot98_console_write_at(3, 0, boot98_msg_copyright);
+	boot98_console_write_at(5, 0, boot98_msg_probing);
+}
+
+static void draw_startup_menu(void)
+{
+	int has_config = automatic_config_available();
+
+	for (unsigned menu_row = 6; menu_row <= 17; menu_row++)
+		boot98_console_clear_row(menu_row);
+	boot98_console_write_at(6, 0, (const uint8_t *)"");
+	dec(device_count);
+	puts((const char *)boot98_msg_found_suffix);
+	boot98_console_write_at(8, 0, boot98_msg_boot_from);
+	boot98_console_write_at(9, 0, boot98_msg_auto_prefix);
+	if (has_config) {
+		puts("HDD ");
+		dec(fixed_device_ordinal(curdev));
+		puts((const char *)boot98_msg_partition);
+		dec((unsigned)parts[curpart].index + 1);
+		puts((const char *)boot98_msg_run_cfg);
+	} else {
+		puts((const char *)boot98_msg_unavailable);
+	}
+	putc(')');
+
+	for (unsigned ordinal = 1; ordinal <= 4; ordinal++) {
+		if (menu_device(ordinal) < 0)
+			continue;
+		boot98_console_write_at(9 + ordinal, 0,
+					(const uint8_t *)"  ");
+		putc((char)('1' + ordinal));
+		puts((const char *)boot98_msg_fixed_disk_prefix);
+		dec(ordinal);
+	}
+	boot98_console_write_at(15, 0, boot98_msg_esc_shell);
+	boot98_console_write_at(17, 0, boot98_msg_select);
+	update_cursor();
+}
+
+static void accept_startup_selection(int key_code)
+{
+	if (key_code == 0x1b)
+		puts("ESC");
+	else if (key_code >= 0)
+		putc((char)key_code);
+	putc('\n');
+	boot98_console_set_mode(BOOT98_CONSOLE_TERMINAL);
+}
+
 static void chain_menu_device(unsigned ordinal)
 {
 	int di = menu_device(ordinal);
@@ -1140,45 +1109,48 @@ static void chain_menu_device(unsigned ordinal)
 static int startup_menu(void)
 {
 	int first = 1;
+
+	draw_startup_menu();
 	for (;;) {
-		clear_lower();
-		puts("\nBoot from:\n"
-		     "  1) Auto (HDD ");
-		if (curdev >= 0 && curpart >= 0) {
-			dec(fixed_device_ordinal(curdev));
-			puts(" partition ");
-			dec((unsigned)parts[curpart].index + 1);
-		} else {
-			puts("? partition ?");
-		}
-		puts(" boot.cfg)\n"
-		     "  2) HDD 1\n"
-		     "  3) HDD 2\n"
-		     "  4) HDD 3\n"
-		     "  5) HDD 4\n\n"
-		     "Press ESC key to fallback to shell.\n\n"
-		     "Select: ");
-		int k = first ? initial_key() : key();
+		int has_config = automatic_config_available();
+		int k = first && has_config ? initial_key() : key();
 		first = 0;
-		if (k < 0)
+		if (k < 0) {
+			accept_startup_selection(-1);
 			return 1;
-		if (k == 0x1b)
+		}
+		if (k == 0x1b) {
+			accept_startup_selection(k);
 			return 0;
-		putc((char)k);
-		putc('\n');
+		}
 		switch (k) {
 		case '1':
+			if (!has_config)
+				continue;
+			accept_startup_selection(k);
 			return 1;
 		case '2':
+			if (menu_device(1) < 0)
+				continue;
+			accept_startup_selection(k);
 			chain_menu_device(1);
 			break;
 		case '3':
+			if (menu_device(2) < 0)
+				continue;
+			accept_startup_selection(k);
 			chain_menu_device(2);
 			break;
 		case '4':
+			if (menu_device(3) < 0)
+				continue;
+			accept_startup_selection(k);
 			chain_menu_device(3);
 			break;
 		case '5':
+			if (menu_device(4) < 0)
+				continue;
+			accept_startup_selection(k);
 			chain_menu_device(4);
 			break;
 		default:
@@ -1186,6 +1158,9 @@ static int startup_menu(void)
 		}
 		puts("Press any key to return to the menu.\n");
 		key();
+		boot98_console_reset();
+		draw_startup_header();
+		draw_startup_menu();
 	}
 }
 
@@ -1212,13 +1187,14 @@ void boot98_main(const struct boot98_handoff *h)
 	}
 	devs = discovered_devices;
 	gw = (boot98_bios_gateway_t)h->bios_gateway;
-	discover_fixed_devices();
 	for (;;) {
-		findboot();
 		call(BOOT98_BIOS_DISPLAY_RESET);
+		boot98_console_reset();
+		draw_startup_header();
+		discover_fixed_devices();
+		curdev = curpart = -1;
+		findboot();
 		int automatic = startup_menu();
-		clear_lower();
-		puts("BOOT98 Stage 3 (32-bit C)\n");
 		if (curpart >= 0) {
 			puts("source: ");
 			devname(curdev);

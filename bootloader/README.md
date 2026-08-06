@@ -12,8 +12,8 @@ code is not executed.
 | 0 | Generic 512-byte `ipl-lba0.bin`, with `IPL1` at offset 4 |
 | 1 | PC-98 partition table: sixteen 32-byte entries |
 | 2 through 15 | Generic `ipl-lba2.bin` BOOT-partition selector |
-| BOOT partition IPL start | Raw `boot.sys` partition IPL and continuation |
-| BOOT partition data start | FAT16 with `boot.bin`, `boot.cfg`, `VMLINUX`, applets, and optional extension BIOS files |
+| BOOT partition start | One 1024-byte DOS-compatible FAT16 PBR/BPB reserved sector |
+| BOOT partition files | Contiguous `IO.SYS`, `boot.bin`, `boot.cfg`, `VMLINUX`, applets, and optional extension BIOS files |
 | Partition 2 | ext4 root filesystem |
 
 `ipl-lba0.bin` is deliberately generic and silent.  It immediately loads the
@@ -29,18 +29,19 @@ sectors are zero-filled.  A user may replace this complete image with the NEC
 fixed-disk boot menu or another project's IPL without changing the BOOT
 partition.
 
-`boot.sys` is not a FAT file.  The formatter writes it raw at the BOOT
-partition's IPL-start CHS and reserves the first complete partition cylinder
-for it.  Its 512-byte entry sector does not rely on private registers left by
-`ipl-lba2.bin`: it recovers the selected fixed disk from the BIOS work area,
-reads LBA 1 again, finds BOOT, and reloads the complete 14-sector partition
-IPL at `1000:0000`.  Consequently the same BOOT partition can be selected by
-the distributed stubs or by the NEC fixed-disk boot menu.
+The BOOT volume follows the DOS `IO.SYS` model. Its one 1024-byte reserved
+logical sector contains only the PBR/BPB and is not part of the FAT cluster
+area. Firmware may load only its first physical 512 bytes, so that half reads
+the second half explicitly. The complete PBR then finds `IO.SYS` in the FAT16
+root, loads the contiguous file at `1000:0000`, and enters it. No prefix of
+`IO.SYS` is duplicated in the reserved sector. Consequently the same BOOT
+partition can be selected by the distributed stubs or the NEC fixed-disk
+boot menu, while DOS mounts it as an ordinary volume.
 
-The complete real-mode partition IPL probes BIOS-visible disks with
+The complete real-mode `IO.SYS` probes BIOS-visible disks with
 `INT 1Bh/AH=84h`, uses each disk's returned logical CHS to interpret its
-PC-98 partition table, opens the FAT16 filesystem at the BOOT entry's data
-start, and loads `boot.bin`.  It does not program ATA or SCSI registers and is
+PC-98 partition table, opens the FAT16 filesystem at the BOOT entry's start,
+and loads `boot.bin`.  It does not program ATA or SCSI registers and is
 therefore independent of the controller used by the BIOS.
 
 Images created without geometry options use the BIOS 8/17 layout, so
@@ -82,8 +83,9 @@ The Linux loader prints the ELF file size and updates separate `text` and
 The BOOT partition is marked active and bootable as a DOS FAT16 volume
 (`MID=0xa1`, `SID=0x91`). This makes it visible from DOS and selectable by
 the NEC fixed-disk boot menu. The image formatter is
-intentionally destructive to that partition: it reserves its first cylinder,
-recreates FAT16 at the data-start CHS, installs matching `boot.sys`,
+intentionally destructive to that partition: it creates one 1024-byte FAT
+reserved sector at the common IPL/data-start CHS, installs the matching PBR
+and contiguous `IO.SYS`,
 `boot.bin`, `boot.cfg`, and `VMLINUX`, and leaves root, swap, LBA 0, and
 LBA 2–15
 untouched. Pass `--install-disk-stubs` only when the distributed LBA 0 and
@@ -91,9 +93,10 @@ LBA 2–15 images should replace the existing disk IPL. The loaders do not
 assume that BIOS service `INT 1Bh/AH=06h`
 preserves general registers; they save and restore them around every read.
 
-The current BOOT filesystem made with mtools uses 512-byte FAT sectors over
-512-byte physical sectors. The native PC-98 table, rather than the FAT BPB,
-separates the raw partition IPL start from the FAT data start.
+The current BOOT filesystem uses 1024-byte FAT logical sectors over the
+PC-98 BIOS's 512-byte physical transfers. The native PC-98 partition table
+records the same CHS for the BOOT IPL and filesystem start so NEC MS-DOS can
+mount the volume.
 
 ## Legacy FAT16 Linux loader
 
@@ -145,7 +148,7 @@ as the kernel starts and unregisters when the normal PC-98 console is ready.
 | Physical address | Contents                                           |
 |------------------|----------------------------------------------------|
 | `0x00000700`     | Handoff data between BOOT98 stages                 |
-| `0x00010000`     | Complete `boot.sys` or legacy FAT16 loader         |
+| `0x00010000`     | Complete `IO.SYS` or legacy FAT16 loader           |
 | `0x00020000`     | 4096-byte `boot_params` structure                  |
 | `0x00021000`     | Kernel command line                                |
 | `0x00022000`     | `SETUP_PC98_DISK` setup-data node                   |
@@ -177,6 +180,30 @@ uses DOS file I/O to load an uncompressed `VMLINUX`, passes the current INT
 protected mode before entering the kernel. See `bootloader/dos/README.md` for its
 current restrictions.
 
+## DOS disk installer
+
+`bootloader/dos/inst.exe` is a deliberately small installer. It does not
+partition or format a disk. It has
+only three subcommands:
+
+```dos
+INST /LBA0
+INST /LBA2
+INST /PART C:
+```
+
+`/LBA0` copies the adjacent `IPL-LBA0.IMG` to LBA 0. `/LBA2` copies
+`IPL-LBA2.IMG` to LBA 2 through 15. Both commands identify the physical IDE
+disk that contains the current DOS drive. `/PART C:` maps C: back to its
+PC-98 partition, copies adjacent `IO.SYS` as a normal FAT file, verifies that
+its cluster chain is contiguous, and installs adjacent `IPL-PART.IMG` in the
+one-logical-sector PBR area. It preserves the existing BPB and refuses a
+volume that is not named `BOOT` or is not FAT16 with 1024-byte sectors.
+
+All writes use PC-98 BIOS `INT 1Bh` absolute CHS access and are read back for
+verification. `BOOT.BIN`, `BOOT.CFG`, `VMLINUX`, and other contents are copied
+normally with DOS commands.
+
 ## Building and updating
 
 ```sh
@@ -195,7 +222,7 @@ BOOT_LOGO=bootloader/boot-logo.raw \
 ```
 
 `update-kernel.sh` preserves the existing disk IPL code at LBA 0 and LBA 2–15, installs matching
-`boot.sys`, recreates the BOOT FAT16 filesystem, and stores `boot.bin`,
+`IO.SYS`, recreates the BOOT FAT16 filesystem, and stores `boot.bin`,
 `boot.cfg`, and the ELF input as `VMLINUX`. It does not modify root or swap
 partitions. Canonical release-image profiles additionally install
 `ipl-lba0.bin` and `ipl-lba2.bin`. Image creation rejects compressed or other non-ELF kernel files;

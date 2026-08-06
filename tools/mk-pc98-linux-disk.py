@@ -35,6 +35,23 @@ def read_file(path):
         return stream.read()
 
 
+def read_legacy_pbr(path):
+    """Return the first physical sector of a BOOT98 PBR template.
+
+    The current BOOT98 partition loader occupies one 1024-byte PC-98 DOS
+    logical sector.  This image builder still creates an intermediate FAT16
+    volume with its historical 512-byte PBR; install-boot98-image.sh replaces
+    that volume and installs the complete 1024-byte PBR afterwards.  Accept
+    both template sizes here so the intermediate image remains buildable.
+    """
+    pbr = bytearray(read_file(path))
+    if len(pbr) not in (SECTOR_SIZE, PC98_DOS_SECTOR_SIZE):
+        raise RuntimeError("partition PBR must be 512 or 1024 bytes")
+    if pbr[0x1FE:0x200] != b"\x55\xAA":
+        raise RuntimeError("partition PBR must have 55AA at offset 510")
+    return pbr[:SECTOR_SIZE]
+
+
 def chs_lba(cylinder, head=0, sector=0):
     return (cylinder * HEADS + head) * SECTORS + sector
 
@@ -334,9 +351,7 @@ def create(args):
     ipl = bytearray(read_file(args.ipl))
     if len(ipl) != SECTOR_SIZE or ipl[4:8] != b"IPL1":
         raise RuntimeError("disk IPL must be 512 bytes with IPL1 at offset 4")
-    pbr = bytearray(read_file(args.pbr))
-    if len(pbr) != SECTOR_SIZE or pbr[0x1FE:0x200] != b"\x55\xAA":
-        raise RuntimeError("partition PBR must be 512 bytes with 55AA")
+    pbr = read_legacy_pbr(args.pbr)
     loader = read_file(args.loader)
     loader_sectors = math.ceil(len(loader) / SECTOR_SIZE)
     if not 0 < loader_sectors <= chs_lba(1) - LOADER_LBA:
@@ -426,9 +441,7 @@ def update_kernel(args):
     ipl = bytearray(read_file(args.ipl))
     if len(ipl) != SECTOR_SIZE or ipl[4:8] != b"IPL1":
         raise RuntimeError("disk IPL must be 512 bytes with IPL1 at offset 4")
-    pbr = bytearray(read_file(args.pbr))
-    if len(pbr) != SECTOR_SIZE or pbr[0x1FE:0x200] != b"\x55\xAA":
-        raise RuntimeError("partition PBR must be 512 bytes with 55AA")
+    pbr = read_legacy_pbr(args.pbr)
     loader = read_file(args.loader)
     loader_sectors = math.ceil(len(loader) / SECTOR_SIZE)
     struct.pack_into("<H", ipl, IPL_LOADER_SECTORS, loader_sectors)

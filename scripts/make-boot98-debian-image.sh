@@ -42,9 +42,12 @@ case "$heads:$sectors:$swap_mb" in
 		;;
 esac
 
-# BOOT98 uses BIOS logical CHS for the PC-98 partition table.  The first two
-# cylinders are the NEC system area and the beginning of the FAT16 BOOT
-# volume.  Keep the original H=8/S=17 image's BOOT and root byte capacities,
+# BOOT98 uses BIOS logical CHS for the PC-98 partition table.  Cylinder zero
+# is the NEC system area and the FAT16 BOOT volume begins at cylinder one.
+# The FAT16 PBR occupies one 1024-byte reserved sector and IO.SYS is the first
+# ordinary FAT file, so DOS and the partition IPL use the same start CHS.
+# Keep the original H=8/S=17 image's BOOT and root byte
+# capacities,
 # then round each one up to whole cylinders for the selected geometry.  Fixed
 # ending cylinder numbers would make an H=8/S=32 SCSI image about 1.88 times
 # larger than the IDE image even though both contain the same files.
@@ -54,7 +57,7 @@ baseline_cylinder_bytes=$((8 * 17 * 512))
 boot_target_bytes=$((2047 * baseline_cylinder_bytes))
 root_target_bytes=$((13371 * baseline_cylinder_bytes))
 
-boot_start_cylinder=2
+boot_start_cylinder=1
 boot_cylinders=$(((boot_target_bytes + cylinder_bytes - 1) / cylinder_bytes))
 boot_last_cylinder=$((boot_start_cylinder + boot_cylinders - 1))
 root_start_cylinder=$((boot_last_cylinder + 1))
@@ -66,8 +69,6 @@ swap_cylinders=$(((swap_mb * 1024 * 1024 + cylinder_bytes - 1) /
 swap_last_cylinder=$((swap_start_cylinder + swap_cylinders - 1))
 total_cylinders=$((swap_last_cylinder + 1))
 
-ipl_start=$((1 * cylinder_sectors))
-boot_start=$((boot_start_cylinder * cylinder_sectors))
 root_start=$((root_start_cylinder * cylinder_sectors))
 boot_sectors=$((boot_cylinders * cylinder_sectors))
 root_sectors=$((root_cylinders * cylinder_sectors))
@@ -95,15 +96,14 @@ cleanup()
 }
 trap cleanup EXIT INT TERM
 
-make -C "$bootloader_dir" ipl-lba0.bin ipl-lba2.bin boot.sys boot.bin
+make -C "$bootloader_dir" ipl-lba0.bin ipl-lba2.bin \
+	partition-pbr.bin IO.SYS boot.bin
 mkdir -p "$(dirname "$output")" "$mount_dir"
 truncate -s "$total_bytes" "$output"
 dd if="$bootloader_dir/ipl-lba0.bin" of="$output" bs=512 count=1 \
 	conv=notrunc status=none
 dd if="$bootloader_dir/ipl-lba2.bin" of="$output" bs=512 seek=2 count=14 \
 	conv=notrunc status=none
-dd if="$bootloader_dir/boot.sys" of="$output" bs=512 \
-	seek="$ipl_start" conv=notrunc status=none
 python3 - "$output" "$boot_last_cylinder" "$root_start_cylinder" \
 	"$root_last_cylinder" "$swap_start_cylinder" \
 	"$swap_last_cylinder" "$heads" "$sectors" <<'PY'
@@ -136,7 +136,7 @@ def entry(flags, kind, first_ipl, first_data, last, name):
 
 
 table = bytearray(512)
-table[0:32] = entry(0xA1, 0x91, 1, 2, boot_last, "BOOT")
+table[0:32] = entry(0xA1, 0x91, 1, 1, boot_last, "BOOT")
 table[32:64] = entry(0x21, 0x83, root_start, root_start, root_last,
                      "DEBIAN13")
 table[64:96] = entry(0x21, 0x82, swap_start, swap_start, swap_last,
@@ -146,17 +146,11 @@ with open(image, "r+b") as stream:
     stream.write(table)
 PY
 
-mformat -i "$output@@$((boot_start * 512))" -c 8 -h "$heads" \
-	-s "$sectors" -T "$boot_sectors" -v BOOT ::
 printf '%s\n' \
 	'echo Booting Debian 13 i486...' \
 	'kernel VMLINUX' \
 	"arg root=/dev/sda2 rootfstype=ext4 rw${kernel_extra_args:+ $kernel_extra_args}" \
 	'boot' >"$cfg"
-mcopy -i "$output@@$((boot_start * 512))" \
-	"$bootloader_dir/boot.bin" ::BOOT.BIN
-mcopy -i "$output@@$((boot_start * 512))" "$kernel" ::VMLINUX
-mcopy -i "$output@@$((boot_start * 512))" "$cfg" ::BOOT.CFG
 
 truncate -s "$root_bytes" "$root_image"
 mkfs.ext4 -q -F -L DEBIAN13 "$root_image"
@@ -204,6 +198,10 @@ truncate -s "$swap_bytes" "$swap_image"
 mkswap --quiet --label PC98SWAP "$swap_image"
 dd if="$swap_image" of="$output" bs=512 seek="$swap_start" \
 	conv=notrunc,sparse status=progress
+
+DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
+	"$repo/scripts/install-boot98-image.sh" --install-disk-stubs \
+	"$output" "$kernel" "$cfg"
 sync
 
 sha256sum "$output"

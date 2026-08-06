@@ -6,7 +6,7 @@
  */
 
 /*
- * BOOT98 partition IPL (boot.sys).
+ * BOOT98 FAT16 system loader (IO.SYS).
  *
  * Stage 0 currently reuses disk-ipl.S.  This stage stays in real mode,
  * enumerates the bounded BIOS device namespace with INT 1Bh SENSE, and
@@ -14,7 +14,7 @@
  *
  * Control flow:
  *
- *   partition IPL -> reload boot.sys from the BOOT IPL area
+ *   FAT16 PBR -> load contiguous IO.SYS from the FAT filesystem
  *   -> probe BIOS devices -> locate FAT16 BOOT/boot.bin
  *   -> validate Stage 2 -> show menu
  *   -> chain-load an IPL/PBR or enter 32-bit Stage 2.
@@ -77,10 +77,20 @@
 
 _start:
 	/*
+	 * Keep the old raw partition-loader entry as a compatibility path.  The
+	 * normal FAT16 PBR now loads this complete IO.SYS at 1000:0000, which
+	 * immediately branches to stage1_main below.
+	 */
+	jmp	bootstrap_entry
+	nop
+	.org	0x003e
+
+bootstrap_entry:
+	/*
 	 * A fixed-disk menu loads only this partition IPL sector at the normal
 	 * firmware address 1fc0:0000.  Do not depend on its private register
 	 * contract: recover the boot drive from the BIOS work area, find BOOT in
-	 * the native partition table, and reload the complete boot.sys image from
+	 * the native partition table, and reload the complete IO.SYS image from
 	 * that partition's IPL-start CHS.  Development media may still preload the
 	 * image at 1000:0000 and enter it directly.
 	 */

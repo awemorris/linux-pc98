@@ -8,10 +8,10 @@ cd ~/linux-pc98
 make -C bootloader
 ```
 
-The build reports the BOOT partition IPL size against its 7 KiB limit and produces
-`bootloader/ipl-lba0.bin`, `bootloader/ipl-lba2.bin`, `bootloader/boot.sys`,
-`bootloader/boot.bin`, the applet self-test, and both IPLware return-style
-self-tests.
+The build reports the `IO.SYS` size and produces `bootloader/ipl-lba0.bin`,
+`bootloader/ipl-lba2.bin`, the 1024-byte `bootloader/ipl-part.img`,
+`bootloader/IO.SYS`, `bootloader/boot.bin`, the applet self-test, and both
+IPLware return-style self-tests.
 
 Create a named BusyBox image with the complete three-stage chain:
 
@@ -21,8 +21,8 @@ Create a named BusyBox image with the complete three-stage chain:
 ```
 
 The installer writes the generic stub to LBA 0, the replaceable BOOT selector
-to LBA 2–15, raw `boot.sys` to the BOOT partition IPL cylinder, and
-`boot.bin` plus `boot.cfg` to its FAT16 data area. LBA 0 loads only one LBA 2
+to LBA 2–15, the 1024-byte PBR to the BOOT partition, and contiguous
+`IO.SYS`, `boot.bin`, and `boot.cfg` to its FAT16 data area. LBA 0 loads one LBA 2
 sector, so the complete LBA 2–15 image may be replaced by the NEC fixed-disk
 menu or another project's compatible bootstrap.
 

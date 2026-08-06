@@ -45,7 +45,8 @@ The current tree contains these working loaders:
 |---|---:|---|
 | `ipl-lba0.bin` | 512 bytes | PC-98 `IPL1` disk record |
 | `ipl-lba2.bin` | 7,168 bytes | Replaceable LBA 2–15 BOOT selector |
-| `boot.sys` | at most 7,168 bytes | Raw BOOT partition IPL |
+| `ipl-part.img` | 1,024 bytes | FAT16 PBR in one reserved logical sector |
+| `IO.SYS` | currently 6,352 bytes | Contiguous FAT16 system-loader file |
 | `boot.bin` | unconstrained by IPL area | FAT16-hosted 32-bit loader |
 | `fat-loader.bin` | 4,106 bytes | FAT16 and Linux ELF loader |
 | `boot2.bin` | 984 bytes | Earlier two-sector loader |
@@ -77,12 +78,17 @@ traditional IPL/menu area.
 - Reads LBA 1, finds the partition named `BOOT`, and chain-loads its IPL-start
   CHS. The NEC fixed-disk menu may replace this complete stage.
 
-### Stage 2: BOOT partition IPL (`boot.sys`)
+### Stage 2: BOOT partition PBR and `IO.SYS`
 
-- Stored raw in the BOOT partition's first reserved cylinder, not as a FAT
-  file.
-- Its entry sector rediscovers BOOT and reloads the complete image at
-  `1000:0000`, without relying on private Stage 1 registers.
+- `ipl-part.img` occupies one 1024-byte reserved FAT logical sector. The
+  first physical 512-byte half explicitly reads the second half, so it does
+  not assume that firmware loaded 1024 bytes.
+- The PBR locates root-directory file `IO.SYS` and loads it at `1000:0000`.
+  `IO.SYS` is an ordinary contiguous FAT16 file; none of it is copied into
+  the reserved sector.
+- The image builder copies `IO.SYS` first on a fresh volume. `INST /PART`
+  copies it with DOS file I/O and rejects a fragmented FAT chain.
+- Neither PBR nor `IO.SYS` relies on private Stage 1 registers.
 - Enumerates BIOS-visible devices.
 - Reads PC-98 partition tables.
 - Displays the basic device and partition menu.
@@ -532,7 +538,7 @@ Do not reopen these choices without new hardware evidence:
 9. Probe commands report geometry and controller identity.  `devalias` lists
    the stable user-visible device namespace.
 10. IPLware compatibility and native BOOT98 applets are separate mechanisms.
-    Network BOOTP/TFTP and serial support belong in applets, not `boot.sys`.
+    Network BOOTP/TFTP and serial support belong in applets, not `IO.SYS`.
 11. Existing DOS `LINUX98.EXE` remains useful for machines whose custom disk
     geometry is established after DOS boot.  BOOT98 does not make that loader
     obsolete.
@@ -547,7 +553,7 @@ prompt under QEMU:
 3. The boot core finds `BOOT`, validates and loads `boot.bin`.
 4. Probe status and the third-stage menu are displayed on consecutive rows.
 5. The first menu selection has a three-second timeout.  Timeout executes
-   `Auto`; if the 32-bit loader is unavailable, `boot.sys` instead chain-loads the
+   `Auto`; if the 32-bit loader is unavailable, `IO.SYS` instead chain-loads the
    `BOOT` partition PBR or the first active partition PBR.
 6. The headless test waits for the automatic selection and verifies the
    BusyBox prompt without injecting keyboard input.
@@ -568,7 +574,7 @@ Minimum Phase 1 QEMU matrix:
 | Primary plus secondary IDE | Both HDDs and their partitions remain distinct. |
 | IDE disk with non-default logical geometry | Partition entries are decoded with SENSE H/S. |
 | PC-9801-92 SCSI HDD | Target is enumerated and its PBR can be selected. |
-| Missing or invalid `boot.bin` | The `boot.sys` menu still chain-loads a bootable device. |
+| Missing or invalid `boot.bin` | The `IO.SYS` menu still chain-loads a bootable device. |
 
 Real-machine testing should follow QEMU tests, especially on early machines
 with unusual BIOS geometry.  Do not claim broad hardware compatibility from
@@ -582,9 +588,9 @@ QEMU alone.
   processes in bulk; terminate only processes that this task started and can
   identify precisely.
 - Preserve user disk images.  Work on copies for tests that can modify a disk.
-- Keep `boot.sys` size visible in every build. Exceeding the approximately
-  7 KiB target is an architectural signal to move functionality to `boot.bin`,
-  not a reason to silently consume more system-area sectors.
+- Keep `IO.SYS` size visible in every build. The current PBR accepts at most
+  127 physical sectors (65,024 bytes); larger functionality still belongs in
+  `boot.bin`, not in the real-mode system loader.
 
 ### Suggested prompt on another computer
 

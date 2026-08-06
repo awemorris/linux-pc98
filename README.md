@@ -300,15 +300,40 @@ Debug = 0
 ```
 
 The BusyBox H=8 profiles install the replaceable BOOT98 environment. The
-silent `ipl-lba0.bin` enters `ipl-lba2.bin`; that selector loads `boot.sys`
-from the raw IPL area of the partition named BOOT. `boot.sys` then opens the
-partition's FAT16 data area and loads `boot.bin`. The first 32-bit menu
+silent `ipl-lba0.bin` enters `ipl-lba2.bin`; that selector loads the PBR of
+the FAT16 partition named BOOT. The one 1024-byte reserved logical sector
+contains the PBR/BPB only; it loads contiguous `IO.SYS` as an ordinary FAT
+file, and `IO.SYS` then loads `boot.bin`. NEC MS-DOS can mount the same volume.
+The first 32-bit menu
 selection has a three-second timeout: it executes `Auto`, reads `BOOT.CFG`,
 and boots `VMLINUX`. Select Escape before the timeout to enter the interactive
 shell instead. The `Auto` entry identifies the selected HDD, partition, and
 `BOOT.CFG` source.
 The headless `busybox-i386` smoke test uses this unattended path without
 synthetic keyboard input.
+
+`INST.EXE` performs the three raw installation operations needed after a DOS
+partitioning/formatting tool has prepared the target volume.  Keep
+`IPL-LBA0.IMG`, `IPL-LBA2.IMG`, `IPL-PART.IMG`, and `IO.SYS` beside
+`INST.EXE`. Select the
+target partition as the current DOS drive before installing the disk IPL:
+
+```dos
+C:
+A:\INST /LBA0
+A:\INST /LBA2
+A:\INST /PART C:
+```
+
+The first two operations map the current DOS drive back to its physical IDE
+disk. `/PART` copies `IO.SYS` as a hidden/system/read-only FAT16 file,
+verifies its traditional contiguous system-file layout, and installs the
+1024-byte PBR while preserving the BPB. `BOOT.BIN`, `VMLINUX`, and
+`BOOT.CFG` remain ordinary DOS file copies.
+
+Every generated BOOT partition also contains `INST.EXE`, `IPL-LBA0.IMG`,
+`IPL-LBA2.IMG`, and `IPL-PART.IMG`, so the installed image itself can be used
+as the source for installing BOOT98 onto another DOS-visible disk.
 
 A test kernel can be installed while creating an image:
 
@@ -368,7 +393,9 @@ The Debian images use the full PC-98 kernel configuration and require 64 MiB.
 
 Public images use the GDC screen and PC-98 keyboard as the console. The same
 release also contains `vmlinux-i386`, `vmlinux-i486-debian`, `linux98.exe`,
-`ipl-lba0.bin`, `ipl-lba2.bin`, `boot.sys`, `boot.bin`, `boot.cfg`, and
+`inst.exe`, `ipl-lba0.bin`, `ipl-lba2.bin`, their DOS `.img` copies,
+`ipl-part.img`, `IO.SYS`, `boot.bin`,
+`boot.cfg`, and
 `qemu-pc98-win64.zip`. The Windows ZIP contains both i386 and x86_64 QEMU,
 `virtpc98.exe`, required DLLs, and the free PC-98 BIOS/SCSI BIOS files.
 
@@ -386,14 +413,14 @@ partitions.
 | LBA 0 | `ipl-lba0.bin`, with the `IPL1` marker |
 | LBA 1 | PC-98 sixteen-entry partition table |
 | LBA 2 through 15 | Replaceable `ipl-lba2.bin` BOOT-partition selector |
-| BOOT partition IPL cylinder | Raw `boot.sys` partition IPL |
-| BOOT partition data area | FAT16 containing `boot.bin`, `boot.cfg`, non-compressed `VMLINUX`, and `LINUX98.EXE` |
+| BOOT partition reserved sector | 1024-byte FAT16 PBR/BPB (`ipl-part.img`) |
+| BOOT partition data area | FAT16 containing contiguous `IO.SYS`, `boot.bin`, `boot.cfg`, non-compressed `VMLINUX`, and `LINUX98.EXE` |
 | Partition 2 | ext4 root filesystem, mounted as `/dev/sda2` |
 
 The distributed LBA 2 selector and the NEC fixed-disk boot menu both enter the
-same partition IPL. The BOOT filesystem begins one cylinder after its IPL
-start, leaving enough raw space for `boot.sys` without depending on FAT file
-placement.
+same partition PBR. Its IPL and data-start CHS values are identical. The PBR
+loads the contiguous FAT file `IO.SYS`; the reserved 1024 bytes are outside
+the FAT cluster area and do not duplicate any part of that file.
 
 `./build.sh boot-install --partition N IMAGE VMLINUX BOOT.CFG` destructively
 recreates only the selected BOOT partition and preserves an NEC or third-party

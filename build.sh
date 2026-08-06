@@ -12,7 +12,7 @@ Primary commands:
   setup [options]             install Debian 13 host build/test dependencies
   bootloader                  build IPL and BOOT98 binaries
   boot-install [options]      destructively create a BOOT partition environment
-  dos-loader                  rebuild LINUX98.EXE (requires OpenWatcom 1.9)
+  dos-loader                  rebuild LINUX98.EXE and INST.EXE (OpenWatcom)
   kernel [options]            configure and build Linux 7.1
   rootfs PROFILE              build a root filesystem
   rootfs-cache COMMAND        fetch/store/publish reusable rootfs archives

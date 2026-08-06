@@ -33,10 +33,6 @@ test -z "$kernel" || test -f "$kernel" || {
 case "$heads:$sectors" in
 	*[!0-9:]* | 0:* | *:0) echo "Invalid geometry: H=$heads S=$sectors" >&2; exit 2 ;;
 esac
-test "$sectors" -ge 14 || {
-	echo "BOOT partition IPL requires at least 14 sectors per track" >&2
-	exit 2
-}
 case "$partition" in
 	'' | *[!0-9]* | 0) test "$partition" = 0 || { echo "Invalid partition: $partition" >&2; exit 2; } ;;
 	*) test "$partition" -le 16 || { echo "Invalid partition: $partition" >&2; exit 2; } ;;
@@ -45,21 +41,18 @@ case "$install_disk_stubs" in
 	0 | 1) ;;
 	*) echo "INSTALL_DISK_STUBS must be 0 or 1" >&2; exit 2 ;;
 esac
-for command in dd mcopy mformat python3; do
+for command in dd mattrib mcopy mformat python3; do
 	command -v "$command" >/dev/null || { echo "$command is required" >&2; exit 1; }
 done
 
-make -C "$bootloader" ipl-lba0.bin ipl-lba2.bin boot.sys boot.bin
-boot_sys_size="$(stat -c %s "$bootloader/boot.sys")"
-test "$boot_sys_size" -le 7168 || {
-	echo "boot.sys exceeds its 14-sector loader area: $boot_sys_size" >&2
-	exit 1
-}
+make -C "$bootloader" ipl-lba0.bin ipl-lba2.bin \
+	ipl-lba0.img ipl-lba2.img ipl-part.img IO.SYS boot.bin
+io_sys_size="$(stat -c %s "$bootloader/IO.SYS")"
 
-# Recreate the first FAT16 partition as the BOOT environment.  Its first
-# cylinder is a raw partition-IPL area; FAT16 begins at the following
-# cylinder.  This operation is intentionally destructive to the BOOT
-# partition, while root and swap partitions remain untouched.
+# Recreate the first FAT16 partition as the BOOT environment.  The volume has
+# one 1024-byte reserved logical sector containing the PBR.  IO.SYS is copied
+# first as a normal contiguous FAT file, matching the historical DOS SYS-file
+# layout.  Root and swap partitions remain untouched.
 layout="$(python3 - "$image" "$heads" "$sectors" "$partition" <<'PY'
 import struct
 import sys
@@ -92,17 +85,14 @@ with open(image, "r+b") as stream:
                     0x01, 0x11, 0x20):
                 continue
         ipl_cylinder = struct.unpack_from("<H", entry, 6)[0]
-        # boot.sys is read as one 14-sector BIOS transfer.  Normalize the
-        # partition IPL start to the beginning of its cylinder so that the
-        # transfer never crosses a track on 17- and 32-sector media.
+        # Keep the IPL and FAT data start identical so the partition PBR is
+        # also DOS logical sector zero.
         ipl_lba = ipl_cylinder * heads * sectors
-        data_cylinder = ipl_cylinder + 1
-        data_lba = data_cylinder * heads * sectors
+        data_cylinder = ipl_cylinder
+        data_lba = ipl_lba
         end_lba = lba(entry[12:16])
         if data_lba > end_lba:
-            raise SystemExit("BOOT partition is too small for an IPL cylinder")
-        if data_lba - ipl_lba < 14:
-            raise SystemExit("BOOT partition IPL area is smaller than 14 sectors")
+            raise SystemExit("BOOT partition is empty")
         table[offset] |= 0x80
         # MID bit 7 marks the partition active.  SID bit 7 marks it
         # bootable; SID type 0x11 identifies a PC-98 DOS FAT16 volume.
@@ -122,6 +112,11 @@ PY
 )"
 read -r ipl_lba boot_lba boot_sectors partition <<<"$layout"
 offset=$((boot_lba * 512))
+test $((boot_sectors % 2)) -eq 0 || {
+	echo "BOOT partition must contain an even number of physical sectors" >&2
+	exit 1
+}
+logical_sectors=$((boot_sectors / 2))
 
 if test "$install_disk_stubs" -eq 1; then
 	dd if="$bootloader/ipl-lba0.bin" of="$image" bs=512 count=1 \
@@ -129,21 +124,45 @@ if test "$install_disk_stubs" -eq 1; then
 	dd if="$bootloader/ipl-lba2.bin" of="$image" bs=512 seek=2 count=14 \
 		conv=notrunc status=none
 fi
-dd if=/dev/zero of="$image" bs=512 seek="$ipl_lba" \
-	count="$((boot_lba - ipl_lba))" conv=notrunc status=none
-dd if="$bootloader/boot.sys" of="$image" bs=512 seek="$ipl_lba" \
-	conv=notrunc status=none
-
 cluster_sectors=1
-while test $((boot_sectors / cluster_sectors)) -ge 65525; do
+while test $((logical_sectors / cluster_sectors)) -ge 65525; do
 	cluster_sectors=$((cluster_sectors * 2))
 done
-test $((boot_sectors / cluster_sectors)) -ge 4085 || {
+test $((logical_sectors / cluster_sectors)) -ge 4085 || {
 	echo "BOOT partition is too small for FAT16" >&2
 	exit 1
 }
-mformat -i "$image@@$offset" -c "$cluster_sectors" -h "$heads" -s "$sectors" \
-	-T "$boot_sectors" -v BOOT ::
+mformat -i "$image@@$offset" -S 3 -c "$cluster_sectors" -h "$heads" \
+	-s "$sectors" -H "$boot_lba" -T "$logical_sectors" -v BOOT ::
+python3 - "$image" "$offset" "$boot_lba" \
+	"$bootloader/partition-pbr.bin" <<'PY'
+import struct
+import sys
+
+image = sys.argv[1]
+offset = int(sys.argv[2])
+partition_lba = int(sys.argv[3])
+pbr_path = sys.argv[4]
+
+with open(image, "r+b") as stream:
+	stream.seek(offset)
+	bpb = stream.read(1024)
+	if len(bpb) != 1024:
+		raise SystemExit("short FAT16 reserved sector")
+	with open(pbr_path, "rb") as source:
+		pbr = bytearray(source.read())
+	if len(pbr) != 1024:
+		raise SystemExit("partition-pbr.bin is not 1024 bytes")
+	pbr[3:0x3e] = bpb[3:0x3e]
+	struct.pack_into("<I", pbr, 0x1c, partition_lba)
+	struct.pack_into("<H", pbr, 0x0e, 1)
+	pbr[0x1fe:0x200] = b"\x55\xaa"
+	pbr[0x3fe:0x400] = b"\x55\xaa"
+	stream.seek(offset)
+	stream.write(pbr)
+PY
+mcopy -o -i "$image@@$offset" "$bootloader/IO.SYS" ::IO.SYS
+mattrib -i "$image@@$offset" +r +h +s ::IO.SYS
 mcopy -o -i "$image@@$offset" "$bootloader/boot.bin" ::BOOT.BIN
 if test -n "$kernel"; then
 	mcopy -o -i "$image@@$offset" "$kernel" ::VMLINUX
@@ -154,6 +173,12 @@ if test -n "$cfg"; then
 fi
 if test -f "$bootloader/dos/linux98.exe"; then
 	mcopy -o -i "$image@@$offset" "$bootloader/dos/linux98.exe" ::LINUX98.EXE
+fi
+if test -f "$bootloader/dos/inst.exe"; then
+	mcopy -o -i "$image@@$offset" "$bootloader/dos/inst.exe" ::INST.EXE
+	mcopy -o -i "$image@@$offset" "$bootloader/ipl-lba0.img" ::IPL-LBA0.IMG
+	mcopy -o -i "$image@@$offset" "$bootloader/ipl-lba2.img" ::IPL-LBA2.IMG
+	mcopy -o -i "$image@@$offset" "$bootloader/ipl-part.img" ::IPL-PART.IMG
 fi
 if test -n "${BOOT_LOGO:-}"; then
 	test -f "$BOOT_LOGO" || { echo "Boot logo not found: $BOOT_LOGO" >&2; exit 1; }
@@ -166,8 +191,8 @@ if test -n "${BOOT98_FILES:-}"; then
 	done
 fi
 sync
-printf 'Installed BOOT98 in %s partition %s (IPL LBA %s, FAT16 LBA %s, boot.sys %s bytes)\n' \
-	"$image" "$partition" "$ipl_lba" "$boot_lba" "$boot_sys_size"
+printf 'Installed BOOT98 in %s partition %s (PBR LBA %s, IO.SYS %s bytes)\n' \
+	"$image" "$partition" "$ipl_lba" "$io_sys_size"
 if test "$install_disk_stubs" -eq 1; then
 	printf 'Installed distributed disk stubs at LBA 0 and LBA 2-15\n'
 else

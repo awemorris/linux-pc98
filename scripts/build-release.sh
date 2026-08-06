@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 release_dir="$repo/build/releases"
-version="${RELEASE_VERSION:-v0.6.0}"
+version="${RELEASE_VERSION:-v0.7.0}"
 jobs="${JOBS:-$(nproc)}"
 publish_rootfs=0
 build_win64=1
@@ -14,9 +14,9 @@ usage()
 Usage: ./build.sh release [--version TAG] [--jobs N]
                           [--publish-rootfs-cache] [--no-win64]
 
-Build every public image, standalone boot file, kernel, Release note, and the
-qemu-pc98 Windows ZIP under build/releases. Raw images are retained locally;
-the distributable files are the .img.xz archives.
+Build every public image, standalone kernel, bootloader ZIP, Release note,
+and the qemu-pc98 Windows ZIP under build/releases. Raw images are retained
+locally; the distributable disk files are the .img.xz archives.
 EOF
 }
 
@@ -87,7 +87,6 @@ compress_image()
 	xz -c -T"${XZ_THREADS:-0}" -"${XZ_LEVEL:-6}" "$raw" >"$part"
 	xz -t "$part"
 	mv -f -- "$part" "$archive"
-	(cd "$release_dir" && sha256sum "$(basename "$archive")" >"$(basename "$archive").sha256")
 }
 
 copy_release_file()
@@ -99,6 +98,17 @@ copy_release_file()
 
 mkdir -p "$release_dir"
 test -f "$note" || { echo "Release note not found: $note" >&2; exit 1; }
+# Keep the staging directory unambiguous.  These files were uploaded by older
+# releases, but v0.7.0 publishes the complete loader kit as bootloader.zip.
+rm -f -- \
+	"$release_dir"/boot.bin "$release_dir"/boot.sys \
+	"$release_dir"/boot.cfg "$release_dir"/IO.SYS \
+	"$release_dir"/BOOT.SYS "$release_dir"/inst.exe \
+	"$release_dir"/linux98.exe "$release_dir"/ipl-lba0.bin \
+	"$release_dir"/ipl-lba2.bin "$release_dir"/ipl-lba0.img \
+	"$release_dir"/ipl-lba2.img "$release_dir"/ipl-part.img \
+	"$release_dir"/*.img.sha256 "$release_dir"/*.img.xz.sha256 \
+	"$release_dir"/qemu-pc98-win64.zip.sha256
 ensure_rootfs busybox-i386 "$busybox_cache" "$busybox_root" bin/busybox
 ensure_debian_rootfs "$debian_root" "$debian_cache"
 
@@ -155,21 +165,9 @@ for raw in \
 	compress_image "$release_dir/$raw"
 done
 
-make -C "$repo/bootloader" ipl-lba0.bin ipl-lba2.bin \
-	ipl-lba0.img ipl-lba2.img \
-	ipl-part.img IO.SYS BOOT.SYS
 copy_release_file "$repo/build/i386-video/kernel/vmlinux.boot" vmlinux-i386
 copy_release_file "$repo/build/kernel-7.1-i486/vmlinux.boot" vmlinux-i486-debian
-copy_release_file "$repo/bootloader/dos/linux98.exe" linux98.exe
-copy_release_file "$repo/bootloader/dos/inst.exe" inst.exe
-copy_release_file "$repo/bootloader/ipl-lba0.bin" ipl-lba0.bin
-copy_release_file "$repo/bootloader/ipl-lba2.bin" ipl-lba2.bin
-copy_release_file "$repo/bootloader/ipl-lba0.img" ipl-lba0.img
-copy_release_file "$repo/bootloader/ipl-lba2.img" ipl-lba2.img
-copy_release_file "$repo/bootloader/ipl-part.img" ipl-part.img
-copy_release_file "$repo/bootloader/IO.SYS" IO.SYS
-copy_release_file "$repo/bootloader/BOOT.SYS" BOOT.SYS
-copy_release_file "$repo/releases/boot98.cfg" boot.cfg
+"$repo/build.sh" bootloader-dist
 copy_release_file "$note" RELEASE-NOTES.md
 
 if test "$build_win64" -eq 1; then
@@ -185,9 +183,7 @@ fi
 		linux-pc98-i486dx-debian13-ide.img.xz \
 		linux-pc98-i486dx-debian13-scsi55.img.xz \
 		linux-pc98-i486dx-debian13-scsi92.img.xz \
-		vmlinux-i386 vmlinux-i486-debian linux98.exe inst.exe \
-		ipl-lba0.bin ipl-lba2.bin ipl-lba0.img ipl-lba2.img \
-		ipl-part.img IO.SYS BOOT.SYS boot.cfg \
+		vmlinux-i386 vmlinux-i486-debian bootloader.zip \
 		qemu-pc98-win64.zip >SHA256SUMS
 )
 printf 'Complete %s artifact set: %s\n' "$version" "$release_dir"

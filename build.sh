@@ -11,6 +11,7 @@ Usage: ./build.sh COMMAND [options]
 Primary commands:
   setup [options]             install Debian 13 host build/test dependencies
   bootloader                  build IPL and BOOT98 binaries
+  bootloader-dist             build build/releases/bootloader.zip
   boot-install [options]      destructively create a BOOT partition environment
   dos-loader                  rebuild LINUX98.EXE and INST.EXE (OpenWatcom)
   kernel [options]            configure and build Linux 7.1
@@ -137,6 +138,7 @@ case "$command" in
 	help | -h | --help) usage ;;
 	setup) "$repo/scripts/setup.sh" "$@" ;;
 	bootloader) make -C "$repo/bootloader" "$@" ;;
+	bootloader-dist) "$repo/scripts/build-bootloader-dist.sh" "$@" ;;
 	boot-install) "$repo/scripts/install-boot98-image.sh" "$@" ;;
 	dos-loader) make -C "$repo/bootloader/dos" "$@" ;;
 	kernel) build_kernel "$@" ;;

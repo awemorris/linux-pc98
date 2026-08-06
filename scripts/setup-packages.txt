@@ -46,4 +46,5 @@ unzip
 util-linux
 wget
 xz-utils
+zip
 zlib1g-dev

@@ -6,6 +6,8 @@
  */
 
 #include "boot98-abi.h"
+#include "boot98-fs.h"
+#include "boot98-image.h"
 
 #define MAX_PARTS 16
 #define CFG_MAX 8192
@@ -41,20 +43,26 @@ struct part {
 	uint32_t start, data;
 };
 struct fat {
-	const struct boot98_device *d;
-	uint32_t part, fat, root, data;
+	uint32_t fat, root, data;
 	uint16_t roots;
 	uint8_t spc;
-} fs;
-struct dent {
+};
+struct fat_file {
 	char name[12];
 	uint16_t cluster;
-	uint32_t size;
 };
+static struct boot98_filesystem mounted_fs;
 static struct part parts[MAX_PARTS];
 static int curdev = -1, curpart = -1;
-static char kernel_name[12], kernel_arg[256];
+static char kernel_name[BOOT98_PATH_MAX], kernel_arg[256];
 static void findboot(void);
+
+_Static_assert(sizeof(struct fat) <=
+	       sizeof(((struct boot98_filesystem *)0)->private_data),
+	       "FAT state exceeds generic filesystem storage");
+_Static_assert(sizeof(struct fat_file) <=
+	       sizeof(((struct boot98_file *)0)->private_data),
+	       "FAT file state exceeds generic file storage");
 
 /* Minimal freestanding string and memory primitives. */
 static void memzero(void *p, uint32_t n)
@@ -82,6 +90,23 @@ static unsigned slen(const char *s)
 	while (s[n])
 		n++;
 	return n;
+}
+static int strcopy(char *destination, const char *source, unsigned capacity)
+{
+	unsigned i = 0;
+
+	if (!capacity)
+		return 0;
+	while (source[i] && i + 1 < capacity) {
+		destination[i] = source[i];
+		i++;
+	}
+	destination[i] = 0;
+	if (source[i]) {
+		destination[0] = 0;
+		return 0;
+	}
+	return 1;
 }
 
 static uint8_t port_in8(uint16_t port)
@@ -318,153 +343,285 @@ static int scanparts(int di)
 	}
 	return 1;
 }
-static int mountpart(int di, int pi)
+static int disk_volume_read(const void *context, uint32_t lba, void *buffer)
 {
-	uint8_t scale, nf;
-	uint16_t reserved, fatsz, roots;
-	if (!parts[pi].valid || readsec(&devs[di], parts[pi].data, sec))
+	return !readsec(context, lba, buffer);
+}
+
+static struct fat *fat_state(struct boot98_filesystem *filesystem)
+{
+	return (struct fat *)filesystem->private_data;
+}
+
+static struct fat_file *fat_file_state(struct boot98_file *file)
+{
+	return (struct fat_file *)file->private_data;
+}
+
+/* Read-only FAT16 support. The driver remains in this translation unit until
+ * the next refactoring step, but every caller above it uses generic handles. */
+static int fatname(const char *input, char output[11])
+{
+	unsigned base = 0, extension = 0;
+
+	for (unsigned i = 0; i < 11; i++)
+		output[i] = ' ';
+	if (*input == '/')
+		input++;
+	if (!*input)
 		return 0;
-	if (w16(sec + 11) == 512)
-		scale = 1;
-	else if (w16(sec + 11) == 1024)
-		scale = 2;
-	else
+	while (*input && *input != '.') {
+		char c = *input++;
+
+		if (c == '/' || base == 8)
+			return 0;
+		output[base++] = (c >= 'a' && c <= 'z') ? c - 32 : c;
+	}
+	if (!base)
 		return 0;
-	fs.d = &devs[di];
-	fs.part = parts[pi].data;
-	fs.spc = sec[13] * scale;
-	reserved = w16(sec + 14) * scale;
-	nf = sec[16];
-	roots = w16(sec + 17);
-	fatsz = w16(sec + 22) * scale;
-	if (!fs.spc || !nf || !fatsz)
-		return 0;
-	fs.fat = fs.part + reserved;
-	fs.root = fs.fat + (uint32_t)nf * fatsz;
-	fs.roots = roots;
-	fs.data = fs.root + (((uint32_t)roots * 32 + 511) >> 9);
+	if (*input == '.')
+		input++;
+	while (*input) {
+		char c = *input++;
+
+		if (c == '/' || c == '.' || extension == 3)
+			return 0;
+		output[8 + extension++] =
+		        (c >= 'a' && c <= 'z') ? c - 32 : c;
+	}
 	return 1;
 }
 
-/* Read-only FAT16 support.  Stage 2 deliberately performs no FAT writes. */
-static void fatname(const char *in, char out[11])
+static int fat16_probe(const struct boot98_volume *volume)
 {
-	int i = 0, j = 0;
-	for (; j < 11; j++)
-		out[j] = ' ';
-	while (*in && *in != '.' && i < 8) {
-		char c = *in++;
-		out[i++] = (c >= 'a' && c <= 'z') ? c - 32 : c;
-	}
-	if (*in == '.')
-		in++;
-	i = 8;
-	while (*in && i < 11) {
-		char c = *in++;
-		out[i++] = (c >= 'a' && c <= 'z') ? c - 32 : c;
-	}
+	uint16_t bytes, fatsz;
+	uint32_t total, total_physical, metadata, data_sectors, clusters;
+	uint8_t scale, fats;
+
+	if (!boot98_volume_read(volume, 0, sec))
+		return 0;
+	bytes = w16(sec + 11);
+	scale = bytes == 512 ? 1 : bytes == 1024 ? 2 : 0;
+	fatsz = w16(sec + 22);
+	fats = sec[16];
+	total = w16(sec + 19) ? w16(sec + 19) : w32(sec + 32);
+	if (!scale || !sec[13] || !w16(sec + 14) || !fats || !fatsz ||
+	    !w16(sec + 17) || !total)
+		return 0;
+	if (total > 0xffffffffU / scale)
+		return 0;
+	total_physical = total * scale;
+	metadata = w16(sec + 14) * scale +
+	           (uint32_t)fats * fatsz * scale +
+	           (((uint32_t)w16(sec + 17) * 32 + 511) >> 9);
+	if (metadata >= total_physical)
+		return 0;
+	data_sectors = total_physical - metadata;
+	clusters = data_sectors / (sec[13] * scale);
+	return clusters >= 4085 && clusters < 65525;
 }
-static int findfile(const char *name, struct dent *d)
+
+static int fat16_mount(struct boot98_filesystem *filesystem)
 {
-	char n[11];
-	fatname(name, n);
-	for (uint32_t e = 0; e < fs.roots; e++) {
-		if (!(e & 15) && readsec(fs.d, fs.root + (e >> 4), sec))
+	struct fat *fat = fat_state(filesystem);
+	uint8_t scale, number_of_fats;
+	uint16_t reserved, fat_sectors;
+
+	if (!boot98_volume_read(&filesystem->volume, 0, sec))
+		return 0;
+	scale = w16(sec + 11) == 512 ? 1 : 2;
+	fat->spc = sec[13] * scale;
+	reserved = w16(sec + 14) * scale;
+	number_of_fats = sec[16];
+	fat->roots = w16(sec + 17);
+	fat_sectors = w16(sec + 22) * scale;
+	if (!fat->spc || !reserved || !number_of_fats || !fat->roots ||
+	    !fat_sectors)
+		return 0;
+	fat->fat = reserved;
+	fat->root = fat->fat + (uint32_t)number_of_fats * fat_sectors;
+	fat->data = fat->root + (((uint32_t)fat->roots * 32 + 511) >> 9);
+	return 1;
+}
+
+static int fat16_open(struct boot98_filesystem *filesystem, const char *name,
+		      struct boot98_file *file)
+{
+	struct fat *fat = fat_state(filesystem);
+	struct fat_file *fat_file = fat_file_state(file);
+	char canonical[11];
+
+	if (!fatname(name, canonical))
+		return 0;
+	for (uint32_t entry = 0; entry < fat->roots; entry++) {
+		if (!(entry & 15) &&
+		    !boot98_volume_read(&filesystem->volume,
+					fat->root + (entry >> 4), sec))
 			return 0;
-		uint8_t *p = sec + (e & 15) * 32;
-		if (!p[0])
+		uint8_t *raw = sec + (entry & 15) * 32;
+		if (!raw[0])
 			return 0;
-		if (p[0] == 0xe5 || p[11] == 0x0f || p[11] & 0x18)
+		if (raw[0] == 0xe5 || raw[11] == 0x0f || raw[11] & 0x18)
 			continue;
-		int ok = 1;
+		int matches = 1;
 		for (int j = 0; j < 11; j++)
-			if (p[j] != (uint8_t)n[j])
-				ok = 0;
-		if (ok) {
+			if (raw[j] != (uint8_t)canonical[j])
+				matches = 0;
+		if (matches) {
 			for (int j = 0; j < 11; j++)
-				d->name[j] = n[j];
-			d->name[11] = 0;
-			d->cluster = w16(p + 26);
-			d->size = w32(p + 28);
-			return d->cluster >= 2;
+				fat_file->name[j] = canonical[j];
+			fat_file->name[11] = 0;
+			fat_file->cluster = w16(raw + 26);
+			file->size = w32(raw + 28);
+			return fat_file->cluster >= 2;
 		}
 	}
 	return 0;
 }
-static uint16_t nextcl(uint16_t c)
+
+static uint16_t fat16_next_cluster(struct boot98_filesystem *filesystem,
+				   uint16_t cluster)
 {
-	uint32_t off = (uint32_t)c * 2;
-	if (readsec(fs.d, fs.fat + (off >> 9), sec))
+	struct fat *fat = fat_state(filesystem);
+	uint32_t offset = (uint32_t)cluster * 2;
+
+	if (!boot98_volume_read(&filesystem->volume,
+				fat->fat + (offset >> 9), sec))
 		return 0xffff;
-	return w16(sec + (off & 511));
+	return w16(sec + (offset & 511));
 }
-static int contiguous(const struct dent *d)
+
+static int fat16_read(struct boot98_file *file, uint64_t offset, void *buffer,
+		      uint32_t length, boot98_read_progress_t progress,
+		      void *progress_context)
 {
-	uint16_t c = d->cluster;
-	uint32_t left = d->size;
-	while (left > (uint32_t)fs.spc * 512) {
-		uint16_t n = nextcl(c);
-		if (n != (uint16_t)(c + 1))
+	struct boot98_filesystem *filesystem = file->filesystem;
+	struct fat *fat = fat_state(filesystem);
+	struct fat_file *fat_file = fat_file_state(file);
+	uint16_t cluster = fat_file->cluster;
+	uint32_t position, skip, within, since_update = 0;
+	uint8_t *output = buffer;
+
+	if (offset > 0xffffffffU)
+		return 0;
+	position = (uint32_t)offset;
+	skip = position / 512;
+	within = position & 511;
+	while (skip >= fat->spc) {
+		cluster = fat16_next_cluster(filesystem, cluster);
+		if (cluster < 2 || cluster >= 0xfff0)
 			return 0;
-		c = n;
-		left -= (uint32_t)fs.spc * 512;
+		skip -= fat->spc;
 	}
-	return 1;
-}
-static int file_read_internal(const struct dent *d, uint32_t off, void *dst,
-			      uint32_t n, int load_class)
-{
-	uint16_t c = d->cluster;
-	uint32_t skip = off / 512, within = off & 511;
-	uint32_t since_update = 0;
-	while (skip >= fs.spc) {
-		c = nextcl(c);
-		if (c >= 0xfff8)
+	while (length) {
+		uint32_t lba = fat->data +
+		               (uint32_t)(cluster - 2) * fat->spc + skip;
+		uint32_t chunk = 512 - within;
+
+		if (!boot98_volume_read(&filesystem->volume, lba, sec))
 			return 0;
-		skip -= fs.spc;
-	}
-	uint8_t *out = dst;
-	while (n) {
-		uint32_t l = fs.data + (uint32_t)(c - 2) * fs.spc + skip;
-		if (readsec(fs.d, l, sec))
-			return 0;
-		uint32_t k = 512 - within;
-		if (k > n)
-			k = n;
-		memcopy(out, sec + within, k);
-		out += k;
-		n -= k;
-		if (load_class >= 0) {
-			if (load_class)
-				load_data_done += k;
-			else
-				load_text_done += k;
-			since_update += k;
-			if (since_update >= LOAD_PROGRESS_INTERVAL || !n) {
-				show_load_progress();
+		if (chunk > length)
+			chunk = length;
+		memcopy(output, sec + within, chunk);
+		output += chunk;
+		length -= chunk;
+		if (progress) {
+			since_update += chunk;
+			if (since_update >= LOAD_PROGRESS_INTERVAL || !length) {
+				progress(progress_context, since_update);
 				since_update = 0;
 			}
 		}
 		within = 0;
-		if (++skip >= fs.spc && n) {
+		if (++skip >= fat->spc && length) {
 			skip = 0;
-			c = nextcl(c);
-			if (c >= 0xfff8)
+			cluster = fat16_next_cluster(filesystem, cluster);
+			if (cluster < 2 || cluster >= 0xfff0)
 				return 0;
 		}
 	}
 	return 1;
 }
 
-static int file_read(const struct dent *d, uint32_t off, void *dst, uint32_t n)
+static int fat16_readdir(struct boot98_filesystem *filesystem,
+			 const char *path, unsigned wanted,
+			 struct boot98_dirent *entry)
 {
-	return file_read_internal(d, off, dst, n, -1);
+	struct fat *fat = fat_state(filesystem);
+	unsigned visible = 0;
+
+	if (*path && !(path[0] == '/' && !path[1]))
+		return 0;
+	for (uint32_t index = 0; index < fat->roots; index++) {
+		if (!(index & 15) &&
+		    !boot98_volume_read(&filesystem->volume,
+					fat->root + (index >> 4), sec))
+			return 0;
+		uint8_t *raw = sec + (index & 15) * 32;
+		if (!raw[0])
+			return 0;
+		if (raw[0] == 0xe5 || raw[11] == 0x0f)
+			continue;
+		if (visible++ != wanted)
+			continue;
+		unsigned output = 0;
+		for (int j = 0; j < 8 && raw[j] != ' '; j++)
+			entry->name[output++] = raw[j];
+		if (raw[8] != ' ') {
+			entry->name[output++] = '.';
+			for (int j = 8; j < 11 && raw[j] != ' '; j++)
+				entry->name[output++] = raw[j];
+		}
+		entry->name[output] = 0;
+		entry->size = w32(raw + 28);
+		entry->attributes = raw[11];
+		return 1;
+	}
+	return 0;
 }
 
-static int file_read_load(const struct dent *d, uint32_t off, void *dst,
-			  uint32_t n, int data)
+static int fat16_contiguous_lba(struct boot98_file *file,
+				uint32_t *absolute_lba)
 {
-	return file_read_internal(d, off, dst, n, data);
+	struct boot98_filesystem *filesystem = file->filesystem;
+	struct fat *fat = fat_state(filesystem);
+	struct fat_file *fat_file = fat_file_state(file);
+	uint16_t cluster = fat_file->cluster;
+	uint64_t left = file->size;
+
+	while (left > (uint32_t)fat->spc * 512) {
+		uint16_t next = fat16_next_cluster(filesystem, cluster);
+
+		if (next != (uint16_t)(cluster + 1))
+			return 0;
+		cluster = next;
+		left -= (uint32_t)fat->spc * 512;
+	}
+	*absolute_lba = filesystem->volume.start_lba + fat->data +
+	                (uint32_t)(fat_file->cluster - 2) * fat->spc;
+	return 1;
+}
+
+static const struct boot98_filesystem_driver fat16_driver = {
+	"fat16", fat16_probe, fat16_mount, fat16_open, fat16_read,
+	fat16_readdir, fat16_contiguous_lba
+};
+
+static int mountpart(int device_index, int partition_index)
+{
+	const struct boot98_filesystem_driver *const drivers[] = {
+		&fat16_driver,
+	};
+	struct boot98_volume volume;
+
+	if (!parts[partition_index].valid)
+		return 0;
+	volume.context = &devs[device_index];
+	volume.start_lba = parts[partition_index].data;
+	volume.sector_size = 512;
+	volume.read = disk_volume_read;
+	return boot98_fs_mount(&mounted_fs, &volume, drivers,
+			       sizeof(drivers) / sizeof(drivers[0]));
 }
 
 /* Keyboard input, parser, and stateful shell selection helpers. */
@@ -655,52 +812,47 @@ static void ls(void)
 				puts(" LBA ");
 				dec(parts[i].start);
 				putc('\n');
-			}
+		}
 		return;
 	}
-	for (uint32_t e = 0; e < fs.roots; e++) {
-		if (!(e & 15) && readsec(fs.d, fs.root + (e >> 4), sec))
+	for (unsigned index = 0;; index++) {
+		struct boot98_dirent entry;
+
+		if (!boot98_fs_readdir(&mounted_fs, "", index, &entry))
 			return;
-		uint8_t *p = sec + (e & 15) * 32;
-		if (!p[0])
-			return;
-		if (p[0] == 0xe5 || p[11] == 0x0f)
-			continue;
-		for (int j = 0; j < 8 && p[j] != ' '; j++)
-			putc(p[j]);
-		if (p[8] != ' ') {
-			putc('.');
-			for (int j = 8; j < 11 && p[j] != ' '; j++)
-				putc(p[j]);
-		}
+		puts(entry.name);
 		putc('\n');
 	}
 }
 static int catfile(const char *n)
 {
-	struct dent d;
-	if (curpart < 0 || !findfile(n, &d))
+	struct boot98_file file;
+	uint64_t offset = 0;
+
+	if (curpart < 0 || !boot98_fs_open(&mounted_fs, n, &file))
 		return 0;
-	uint32_t off = 0;
-	while (off < d.size) {
-		uint32_t k = d.size - off;
-		if (k > 512)
-			k = 512;
-		if (!file_read(&d, off, sec, k))
+	while (offset < file.size) {
+		uint32_t k = file.size - offset > 512 ?
+		             512 : (uint32_t)(file.size - offset);
+		if (!boot98_file_read(&file, offset, sec, k))
 			return 0;
 		for (uint32_t i = 0; i < k; i++)
 			putc(sec[i]);
-		off += k;
+		offset += k;
 	}
 	return 1;
 }
 static int run_iplware(const char *n)
 {
-	struct dent d;
-	if (curpart < 0 || !findfile(n, &d) || !d.size || d.size > 0xf600 ||
-	    !contiguous(&d))
+	struct boot98_file file;
+	uint32_t file_lba;
+
+	if (curpart < 0 || !boot98_fs_open(&mounted_fs, n, &file) ||
+	    !file.size || file.size > 0xf600 ||
+	    !boot98_file_contiguous_lba(&file, &file_lba))
 		return 0;
-	if (!file_read(&d, 0, (void *)0x60100, d.size))
+	if (!boot98_file_read(&file, 0, (void *)0x60100,
+			      (uint32_t)file.size))
 		return 0;
 	unsigned z = slen(n);
 	rq.status = (z >= 4 && n[z - 4] == '.' &&
@@ -710,8 +862,8 @@ static int run_iplware(const char *n)
 	                    ? 2
 	                    : 1;
 	rq.bios_id = devs[curdev].bios_id;
-	rq.lba = fs.data + (uint32_t)(d.cluster - 2) * fs.spc;
-	rq.buffer = d.size;
+	rq.lba = file_lba;
+	rq.buffer = (uint32_t)file.size;
 	if (call(BOOT98_BIOS_IPLWARE))
 		return 0;
 	findboot();
@@ -733,17 +885,18 @@ static uint32_t crc32_image(const uint8_t *p, uint32_t n)
 }
 static int run_applet(const char *n, int argc, char **argv)
 {
-	struct dent d;
+	struct boot98_file file;
 	uint8_t *image = (uint8_t *)0x50000;
-	if (curpart < 0 || !findfile(n, &d) ||
-	    d.size < sizeof(struct boot98_applet_header) || d.size > 0x10000 ||
-	    !file_read(&d, 0, image, d.size))
+	if (curpart < 0 || !boot98_fs_open(&mounted_fs, n, &file) ||
+	    file.size < sizeof(struct boot98_applet_header) ||
+	    file.size > 0x10000 ||
+	    !boot98_file_read(&file, 0, image, (uint32_t)file.size))
 		return 0;
 	struct boot98_applet_header *h = (struct boot98_applet_header *)image;
 	if (h->magic != BOOT98_APPLET_MAGIC || h->abi_version != 1 ||
-	    h->header_size != sizeof(*h) || h->image_size != d.size ||
-	    h->entry_offset < h->header_size || h->entry_offset >= d.size ||
-	    crc32_image(image, d.size) != h->crc32)
+	    h->header_size != sizeof(*h) || h->image_size != file.size ||
+	    h->entry_offset < h->header_size || h->entry_offset >= file.size ||
+	    crc32_image(image, (uint32_t)file.size) != h->crc32)
 		return 0;
 	struct boot98_applet_services s = {1, sizeof(s), putc, puts,
 	                                   applet_key};
@@ -865,14 +1018,32 @@ static void build_pc98_disk_setup(uint8_t *bp)
  * extension block, then enter the ELF entry point.  BIOS logical H/S and the
  * original BIOS drive number are preserved for the kernel partition parser.
  */
-static int linuxboot(void)
+static int vmlinux_probe(struct boot98_file *file)
 {
-	struct dent d;
+	struct eh e;
+
+	return file->size <= 0xffffffffU &&
+	       boot98_file_read(file, 0, &e, sizeof(e)) &&
+	       w32(e.id) == 0x464c457f && e.id[4] == 1 && e.id[5] == 1 &&
+	       e.machine == 3;
+}
+
+static void load_progress(void *context, uint32_t bytes)
+{
+	if (*(const int *)context)
+		load_data_done += bytes;
+	else
+		load_text_done += bytes;
+	show_load_progress();
+}
+
+static int vmlinux_load(struct boot98_file *file, const char *arguments)
+{
 	struct eh e;
 	struct ph p;
 	unsigned load_segments = 0;
-	if (curpart < 0 || !kernel_name[0] || !findfile(kernel_name, &d) ||
-	    !file_read(&d, 0, &e, sizeof(e)))
+
+	if (!boot98_file_read(file, 0, &e, sizeof(e)))
 		return 0;
 	if (w32(e.id) != 0x464c457f || e.id[4] != 1 || e.id[5] != 1 ||
 	    e.machine != 3 || e.phsize != sizeof(p) || e.phnum > 16)
@@ -880,12 +1051,13 @@ static int linuxboot(void)
 	load_text_done = load_text_total = 0;
 	load_data_done = load_data_total = 0;
 	for (unsigned i = 0; i < e.phnum; i++) {
-		if (!file_read(&d, e.phoff + i * sizeof(p), &p, sizeof(p)))
+		if (!boot98_file_read(file, e.phoff + i * sizeof(p), &p,
+				      sizeof(p)))
 			return 0;
 		if (p.type != 1)
 			continue;
 		if (p.filesz > p.memsz || p.paddr < 0x100000 ||
-		    p.off + p.filesz < p.off || p.off + p.filesz > d.size)
+		    p.off + p.filesz < p.off || p.off + p.filesz > file->size)
 			return 0;
 		if (p.flags & 2) {
 			if (load_data_total + p.filesz < load_data_total)
@@ -900,23 +1072,28 @@ static int linuxboot(void)
 	}
 	if (!load_segments)
 		return 0;
-	begin_load_progress(d.size);
+	begin_load_progress((uint32_t)file->size);
 	enable_highmem();
 	for (unsigned i = 0; i < e.phnum; i++) {
-		if (!file_read(&d, e.phoff + i * sizeof(p), &p, sizeof(p)))
+		int load_class;
+
+		if (!boot98_file_read(file, e.phoff + i * sizeof(p), &p,
+				      sizeof(p)))
 			return 0;
 		if (p.type != 1)
 			continue;
 		if (p.filesz > p.memsz || p.paddr < 0x100000 ||
-		    p.off + p.filesz > d.size)
+		    p.off + p.filesz > file->size)
 			return 0;
-		if (!file_read_load(&d, p.off, (void *)p.paddr, p.filesz,
-				    !!(p.flags & 2)))
+		load_class = !!(p.flags & 2);
+		if (!boot98_file_read_progress(file, p.off, (void *)p.paddr,
+					       p.filesz, load_progress,
+					       &load_class))
 			return 0;
 		memzero((void *)(p.paddr + p.filesz), p.memsz - p.filesz);
 	}
 	memzero((void *)BP_ADDR, 4096);
-	memcopy((void *)CMD_ADDR, kernel_arg, slen(kernel_arg) + 1);
+	memcopy((void *)CMD_ADDR, arguments, slen(arguments) + 1);
 	uint8_t *bp = (uint8_t *)BP_ADDR;
 	*(uint32_t *)(bp + 0x228) = CMD_ADDR;
 	bp[0x210] = 0xff;
@@ -947,6 +1124,18 @@ static int linuxboot(void)
 		bp[0x1e8] = 2;
 	}
 	jump_linux(e.entry);
+}
+
+static const struct boot98_image_loader vmlinux_loader = {
+	"vmlinux", vmlinux_probe, vmlinux_load
+};
+
+static int linuxboot(void)
+{
+	if (curpart < 0 || !kernel_name[0])
+		return 0;
+	return boot98_image_boot(&vmlinux_loader, &mounted_fs, kernel_name,
+				 kernel_arg);
 }
 
 /* Execute one already-tokenized shell command against the current state. */
@@ -1035,8 +1224,8 @@ static int command(char *s)
 			putc('\n');
 			return 1;
 		}
-		fatname(v[1], kernel_name);
-		kernel_name[11] = 0;
+		if (!strcopy(kernel_name, v[1], sizeof(kernel_name)))
+			return 0;
 		kernel_arg[0] = 0;
 		return 1;
 	}
@@ -1055,8 +1244,8 @@ static int command(char *s)
 	if (streq(v[0], "linux")) {
 		if (n < 2)
 			return 0;
-		fatname(v[1], kernel_name);
-		kernel_name[11] = 0;
+		if (!strcopy(kernel_name, v[1], sizeof(kernel_name)))
+			return 0;
 		kernel_arg[0] = 0;
 		unsigned z = 0;
 		for (int i = 2; i < n; i++) {
@@ -1079,11 +1268,13 @@ static int command(char *s)
 		return call(BOOT98_BIOS_CHAIN_BOOT) == 0;
 	}
 	if (streq(v[0], "source")) {
-		struct dent d;
-		if (n != 2 || !findfile(v[1], &d) || d.size >= CFG_MAX ||
-		    !file_read(&d, 0, cfg, d.size))
+		struct boot98_file file;
+
+		if (n != 2 || !boot98_fs_open(&mounted_fs, v[1], &file) ||
+		    file.size >= CFG_MAX ||
+		    !boot98_file_read(&file, 0, cfg, (uint32_t)file.size))
 			return 0;
-		cfg[d.size] = 0;
+		cfg[(uint32_t)file.size] = 0;
 		char *p = (char *)cfg;
 		unsigned ln = 1;
 		while (*p) {

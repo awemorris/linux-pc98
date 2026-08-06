@@ -5,6 +5,8 @@ CC := gcc
 ASFLAGS := --32
 STAGE2_CFLAGS := -m32 -march=i386 -Os -ffreestanding -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -Wall -Wextra -Werror
 SCRIPTS_DIR := ../scripts
+STAGE2_OBJS := boot98-stage2-entry.o boot98-stage2.o boot98-fs.o \
+	boot98-image.o
 
 all: boot2.bin ipl-lba0.bin ipl-lba2.bin ipl-lba0.img ipl-lba2.img \
 	ipl-part.img IO.SYS BOOT.SYS \
@@ -112,11 +114,17 @@ boot98-fdd-ipl.bin: boot98-fdd-ipl.elf
 boot98-stage2-entry.o: boot98-stage2-entry.S
 	$(AS) $(ASFLAGS) $< -o $@
 
-boot98-stage2.o: boot98-stage2.c boot98-abi.h
+boot98-stage2.o: boot98-stage2.c boot98-abi.h boot98-fs.h boot98-image.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
-boot98-stage2.elf: boot98-stage2-entry.o boot98-stage2.o boot98-stage2.ld
-	$(LD) -m elf_i386 -T boot98-stage2.ld -nostdlib boot98-stage2-entry.o boot98-stage2.o -o $@
+boot98-fs.o: boot98-fs.c boot98-fs.h
+	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
+
+boot98-image.o: boot98-image.c boot98-image.h boot98-fs.h
+	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
+
+boot98-stage2.elf: $(STAGE2_OBJS) boot98-stage2.ld
+	$(LD) -m elf_i386 -T boot98-stage2.ld -nostdlib $(STAGE2_OBJS) -o $@
 
 BOOT.SYS: boot98-stage2.elf $(SCRIPTS_DIR)/patch-boot98-bin.py
 	$(OBJCOPY) -O binary $< $@

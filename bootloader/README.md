@@ -66,6 +66,13 @@ the BIOS drive number, and an ABI version are also passed to Linux in a
 `BOOT.SYS` is the protected-mode third stage. Probe status and the menu are
 written sequentially from the next text row. It displays this menu:
 
+Its shell, configuration reader, applet support, IPLware loader, and kernel
+loader use the generic interfaces in `boot98-fs.h` and `boot98-image.h`.
+FAT16 is currently the only registered filesystem driver, but 8.3 conversion,
+cluster traversal, and directory-entry parsing are private to that driver.
+The public path interface accepts up to 255 bytes so that FAT32, ext4, and UFS
+drivers can be added without changing those consumers.
+
 ```text
 Boot from:
   1) Auto (HDD 1 partition 1 boot.cfg)

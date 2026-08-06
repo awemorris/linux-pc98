@@ -43,11 +43,18 @@ root, loads the contiguous file at `1000:0000`, and enters it. No prefix of
 partition can be selected by the distributed stubs or the NEC fixed-disk
 boot menu, while DOS mounts it as an ordinary volume.
 
-The complete real-mode `IO.SYS` probes BIOS-visible disks with
-`INT 1Bh/AH=84h`, uses each disk's returned logical CHS to interpret its
-PC-98 partition table, opens the FAT16 filesystem at the BOOT entry's start,
-and loads `BOOT.SYS`.  It does not program ATA or SCSI registers and is
-therefore independent of the controller used by the BIOS.
+The real-mode `IO.SYS` is intentionally small. It validates the versioned
+handoff written by the PBR, opens that already-selected FAT16 BOOT volume,
+loads and validates `BOOT.SYS`, installs the BIOS gateway, and enters
+32-bit protected mode. Device discovery and the normal user interface belong
+to `BOOT.SYS`; `IO.SYS` retains only fatal diagnostics. It does not program
+ATA or SCSI registers and is therefore independent of the controller used by
+the BIOS.
+
+`BOOT.SYS` may occupy up to 256 KiB at physical addresses `0x20000` through
+`0x5ffff`. `IO.SYS` advances the destination segment after every 64 KiB while
+loading and while verifying the payload checksum, so its loader is not
+limited by a 16-bit offset.
 
 Images created without geometry options use the BIOS 8/17 layout, so
 Partition 1 begins at cylinder 1 (LBA 136). The image builder also accepts
@@ -160,14 +167,15 @@ as the kernel starts and unregisters when the normal PC-98 console is ready.
 
 | Physical address | Contents                                           |
 |------------------|----------------------------------------------------|
-| `0x00000700`     | Handoff data between BOOT98 stages                 |
-| `0x00010000`     | Complete `IO.SYS` or legacy FAT16 loader           |
-| `0x00020000`     | 4096-byte `boot_params` structure                  |
-| `0x00021000`     | Kernel command line                                |
-| `0x00022000`     | `SETUP_PC98_DISK` setup-data node                   |
-| `0x00028000`     | BPB and FAT read buffer                            |
-| `0x00030000`     | Directory and kernel read buffer                   |
-| `0x00100000`     | bzImage payload, or first ELF `PT_LOAD` segment    |
+| `0x00000700`     | Versioned PBR-to-`IO.SYS` bootstrap handoff        |
+| `0x00000800`     | `IO.SYS` device descriptor and BIOS gateway data   |
+| `0x00010000`     | Complete `IO.SYS`                                  |
+| `0x00020000`     | `BOOT.SYS` load image (maximum 256 KiB)             |
+| `0x00060000`     | Reserved end of `BOOT.SYS` image/BSS area           |
+| `0x00070000`     | 4096-byte Linux `boot_params` structure             |
+| `0x00071000`     | Kernel command line                                 |
+| `0x00072000`     | `SETUP_PC98_DISK` setup-data node                    |
+| `0x00100000`     | First ELF `PT_LOAD` segment                          |
 
 The partition IPL obtains the memory sizes used for the e820 map from the
 PC-98 BIOS work area: `0:0501h` describes conventional RAM, `0:0401h`

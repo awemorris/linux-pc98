@@ -18,6 +18,10 @@
 	.set STACK_SEG,         0x9000
 	.set HANDOFF,           0x0700
 	.set HANDOFF_MAGIC,     0x4839384c /* "L98H" */
+	.set HANDOFF_VERSION,   1
+	.set HANDOFF_SIZE,      24
+	.set HANDOFF_FS_FAT16,  1
+	.set HANDOFF_GEOMETRY,  1
 
 _start:
 	jmp	pbr_start
@@ -248,21 +252,23 @@ write_handoff:
 	xorw	%ax, %ax
 	movw	%ax, %es
 	movl	$HANDOFF_MAGIC, %es:HANDOFF
+	movw	$HANDOFF_VERSION, %es:HANDOFF+4
+	movw	$HANDOFF_SIZE, %es:HANDOFF+6
 	movl	partition_lba, %eax
-	movl	%eax, %es:HANDOFF+4
+	movl	%eax, %es:HANDOFF+8
 	movb	boot_drive, %al
-	movb	%al, %es:HANDOFF+8
+	movb	%al, %es:HANDOFF+12
 	movb	disk_heads, %al
-	movb	%al, %es:HANDOFF+9
+	movb	%al, %es:HANDOFF+13
 	movb	disk_sectors, %al
-	movb	%al, %es:HANDOFF+10
-	movb	$1, %es:HANDOFF+11
+	movb	%al, %es:HANDOFF+14
+	movb	$HANDOFF_FS_FAT16, %es:HANDOFF+15
+	movw	$512, %es:HANDOFF+16
+	movw	$HANDOFF_GEOMETRY, %es:HANDOFF+18
 	movw	saved_si, %ax
-	movw	%ax, %es:HANDOFF+12
+	movw	%ax, %es:HANDOFF+20
 	movw	saved_di, %ax
-	movw	%ax, %es:HANDOFF+14
-	movb	disk_flags, %al
-	movb	%al, %es:HANDOFF+16
+	movw	%ax, %es:HANDOFF+22
 	popw	%es
 	ret
 

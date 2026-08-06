@@ -414,8 +414,8 @@ static int line(char *b)
 		int k = key();
 		if (k == 0x1b) {
 			call(BOOT98_BIOS_RETURN_MENU);
-			for (;;)
-				;
+			b[0] = 0;
+			return -1;
 		}
 		if (k == '\r' || k == '\n') {
 			putc('\n');
@@ -989,6 +989,8 @@ static int command(char *s)
 			return 0;
 		rq.status = curpart >= 0 ? 1 : 0;
 		rq.bios_id = devs[curdev].bios_id;
+		rq.heads = devs[curdev].heads;
+		rq.sectors = devs[curdev].sectors;
 		rq.lba = curpart >= 0 ? parts[curpart].start : 0;
 		return call(BOOT98_BIOS_CHAIN_BOOT) == 0;
 	}
@@ -1097,6 +1099,8 @@ static void chain_menu_device(int floppy, unsigned ordinal)
 	kernel_name[0] = kernel_arg[0] = 0;
 	rq.status = 0;
 	rq.bios_id = devs[di].bios_id;
+	rq.heads = devs[di].heads;
+	rq.sectors = devs[di].sectors;
 	rq.lba = 0;
 	if (call(BOOT98_BIOS_CHAIN_BOOT) != 0)
 		puts("Boot failed.\n");
@@ -1161,32 +1165,37 @@ void boot98_main(const struct boot98_handoff *h)
 {
 	char b[LINE_MAX];
 	ho = h;
-	if (!h || h->magic != BOOT98_HANDOFF_MAGIC)
+	if (!h || h->magic != BOOT98_HANDOFF_MAGIC || h->version != 1 ||
+	    h->size < sizeof(*h) || !h->device_count || !h->device_table ||
+	    !h->bios_gateway)
 		for (;;)
 			asm volatile("cli; hlt");
 	devs = (const struct boot98_device *)h->device_table;
 	gw = (boot98_bios_gateway_t)h->bios_gateway;
-	findboot();
-	call(BOOT98_BIOS_DISPLAY_RESET);
-	int automatic = startup_menu();
-	clear_lower();
-	puts("BOOT98 Stage 3 (32-bit C)\n");
-	if (curpart >= 0) {
-		puts("source: ");
-		devname(curdev);
-		putc(':');
-		puts(parts[curpart].name);
-		putc('\n');
-	}
-	if (automatic) {
-		char source_cfg[] = "source BOOT.CFG";
-		if (curpart < 0 || !command(source_cfg))
-			puts("BOOT.CFG automatic boot failed.\n");
-	}
 	for (;;) {
-		prompt();
-		line(b);
-		if (!command(b))
-			puts("error\n");
+		findboot();
+		call(BOOT98_BIOS_DISPLAY_RESET);
+		int automatic = startup_menu();
+		clear_lower();
+		puts("BOOT98 Stage 3 (32-bit C)\n");
+		if (curpart >= 0) {
+			puts("source: ");
+			devname(curdev);
+			putc(':');
+			puts(parts[curpart].name);
+			putc('\n');
+		}
+		if (automatic) {
+			char source_cfg[] = "source BOOT.CFG";
+			if (curpart < 0 || !command(source_cfg))
+				puts("BOOT.CFG automatic boot failed.\n");
+		}
+		for (;;) {
+			prompt();
+			if (line(b) < 0)
+				break;
+			if (!command(b))
+				puts("error\n");
+		}
 	}
 }

@@ -13,6 +13,31 @@
 
 #define BOOT98_STAGE2_MAGIC 0x53383942U  /* "B98S" */
 #define BOOT98_HANDOFF_MAGIC 0x48323842U /* "B82H" */
+#define BOOT98_BOOTSTRAP_MAGIC 0x4839384cU /* "L98H" */
+
+enum boot98_bootstrap_filesystem {
+	BOOT98_BOOTSTRAP_FS_FAT16 = 1,
+};
+
+enum boot98_bootstrap_flags {
+	BOOT98_BOOTSTRAP_HAS_GEOMETRY = 1U << 0,
+};
+
+/* Versioned PBR -> IO.SYS contract at physical address 0000:0700. */
+struct boot98_bootstrap_handoff {
+	uint32_t magic;
+	uint16_t version;
+	uint16_t size;
+	uint32_t partition_lba;
+	uint8_t boot_bios_id;
+	uint8_t heads;
+	uint8_t sectors;
+	uint8_t filesystem_hint;
+	uint16_t sector_size;
+	uint16_t flags;
+	uint16_t saved_si;
+	uint16_t saved_di;
+} __attribute__((packed));
 
 struct boot98_stage2_header {
 	uint32_t magic;
@@ -85,6 +110,8 @@ typedef uint32_t (*boot98_bios_gateway_t)(struct boot98_bios_request *request);
 
 _Static_assert(sizeof(struct boot98_stage2_header) == 20,
                "BOOT98 Stage 2 header must remain 20 bytes");
+_Static_assert(sizeof(struct boot98_bootstrap_handoff) == 24,
+               "BOOT98 bootstrap handoff must remain 24 bytes");
 _Static_assert(sizeof(struct boot98_handoff) == 20,
                "BOOT98 handoff must remain 20 bytes");
 _Static_assert(sizeof(struct boot98_bios_request) == 16,

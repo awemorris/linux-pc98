@@ -1,246 +1,77 @@
 /*
- * PC-9800 Bootloader
+ * PC-9800 Bootloader minimal real-mode system loader
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 /*
- * BOOT98 FAT16 system loader (IO.SYS).
- *
- * Stage 0 currently reuses disk-ipl.S.  This stage stays in real mode,
- * enumerates the bounded BIOS device namespace with INT 1Bh SENSE, and
- * records one descriptor per detected device for the future C Stage 2.
- *
- * Control flow:
- *
- *   FAT16 PBR -> load contiguous IO.SYS from the FAT filesystem
- *   -> probe BIOS devices -> locate FAT16 BOOT/BOOT.SYS
- *   -> validate Stage 2 -> show menu
- *   -> chain-load an IPL/PBR or enter 32-bit Stage 2.
- *
- * The fallback menu must remain usable when Stage 2 is absent or corrupt.
- * All disk geometry in descriptors comes from INT 1Bh SENSE; no fixed H=8
- * assumption is permitted in partition parsing.  BIOS calls are centralized
- * below so the protected-mode gateway and real-mode menu use identical disk
- * semantics.
- *
- * Low-memory ownership:
- *
- *   0000:0700  Stage 0 handoff supplied by disk-ipl.S
- *   CS-local   Stage 1 code, tables, bounce buffer, and GDT
- *   5000:0000  Stage 2 load buffer / applet load area
- *   9000:fffe  Stage 1 real-mode stack
+ * The FAT16 PBR loads this file at 1000:0000 and supplies a versioned
+ * bootstrap handoff at 0000:0700.  IO.SYS validates that handoff, loads
+ * BOOT.SYS from the already selected BOOT volume, installs the BIOS gateway,
+ * and enters 32-bit protected mode.  Device discovery and all normal UI are
+ * intentionally owned by BOOT.SYS.
  */
 
 	.code16
 	.section .text
 	.globl _start
 
-	.set HANDOFF,          0x0700
-	.set HANDOFF_MAGIC,    0x4839384c /* "L98H", current Stage 0 ABI */
-	.set TABLE_SEG,        0x0800
-	.set TEXT_SEG,         0xa000
-	.set ATTR_SEG,         0xa200
-	.set STACK_SEG,        0x9000
+	.set HANDOFF,             0x0700
+	.set HANDOFF_MAGIC,       0x4839384c /* "L98H" */
+	.set HANDOFF_VERSION,     1
+	.set HANDOFF_SIZE,        24
+	.set HO_MAGIC,            0
+	.set HO_VERSION,          4
+	.set HO_SIZE,             6
+	.set HO_PARTITION_LBA,    8
+	.set HO_BOOT_BIOS_ID,    12
+	.set HO_HEADS,           13
+	.set HO_SECTORS,         14
+	.set HO_FILESYSTEM_HINT, 15
+	.set HO_SECTOR_SIZE,     16
+	.set HO_FLAGS,           18
+	.set HO_SAVED_SI,        20
+	.set HO_SAVED_DI,        22
 
-	.set DEV_CLASS_FDD,    1
-	.set DEV_CLASS_IDE,    2
-	.set DEV_CLASS_SCSI,   3
-	.set DEV_FLAG_PRESENT, 1
-	.set DEV_FLAG_GEOMETRY, 2
-	.set DEV_DESC_SIZE,    16
-	.set DEV_MAX,          16
+	.set HO_FS_FAT16,         1
+	.set HO_FLAG_GEOMETRY,    1
 
-	.set DEV_CLASS,        0
-	.set DEV_INDEX,        1
-	.set DEV_BIOS_ID,      2
-	.set DEV_FLAGS,        3
-	.set DEV_SECTOR_SIZE,  4
-	.set DEV_CYLINDERS,    6
-	.set DEV_HEADS,        8
-	.set DEV_SECTORS,      9
-	.set MENU_TYPE_DISK,   1
-	.set MENU_TYPE_PART,   2
-	.set MENU_TYPE_SHELL,  3
-	.set MENU_SIZE,        16
-	.set MENU_MAX,         16
-	.set MENU_TYPE,        0
-	.set MENU_BIOS_ID,     1
-	.set MENU_CLASS,       2
-	.set MENU_DEV_INDEX,   3
-	.set MENU_PART_INDEX,  4
-	.set MENU_HEADS,       5
-	.set MENU_SECTORS,     6
-	.set MENU_LBA,         8
-	.set MENU_DATA_LBA,    12
+	.set TABLE_SEG,           0x0800
+	.set TEXT_SEG,            0xa000
+	.set ATTR_SEG,            0xa200
+	.set STACK_SEG,           0x9000
+	.set STAGE2_SEG,          0x2000
+	.set STAGE2_MAX_SIZE,     0x40000
+
+	.set DEV_CLASS_IDE,       2
+	.set DEV_CLASS_SCSI,      3
+	.set DEV_FLAG_PRESENT,    1
+	.set DEV_FLAG_GEOMETRY,   2
+	.set DEV_FLAG_BOOT,       4
+	.set DEV_DESC_SIZE,      16
+
+	.set DEV_CLASS,           0
+	.set DEV_INDEX,           1
+	.set DEV_BIOS_ID,         2
+	.set DEV_FLAGS,           3
+	.set DEV_SECTOR_SIZE,     4
+	.set DEV_CYLINDERS,       6
+	.set DEV_HEADS,           8
+	.set DEV_SECTORS,         9
+
+	/* Private descriptor used by the common BIOS read/chain helpers. */
+	.set MENU_SIZE,          16
+	.set MENU_TYPE,           0
+	.set MENU_BIOS_ID,        1
+	.set MENU_CLASS,          2
+	.set MENU_PART_INDEX,     4
+	.set MENU_HEADS,          5
+	.set MENU_SECTORS,        6
+	.set MENU_LBA,            8
 
 _start:
-	/*
-	 * Keep the old raw partition-loader entry as a compatibility path.  The
-	 * normal FAT16 PBR now loads this complete IO.SYS at 1000:0000, which
-	 * immediately branches to stage1_main below.
-	 */
-	jmp	bootstrap_entry
-	nop
-	.org	0x003e
-
-bootstrap_entry:
-	/*
-	 * A fixed-disk menu loads only this partition IPL sector at the normal
-	 * firmware address 1fc0:0000.  Do not depend on its private register
-	 * contract: recover the boot drive from the BIOS work area, find BOOT in
-	 * the native partition table, and reload the complete IO.SYS image from
-	 * that partition's IPL-start CHS.  Development media may still preload the
-	 * image at 1000:0000 and enter it directly.
-	 */
-	movw	%cs, %ax
-	cmpw	$0x1000, %ax
-	je	stage1_main
-	cli
-	cld
-	pushw	%cs
-	popw	%ds
-	movw	%si, bootstrap_saved_si
-	movw	%di, bootstrap_saved_di
-	movw	$STACK_SEG, %ax
-	movw	%ax, %ss
-	movw	$0xfffe, %sp
-	sti
-
-	pushw	%ds
-	xorw	%ax, %ax
-	movw	%ax, %ds
-	movb	0x0584, %al
-	popw	%ds
-	andb	$0x7f, %al
-	orb	$0x80, %al
-	movb	%al, bootstrap_boot_id
-	call	bootstrap_write_handoff
-
-	/* Read the PC-98 partition table from physical LBA 1 (CHS 0/0/1). */
-	movw	$TABLE_SEG, %ax
-	movw	%ax, %es
-	xorw	%bp, %bp
-	xorw	%cx, %cx
-	movw	$0x0001, %dx
-	call	bootstrap_read
-	jc	bootstrap_failure
-
-	movw	$TABLE_SEG, %ax
-	movw	%ax, %ds
-	xorw	%si, %si
-	movw	$16, %cx
-bootstrap_find_partition:
-	cmpb	$0, (%si)
-	je	bootstrap_next_partition
-	pushw	%cx
-	pushw	%si
-	addw	$16, %si
-	xorw	%bx, %bx
-	movw	$16, %cx
-bootstrap_compare_name:
-	lodsb
-	cmpb	%cs:bootstrap_boot_name(%bx), %al
-	jne	bootstrap_name_mismatch
-	incw	%bx
-	loop	bootstrap_compare_name
-	popw	%si
-	popw	%cx
-	movb	4(%si), %al
-	movb	%al, %cs:bootstrap_ipl_sector
-	movb	5(%si), %al
-	movb	%al, %cs:bootstrap_ipl_head
-	movw	6(%si), %ax
-	movw	%ax, %cs:bootstrap_ipl_cylinder
-	jmp	bootstrap_partition_found
-bootstrap_name_mismatch:
-	popw	%si
-	popw	%cx
-bootstrap_next_partition:
-	addw	$32, %si
-	loop	bootstrap_find_partition
-	jmp	bootstrap_failure
-
-bootstrap_partition_found:
-	pushw	%cs
-	popw	%ds
-	movb	$14, bootstrap_remaining
-	movw	$0, %cs:bootstrap_offset
-bootstrap_load:
-	movw	$0x1000, %ax
-	movw	%ax, %es
-	movw	%cs:bootstrap_offset, %bp
-	movw	%cs:bootstrap_ipl_cylinder, %cx
-	movb	%cs:bootstrap_ipl_head, %dh
-	movb	%cs:bootstrap_ipl_sector, %dl
-	call	bootstrap_read
-	jc	bootstrap_failure
-	addw	$512, %cs:bootstrap_offset
-	incb	%cs:bootstrap_ipl_sector
-	decb	%cs:bootstrap_remaining
-	jnz	bootstrap_load
-	ljmp	$0x1000, $stage1_main
-
-bootstrap_write_handoff:
-	pushw	%es
-	xorw	%ax, %ax
-	movw	%ax, %es
-	movl	$0, %es:HANDOFF
-	movl	$0, %es:HANDOFF+4
-	movl	$0, %es:HANDOFF+8
-	movl	$0, %es:HANDOFF+12
-	movl	$HANDOFF_MAGIC, %es:HANDOFF
-	movb	%cs:bootstrap_boot_id, %al
-	movb	%al, %es:HANDOFF+8
-	movb	$1, %es:HANDOFF+11
-	movw	%cs:bootstrap_saved_si, %ax
-	movw	%ax, %es:HANDOFF+12
-	movw	%cs:bootstrap_saved_di, %ax
-	movw	%ax, %es:HANDOFF+14
-	popw	%es
-	ret
-
-bootstrap_read:
-	pushw	%ds
-	xorw	%ax, %ax
-	movw	%ax, %ds
-	movb	%cs:bootstrap_boot_id, %al
-	movb	$0x06, %ah
-	movw	$512, %bx
-	movw	%cs:bootstrap_saved_si, %si
-	movw	%cs:bootstrap_saved_di, %di
-	int	$0x1b
-	pushfw
-	popw	%ax
-	movw	%ax, %cs:bootstrap_read_flags
-	popw	%ds
-	pushw	%cs:bootstrap_read_flags
-	popfw
-	ret
-
-bootstrap_failure:
-	movb	$0x06, %al
-	outb	%al, $0x37
-1:
-	hlt
-	jmp	1b
-
-bootstrap_boot_name:      .ascii "BOOT            "
-bootstrap_saved_si:       .word 0
-bootstrap_saved_di:       .word 0
-bootstrap_read_flags:     .word 0
-bootstrap_offset:         .word 0
-bootstrap_ipl_cylinder:   .word 0
-bootstrap_boot_id:        .byte 0
-bootstrap_ipl_head:       .byte 0
-bootstrap_ipl_sector:     .byte 0
-bootstrap_remaining:      .byte 0
-
-	/* Keep the complete partition-IPL bootstrap in its first 512-byte sector. */
-	.org	0x01fe
-	.word	0xaa55
-	.org	512
+	jmp	stage1_main
 
 stage1_main:
 	cli
@@ -252,134 +83,414 @@ stage1_main:
 	popw	%ds
 	sti
 
-	/* Select and start the normal PC-98 640x400 display. */
+	call	validate_bootstrap_handoff
+	jc	fatal_handoff
+	call	initialize_boot_device
+	call	load_stage2
+	jc	fatal_stage2
+	jmp	enter_stage2
+
+fatal_handoff:
+	movw	$fatal_handoff_message, %si
+	jmp	fatal
+fatal_stage2:
+	movw	$fatal_stage2_message, %si
+fatal:
+	/* Fatal diagnostics are the only display output retained in IO.SYS. */
 	movb	$0x42, %ah
 	movb	$0xc0, %ch
 	int	$0x18
 	movb	$0x40, %ah
 	int	$0x18
+	pushw	%cs
+	popw	%ds
+	movw	$TEXT_SEG, %ax
+	movw	%ax, %es
+	movw	$ATTR_SEG, %ax
+	movw	%ax, %gs
+	xorw	%di, %di
+1:
+	lodsb
+	testb	%al, %al
+	jz	fatal_stop
+	movb	%al, %es:(%di)
+	movb	$0, %es:1(%di)
+	movb	$0xe1, %gs:(%di)
+	addw	$2, %di
+	jmp	1b
+fatal_stop:
+	cli
+1:
+	hlt
+	jmp	1b
 
-	call	clear_upper
-	call	draw_banner
+validate_bootstrap_handoff:
+	pushw	%ds
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	cmpl	$HANDOFF_MAGIC, HANDOFF+HO_MAGIC
+	jne	1f
+	cmpw	$HANDOFF_VERSION, HANDOFF+HO_VERSION
+	jne	1f
+	cmpw	$HANDOFF_SIZE, HANDOFF+HO_SIZE
+	jb	1f
+	cmpb	$HO_FS_FAT16, HANDOFF+HO_FILESYSTEM_HINT
+	jne	1f
+	cmpw	$512, HANDOFF+HO_SECTOR_SIZE
+	jne	1f
+	testw	$HO_FLAG_GEOMETRY, HANDOFF+HO_FLAGS
+	jz	1f
+	cmpb	$0, HANDOFF+HO_HEADS
+	je	1f
+	cmpb	$0, HANDOFF+HO_SECTORS
+	je	1f
+	popw	%ds
+	clc
+	ret
+1:
+	popw	%ds
+	stc
+	ret
+
+/* Construct the one boot-origin descriptor needed before incremental probing
+ * is added in the next refactoring step. */
+initialize_boot_device:
+	pushw	%es
+	pushw	%ds
+	popw	%es
+	movw	$device_table, %di
+	xorw	%ax, %ax
+	movw	$DEV_DESC_SIZE, %cx
+	rep stosb
+	popw	%es
 
 	pushw	%ds
 	xorw	%ax, %ax
 	movw	%ax, %ds
-	cmpl	$HANDOFF_MAGIC, HANDOFF
+	movb	HANDOFF+HO_BOOT_BIOS_ID, %al
+	movb	HANDOFF+HO_HEADS, %ch
+	movb	HANDOFF+HO_SECTORS, %cl
+	movl	HANDOFF+HO_PARTITION_LBA, %edx
 	popw	%ds
-	jne	bad_handoff
 
-	movw	$probing_label, %si
-	movw	$(6 * 160), %di
-	call	print_string
-	call	probe_all
-	pushw	%cs
-	popw	%ds
-	movw	$found_label, %si
-	movw	$(7 * 160), %di
-	call	print_string
-	movb	device_count, %al
-	call	print_hex8
-	call	build_menu
-	pushw	%cs
-	popw	%ds
-	call	load_stage2
-	pushw	%cs
-	popw	%ds
-	cmpb	$1, stage2_valid
-	je	enter_stage2
-	/* Disk option ROMs need not preserve display state or extended segments. */
-	movb	$0x42, %ah
-	movb	$0xc0, %ch
-	int	$0x18
-	movb	$0x40, %ah
-	int	$0x18
-	pushw	%cs
-	popw	%ds
-	call	clear_upper
-	call	draw_banner
-	call	show_menu
-	call	menu_initial_input
-	jnc	menu_key
-	/* BOOT without a valid Stage 2 still has a useful recovery PBR. */
-	movw	boot_menu_entry, %si
-	testw	%si, %si
-	jnz	menu_timeout_boot
-	movw	active_menu_entry, %si
-	testw	%si, %si
-	jz	menu_input
-menu_timeout_boot:
-	subw	$menu_table, %si
-	shrw	$4, %si
-	movw	%si, %ax
-	movb	%al, selected_menu
-	call	chain_selected
-	jmp	menu_input
-
-bad_handoff:
-	movw	$handoff_error, %si
-	movw	$(6 * 160), %di
-	call	print_string
-
-stop:
-	hlt
-	jmp	stop
-
-menu_input:
-	xorb	%ah, %ah
-	int	$0x18
-menu_key:
-	cmpb	$'1', %al
-	jb	menu_input
-	cmpb	$'9', %al
-	ja	menu_input
-	subb	$'1', %al
-	cmpb	menu_count, %al
-	jae	menu_input
-	movb	%al, selected_menu
-	movzbl	%al, %esi
-	shlw	$4, %si
-	addw	$menu_table, %si
-	cmpb	$MENU_TYPE_SHELL, MENU_TYPE(%si)
-	je	enter_stage2
-	call	chain_selected
-	jmp	menu_input
-
-/* Wait up to three wall-clock seconds for the first menu key.  The PC-98
- * calendar service is used instead of a CPU-speed-dependent delay loop. */
-menu_initial_input:
-	call	read_clock_second
-	movb	%al, %cs:timeout_start
-	movw	$0x2000, %cs:timeout_budget
+	movb	%al, device_table+DEV_BIOS_ID
+	movb	%al, gateway_menu+MENU_BIOS_ID
+	movb	%ch, device_table+DEV_HEADS
+	movb	%ch, gateway_menu+MENU_HEADS
+	movb	%cl, device_table+DEV_SECTORS
+	movb	%cl, gateway_menu+MENU_SECTORS
+	movw	$512, device_table+DEV_SECTOR_SIZE
+	movb	$(DEV_FLAG_PRESENT | DEV_FLAG_GEOMETRY | DEV_FLAG_BOOT), device_table+DEV_FLAGS
+	movb	$DEV_CLASS_IDE, %bl
+	movb	%al, %ah
+	andb	$0xf0, %ah
+	cmpb	$0xa0, %ah
+	jne	1f
+	movb	$DEV_CLASS_SCSI, %bl
 1:
-	movb	$0x01, %ah
-	int	$0x18
-	testb	%bh, %bh
-	jnz	3f
-	call	read_clock_second
-	cmpb	$0xff, %al
-	je	2f
-	cmpb	$0xff, %cs:timeout_start
-	je	2f
-	subb	%cs:timeout_start, %al
-	jnc	4f
-	addb	$60, %al
-4:
-	cmpb	$3, %al
-	jae	5f
+	movb	%bl, device_table+DEV_CLASS
+	movb	%bl, gateway_menu+MENU_CLASS
+	movl	%edx, fat_partition_lba
+	movl	%edx, gateway_menu+MENU_LBA
+	movw	$gateway_menu, chain_entry
+	movb	$1, device_count
+	ret
+
+/* Load and validate BOOT.SYS from the handoff BOOT FAT16 volume. */
+load_stage2:
+	movw	$0x0800, %ax
+	movw	%ax, %es
+	xorw	%bp, %bp
+	movl	fat_partition_lba, %eax
+	call	read_fixed_lba
+	jc	load_stage2_error
+	pushw	%cs
+	popw	%ds
+	movw	%es:0x0b, %ax
+	cmpw	$512, %ax
+	je	1f
+	cmpw	$1024, %ax
+	jne	load_stage2_error
+	movb	$2, fat_sector_scale
+	jmp	2f
+1:
+	movb	$1, fat_sector_scale
 2:
-	decw	%cs:timeout_budget
-	jnz	1b
+	movzbl	%es:0x0d, %eax
+	movzbl	fat_sector_scale, %ecx
+	imull	%ecx, %eax
+	testl	%eax, %eax
+	jz	load_stage2_error
+	cmpl	$510, %eax
+	ja	load_stage2_error
+	movw	%ax, fat_spc
+	movl	fat_partition_lba, %eax
+	movzwl	%es:0x0e, %ecx
+	testl	%ecx, %ecx
+	jz	load_stage2_error
+	movzbl	fat_sector_scale, %edx
+	imull	%edx, %ecx
+	addl	%ecx, %eax
+	movl	%eax, fat_lba
+	movzbl	%es:0x10, %ecx
+	testl	%ecx, %ecx
+	jz	load_stage2_error
+	movzwl	%es:0x16, %edx
+	testl	%edx, %edx
+	jz	load_stage2_error
+	movzbl	fat_sector_scale, %ebx
+	imull	%ebx, %edx
+	imull	%edx, %ecx
+	addl	%ecx, %eax
+	movl	%eax, fat_root_lba
+	movzwl	%es:0x11, %ecx
+	testl	%ecx, %ecx
+	jz	load_stage2_error
+	movw	%cx, fat_root_entries
+	shll	$5, %ecx
+	addl	$511, %ecx
+	shrl	$9, %ecx
+	movw	%cx, fat_root_sectors
+	addl	%ecx, %eax
+	movl	%eax, fat_data_lba
+
+	/* Search the FAT16 fixed root one physical sector at a time. */
+	xorw	%dx, %dx
+3:
+	cmpw	fat_root_sectors, %dx
+	jae	load_stage2_error
+	movl	fat_root_lba, %eax
+	movzwl	%dx, %ecx
+	addl	%ecx, %eax
+	xorw	%bp, %bp
+	call	read_fixed_lba
+	jc	load_stage2_error
+	pushw	%cs
+	popw	%ds
+	xorw	%di, %di
+	movw	$16, %cx
+4:
+	cmpb	$0, %es:(%di)
+	je	load_stage2_error
+	cmpb	$0xe5, %es:(%di)
+	je	5f
+	cmpb	$0x0f, %es:0x0b(%di)
+	je	5f
+	pushw	%cx
+	pushw	%di
+	movw	$stage2_name, %si
+	movw	$11, %cx
+	repe cmpsb
+	popw	%di
+	popw	%cx
+	je	stage2_found
 5:
+	addw	$32, %di
+	loop	4b
+	incw	%dx
+	jmp	3b
+
+stage2_found:
+	movw	%es:0x1a(%di), %ax
+	cmpw	$2, %ax
+	jb	load_stage2_error
+	movw	%ax, fat_cluster
+	movl	%es:0x1c(%di), %eax
+	cmpl	$20, %eax
+	jb	load_stage2_error
+	cmpl	$STAGE2_MAX_SIZE, %eax
+	ja	load_stage2_error
+	movl	%eax, stage2_file_size
+	movl	%eax, stage2_remaining
+	movw	$STAGE2_SEG, stage2_segment
+	movw	$0, stage2_offset
+
+stage2_cluster_loop:
+	movw	$0, fat_sector_in_cluster
+stage2_sector_loop:
+	movzwl	fat_cluster, %eax
+	subl	$2, %eax
+	movzwl	fat_spc, %ecx
+	imull	%ecx, %eax
+	movzwl	fat_sector_in_cluster, %ecx
+	addl	%ecx, %eax
+	addl	fat_data_lba, %eax
+	movw	stage2_segment, %cx
+	movw	%cx, %es
+	movw	stage2_offset, %bp
+	call	read_fixed_lba
+	jc	load_stage2_error
+	pushw	%cs
+	popw	%ds
+	addw	$512, stage2_offset
+	jnc	6f
+	addw	$0x1000, stage2_segment
+6:
+	cmpl	$512, stage2_remaining
+	jbe	stage2_loaded
+	subl	$512, stage2_remaining
+	incw	fat_sector_in_cluster
+	movw	fat_sector_in_cluster, %ax
+	cmpw	fat_spc, %ax
+	jb	stage2_sector_loop
+	movw	fat_cluster, %ax
+	call	stage2_fat_next
+	cmpw	$0xfff8, %ax
+	jae	load_stage2_error
+	cmpw	$2, %ax
+	jb	load_stage2_error
+	movw	%ax, fat_cluster
+	jmp	stage2_cluster_loop
+
+stage2_loaded:
+	call	validate_stage2
+	ret
+load_stage2_error:
 	stc
 	ret
-3:
-	xorb	%ah, %ah
-	int	$0x18
-	clc
+
+stage2_fat_next:
+	pushw	%bx
+	pushw	%dx
+	pushw	%es
+	pushw	%bp
+	movzwl	%ax, %edx
+	shll	$1, %edx
+	movl	%edx, %eax
+	shrl	$9, %eax
+	addl	fat_lba, %eax
+	andw	$511, %dx
+	movw	$TABLE_SEG, %bx
+	movw	%bx, %es
+	xorw	%bp, %bp
+	call	read_fixed_lba
+	jc	1f
+	movw	%dx, %bx
+	movw	%es:(%bx), %ax
+	jmp	2f
+1:
+	movw	$0xffff, %ax
+2:
+	pushw	%cs
+	popw	%ds
+	popw	%bp
+	popw	%es
+	popw	%dx
+	popw	%bx
 	ret
 
-/* Return the RTC second as binary 0..59, or ffh for invalid BCD. */
+validate_stage2:
+	movw	$STAGE2_SEG, %ax
+	movw	%ax, %es
+	cmpl	$0x53383942, %es:0
+	jne	validate_stage2_error
+	cmpw	$1, %es:4
+	jne	validate_stage2_error
+	cmpw	$20, %es:6
+	jne	validate_stage2_error
+	movl	%es:8, %ecx
+	cmpl	stage2_file_size, %ecx
+	jne	validate_stage2_error
+	cmpl	$20, %ecx
+	jb	validate_stage2_error
+	cmpl	$STAGE2_MAX_SIZE, %ecx
+	ja	validate_stage2_error
+	movl	%es:12, %eax
+	movzwl	%es:6, %edx
+	cmpl	%edx, %eax
+	jb	validate_stage2_error
+	cmpl	%ecx, %eax
+	jae	validate_stage2_error
+	movl	%eax, stage2_entry_offset
+
+	/* Sum the payload while advancing ES for every 64 KiB offset wrap. */
+	movzwl	%es:6, %eax
+	subl	%eax, %ecx
+	movw	$STAGE2_SEG, %ax
+	movw	%ax, %es
+	movw	$20, %si
+	xorl	%ebx, %ebx
+1:
+	testl	%ecx, %ecx
+	jz	3f
+	movzbl	%es:(%si), %eax
+	addl	%eax, %ebx
+	incw	%si
+	jnz	2f
+	movw	%es, %ax
+	addw	$0x1000, %ax
+	movw	%ax, %es
+2:
+	decl	%ecx
+	jmp	1b
+3:
+	movw	$STAGE2_SEG, %ax
+	movw	%ax, %es
+	cmpl	%es:16, %ebx
+	jne	validate_stage2_error
+	clc
+	ret
+validate_stage2_error:
+	stc
+	ret
+
+/* Fixed-disk one-sector read. EAX=LBA, ES:BP=destination. */
+read_fixed_lba:
+	pushl	%eax
+	pushw	%bx
+	pushw	%cx
+	pushw	%dx
+	pushw	%si
+	pushw	%di
+	pushw	%ds
+	pushw	%es
+	pushw	%bp
+	xorl	%edx, %edx
+	movw	%cs:chain_entry, %si
+	movzbl	%cs:MENU_HEADS(%si), %edi
+	movzbl	%cs:MENU_SECTORS(%si), %ecx
+	imull	%ecx, %edi
+	testl	%edi, %edi
+	jz	read_fixed_lba_invalid
+	divl	%edi
+	cmpl	$0xffff, %eax
+	ja	read_fixed_lba_invalid
+	movw	%ax, %cx
+	movl	%edx, %eax
+	xorl	%edx, %edx
+	movzbl	%cs:MENU_SECTORS(%si), %edi
+	divl	%edi
+	movb	%al, %dh
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	movw	%cs:chain_entry, %si
+	movb	%cs:MENU_BIOS_ID(%si), %al
+	movb	$0x06, %ah
+	movw	$512, %bx
+	movw	HANDOFF+HO_SAVED_SI, %si
+	movw	HANDOFF+HO_SAVED_DI, %di
+	int	$0x1b
+	pushfw
+	popw	%ax
+	movw	%ax, %cs:disk_flags
+	jmp	read_fixed_lba_done
+read_fixed_lba_invalid:
+	movw	$1, %cs:disk_flags
+read_fixed_lba_done:
+	popw	%bp
+	popw	%es
+	popw	%ds
+	popw	%di
+	popw	%si
+	popw	%dx
+	popw	%cx
+	popw	%bx
+	popl	%eax
+	pushw	%cs:disk_flags
+	popfw
+	ret
+
+/* Return RTC seconds as binary 0..59, or ffh for invalid BCD. */
 read_clock_second:
 	pushw	%bx
 	pushw	%cx
@@ -390,7 +501,7 @@ read_clock_second:
 	pushw	%es
 	pushw	%cs
 	popw	%es
-	movw	$timeout_calendar, %bx
+	movw	$clock_calendar, %bx
 	xorb	%ah, %ah
 	int	$0x1c
 	movb	%es:5(%bx), %al
@@ -416,1201 +527,6 @@ read_clock_second:
 	popw	%dx
 	popw	%cx
 	popw	%bx
-	ret
-
-/* Probe 1.44 MiB FDD 0-3 (DA/UA 30h-33h). */
-probe_all:
-	/* Some original SCSI ROMs do not return from absent-media FDD reads. */
-	pushw	%ds
-	xorw	%ax, %ax
-	movw	%ax, %ds
-	cmpb	$0, 0x04b2
-	popw	%ds
-	jne	probe_ide
-	movb	$DEV_CLASS_FDD, current_class
-	movb	$0x30, current_bios_id
-	movb	$0, current_index
-1:
-	movb	current_bios_id, %al
-	call	bios_read_fdd_boot
-	pushw	%cs
-	popw	%ds
-	jc	2f
-	cmpb	$0x20, read_status
-	jae	2f
-	call	append_fdd
-2:
-	incb	current_bios_id
-	incb	current_index
-	cmpb	$4, current_index
-	jb	1b
-
-probe_ide:
-	/* IDE uses the dense BIOS-visible fixed-disk namespace 80h-83h. */
-	movb	$DEV_CLASS_IDE, current_class
-	movb	$0x80, current_bios_id
-	movb	$0, current_index
-3:
-	movb	current_bios_id, %al
-	call	bios_sense
-	pushw	%cs
-	popw	%ds
-	jc	4f
-	cmpb	$0x20, sense_status
-	jae	4f
-	call	validate_fixed_sense
-	jc	4f
-	movb	current_bios_id, %al
-	call	bios_read_lba0
-	pushw	%cs
-	popw	%ds
-	jc	4f
-	cmpb	$0x20, read_status
-	jae	4f
-	call	append_fixed
-4:
-	incb	current_bios_id
-	incb	current_index
-	cmpb	$4, current_index
-	jb	3b
-
-	/* PC-9801-92 and compatible option ROMs accept the A0h-A7h aliases. */
-	movb	$DEV_CLASS_SCSI, current_class
-	movb	$0xa0, current_bios_id
-	movb	$0, current_index
-5:
-	/* PC-9801-92 publishes the successfully probed target bitmap at 0482h. */
-	pushw	%ds
-	xorw	%ax, %ax
-	movw	%ax, %ds
-	movb	0x0482, %al
-	popw	%ds
-	movb	current_index, %cl
-	shrb	%cl, %al
-	testb	$1, %al
-	jz	6f
-	movb	current_bios_id, %al
-	call	bios_sense
-	pushw	%cs
-	popw	%ds
-	jc	6f
-	cmpb	$0x20, sense_status
-	jae	6f
-	call	validate_fixed_sense
-	jc	6f
-	call	append_fixed
-6:
-	incb	current_bios_id
-	incb	current_index
-	cmpb	$8, current_index
-	jb	5b
-	ret
-
-validate_fixed_sense:
-	cmpw	$512, sense_bytes
-	jne	1f
-	testb	$0xff, sense_heads
-	jz	1f
-	testb	$0xff, sense_sectors
-	jz	1f
-	clc
-	ret
-1:
-	stc
-	ret
-
-append_fdd:
-	call	allocate_descriptor
-	jc	1f
-	movb	$DEV_FLAG_PRESENT, DEV_FLAGS(%di)
-	movw	$0, DEV_SECTOR_SIZE(%di)
-	movw	$0, DEV_CYLINDERS(%di)
-	movb	$0, DEV_HEADS(%di)
-	movb	$0, DEV_SECTORS(%di)
-1:
-	ret
-
-append_fixed:
-	call	allocate_descriptor
-	jc	1f
-	movb	$(DEV_FLAG_PRESENT | DEV_FLAG_GEOMETRY), DEV_FLAGS(%di)
-	movw	sense_bytes, %ax
-	movw	%ax, DEV_SECTOR_SIZE(%di)
-	movw	sense_cylinders, %ax
-	movw	%ax, DEV_CYLINDERS(%di)
-	movb	sense_heads, %al
-	movb	%al, DEV_HEADS(%di)
-	movb	sense_sectors, %al
-	movb	%al, DEV_SECTORS(%di)
-	movb	sense_status, %al
-	movb	%al, 10(%di)
-1:
-	ret
-
-/* Return DS:DI for a zeroed descriptor, or carry when the table is full. */
-allocate_descriptor:
-	movzbl	device_count, %edi
-	cmpw	$DEV_MAX, %di
-	jae	2f
-	shlw	$4, %di
-	addw	$device_table, %di
-	pushw	%di
-	movw	$DEV_DESC_SIZE, %cx
-	xorb	%al, %al
-1:
-	movb	%al, (%di)
-	incw	%di
-	loop	1b
-	popw	%di
-	movb	current_class, %al
-	movb	%al, DEV_CLASS(%di)
-	movb	current_index, %al
-	movb	%al, DEV_INDEX(%di)
-	movb	current_bios_id, %al
-	movb	%al, DEV_BIOS_ID(%di)
-	incb	device_count
-	clc
-	ret
-2:
-	stc
-	ret
-
-/*
- * Invoke INT 1Bh AH=84h without trusting it to preserve general registers.
- * The documented fixed-disk result is BX=bytes, CX=cylinders, DH=heads,
- * DL=sectors.  Carry is restored for the caller.
- */
-bios_sense:
-	pushw	%ax
-	pushw	%bx
-	pushw	%cx
-	pushw	%dx
-	pushw	%si
-	pushw	%di
-	pushw	%ds
-	pushw	%es
-	pushw	%bp
-	pushw	%ds
-	xorw	%bx, %bx
-	movw	%bx, %ds
-	movw	HANDOFF+12, %si
-	movw	HANDOFF+14, %di
-	popw	%ds
-	movw	$0x0100, %bx
-	movb	$0x84, %ah
-	int	$0x1b
-	movb	%ah, %cs:sense_status
-	movw	%bx, %cs:sense_bytes
-	movw	%cx, %cs:sense_cylinders
-	movb	%dh, %cs:sense_heads
-	movb	%dl, %cs:sense_sectors
-	pushfw
-	popw	%ax
-	movw	%ax, %cs:sense_flags
-	popw	%bp
-	popw	%es
-	popw	%ds
-	popw	%di
-	popw	%si
-	popw	%dx
-	popw	%cx
-	popw	%bx
-	popw	%ax
-	pushw	%cs:sense_flags
-	popfw
-	ret
-
-/*
- * Confirm a fixed-disk SENSE result with one read-only sector-zero access.
- * Some option BIOSes report plausible geometry for an absent target.
- */
-bios_read_lba0:
-	pushw	%ax
-	pushw	%bx
-	pushw	%cx
-	pushw	%dx
-	pushw	%si
-	pushw	%di
-	pushw	%ds
-	pushw	%es
-	pushw	%bp
-	pushw	%ds
-	xorw	%bx, %bx
-	movw	%bx, %ds
-	movw	HANDOFF+12, %si
-	movw	HANDOFF+14, %di
-	popw	%ds
-	movw	$0x0800, %bx
-	movw	%bx, %es
-	xorw	%bp, %bp
-	movw	$512, %bx
-	xorw	%cx, %cx
-	xorw	%dx, %dx
-	movb	$0x06, %ah
-	int	$0x1b
-	movb	%ah, %cs:read_status
-	pushfw
-	popw	%ax
-	movw	%ax, %cs:read_flags
-	popw	%bp
-	popw	%es
-	popw	%ds
-	popw	%di
-	popw	%si
-	popw	%dx
-	popw	%cx
-	popw	%bx
-	popw	%ax
-	pushw	%cs:read_flags
-	popfw
-	ret
-
-/* Confirm FDD media with a read of C=0/H=0/R=1/N=2. */
-bios_read_fdd_boot:
-	pushw	%ax
-	pushw	%bx
-	pushw	%cx
-	pushw	%dx
-	pushw	%si
-	pushw	%di
-	pushw	%ds
-	pushw	%es
-	pushw	%bp
-	movw	$0x0800, %bx
-	movw	%bx, %es
-	xorw	%bp, %bp
-	movw	$512, %bx
-	movw	$0x0200, %cx
-	movw	$0x0001, %dx
-	movb	$0x56, %ah
-	int	$0x1b
-	movb	%ah, %cs:read_status
-	pushfw
-	popw	%ax
-	movw	%ax, %cs:read_flags
-	popw	%bp
-	popw	%es
-	popw	%ds
-	popw	%di
-	popw	%si
-	popw	%dx
-	popw	%cx
-	popw	%bx
-	popw	%ax
-	pushw	%cs:read_flags
-	popfw
-	ret
-
-/* Read the native PC-98 partition table (physical LBA 1) into our segment. */
-bios_read_partition_table:
-	pushw	%ax
-	pushw	%bx
-	pushw	%cx
-	pushw	%dx
-	pushw	%si
-	pushw	%di
-	pushw	%ds
-	pushw	%es
-	pushw	%bp
-	pushw	%ds
-	xorw	%bx, %bx
-	movw	%bx, %ds
-	movw	HANDOFF+12, %si
-	movw	HANDOFF+14, %di
-	popw	%ds
-	movw	$0x0800, %bx
-	movw	%bx, %es
-	xorw	%bp, %bp
-	movw	$512, %bx
-	xorw	%cx, %cx
-	movw	$1, %dx
-	movb	$0x06, %ah
-	int	$0x1b
-	movb	%ah, %cs:read_status
-	pushfw
-	popw	%ax
-	movw	%ax, %cs:read_flags
-	popw	%bp
-	popw	%es
-	popw	%ds
-	popw	%di
-	popw	%si
-	popw	%dx
-	popw	%cx
-	popw	%bx
-	popw	%ax
-	pushw	%cs:read_flags
-	popfw
-	ret
-
-/* Build stable menu records for every detected device and partition. */
-build_menu:
-	movb	$0, menu_count
-	movw	$0, boot_menu_entry
-	movw	$0, active_menu_entry
-	xorw	%bx, %bx
-1:
-	cmpb	device_count, %bl
-	jae	9f
-	movw	%bx, %si
-	shlw	$4, %si
-	addw	$device_table, %si
-	movw	%si, current_descriptor
-	movb	$MENU_TYPE_DISK, current_menu_type
-	movb	$0xff, current_partition
-	movl	$0, current_lba
-	movl	$0, current_data_lba
-	call	append_menu
-	testb	$DEV_FLAG_GEOMETRY, DEV_FLAGS(%si)
-	jz	8f
-	movb	DEV_BIOS_ID(%si), %al
-	call	bios_read_partition_table
-	pushw	%cs
-	popw	%ds
-	jc	8f
-	cmpb	$0x20, read_status
-	jae	8f
-	call	copy_partition_bounce
-	xorw	%dx, %dx
-2:
-	cmpw	$16, %dx
-	jae	8f
-	movw	%dx, %si
-	shlw	$5, %si
-	addw	$partition_table, %si
-	cmpb	$0, (%si)
-	je	7f
-	movw	current_descriptor, %di
-	/* IPL CHS fields are sector@4, head@5, cylinder@6. */
-	movzwl	6(%si), %eax
-	movzbl	DEV_HEADS(%di), %ecx
-	imull	%ecx, %eax
-	movzbl	5(%si), %ecx
-	addl	%ecx, %eax
-	movzbl	DEV_SECTORS(%di), %ecx
-	imull	%ecx, %eax
-	movzbl	4(%si), %ecx
-	addl	%ecx, %eax
-	movl	%eax, current_lba
-	/* Data-start CHS fields are sector@8, head@9, cylinder@10. */
-	movzwl	10(%si), %eax
-	movzbl	DEV_HEADS(%di), %ecx
-	imull	%ecx, %eax
-	movzbl	9(%si), %ecx
-	addl	%ecx, %eax
-	movzbl	DEV_SECTORS(%di), %ecx
-	imull	%ecx, %eax
-	movzbl	8(%si), %ecx
-	addl	%ecx, %eax
-	movl	%eax, current_data_lba
-	movb	$MENU_TYPE_PART, current_menu_type
-	movb	%dl, current_partition
-	call	append_menu
-	call	consider_active_partition
-	call	consider_boot_partition
-7:
-	incw	%dx
-	jmp	2b
-8:
-	incw	%bx
-	jmp	1b
-9:
-	ret
-
-copy_partition_bounce:
-	pushw	%ds
-	pushw	%es
-	pushw	%si
-	pushw	%di
-	pushw	%cx
-	movw	$0x0800, %ax
-	movw	%ax, %ds
-	pushw	%cs
-	popw	%es
-	xorw	%si, %si
-	movw	$partition_table, %di
-	movw	$256, %cx
-	rep movsw
-	popw	%cx
-	popw	%di
-	popw	%si
-	popw	%es
-	popw	%ds
-	ret
-
-append_menu:
-	pushw	%si
-	cmpb	$MENU_MAX, menu_count
-	jae	2f
-	movzbl	menu_count, %edi
-	shlw	$4, %di
-	addw	$menu_table, %di
-	pushw	%di
-	movw	$MENU_SIZE, %cx
-	xorb	%al, %al
-1:
-	movb	%al, (%di)
-	incw	%di
-	loop	1b
-	popw	%di
-	movw	current_descriptor, %si
-	movb	current_menu_type, %al
-	movb	%al, MENU_TYPE(%di)
-	movb	DEV_BIOS_ID(%si), %al
-	movb	%al, MENU_BIOS_ID(%di)
-	movb	DEV_CLASS(%si), %al
-	movb	%al, MENU_CLASS(%di)
-	movb	DEV_INDEX(%si), %al
-	movb	%al, MENU_DEV_INDEX(%di)
-	movb	current_partition, %al
-	movb	%al, MENU_PART_INDEX(%di)
-	movb	DEV_HEADS(%si), %al
-	movb	%al, MENU_HEADS(%di)
-	movb	DEV_SECTORS(%si), %al
-	movb	%al, MENU_SECTORS(%di)
-	movl	current_lba, %eax
-	movl	%eax, MENU_LBA(%di)
-	movl	current_data_lba, %eax
-	movl	%eax, MENU_DATA_LBA(%di)
-	incb	menu_count
-2:
-	popw	%si
-	ret
-
-consider_boot_partition:
-	pushw	%ax
-	pushw	%bx
-	pushw	%cx
-	pushw	%si
-	pushw	%di
-	movw	%si, %bx
-	addw	$16, %bx
-	xorw	%di, %di
-	movw	$16, %cx
-1:
-	movb	(%bx), %al
-	cmpb	bootstrap_boot_name(%di), %al
-	jne	2f
-	incw	%bx
-	incw	%di
-	loop	1b
-	movzbl	menu_count, %edi
-	decw	%di
-	shlw	$4, %di
-	addw	$menu_table, %di
-	cmpw	$0, boot_menu_entry
-	je	3f
-	movw	current_descriptor, %si
-	movb	DEV_BIOS_ID(%si), %al
-	andb	$0x7f, %al
-	pushw	%ds
-	xorw	%bx, %bx
-	movw	%bx, %ds
-	cmpb	HANDOFF+8, %al
-	popw	%ds
-	jne	2f
-3:
-	movw	%di, boot_menu_entry
-2:
-	popw	%di
-	popw	%si
-	popw	%cx
-	popw	%bx
-	popw	%ax
-	ret
-
-/* MID bit 7 is the PC-98 active/bootable flag.  Retain the first active
- * partition in stable probe order for unattended fallback boot. */
-consider_active_partition:
-	pushw	%ax
-	pushw	%di
-	testb	$0x80, (%si)
-	jz	1f
-	cmpw	$0, active_menu_entry
-	jne	1f
-	movzbl	menu_count, %edi
-	decw	%di
-	shlw	$4, %di
-	addw	$menu_table, %di
-	movw	%di, active_menu_entry
-1:
-	popw	%di
-	popw	%ax
-	ret
-
-/* Load and validate BOOT.SYS from the selected BOOT FAT16 partition. */
-load_stage2:
-	cmpw	$0, boot_menu_entry
-	je	9f
-	movw	boot_menu_entry, %si
-	movw	%si, chain_entry
-	movl	MENU_DATA_LBA(%si), %eax
-	movl	%eax, fat_partition_lba
-	movw	$0x0800, %ax
-	movw	%ax, %es
-	xorw	%bp, %bp
-	movl	fat_partition_lba, %eax
-	call	read_fixed_lba
-	jc	9f
-	pushw	%cs
-	popw	%ds
-	movw	%es:0x0b, %ax
-	cmpw	$512, %ax
-	je	1f
-	cmpw	$1024, %ax
-	jne	9f
-	movb	$2, fat_sector_scale
-	jmp	2f
-1:
-	movb	$1, fat_sector_scale
-2:
-	movzbl	%es:0x0d, %eax
-	movzbl	fat_sector_scale, %ecx
-	imull	%ecx, %eax
-	testl	%eax, %eax
-	jz	9f
-	cmpl	$128, %eax
-	ja	9f
-	movb	%al, fat_spc
-	movl	fat_partition_lba, %eax
-	movzwl	%es:0x0e, %ecx
-	movzbl	fat_sector_scale, %edx
-	imull	%edx, %ecx
-	addl	%ecx, %eax
-	movl	%eax, fat_lba
-	movzbl	%es:0x10, %ecx
-	movzwl	%es:0x16, %edx
-	testl	%edx, %edx
-	jz	9f
-	movzbl	fat_sector_scale, %ebx
-	imull	%ebx, %edx
-	imull	%edx, %ecx
-	addl	%ecx, %eax
-	movl	%eax, fat_root_lba
-	movzwl	%es:0x11, %ecx
-	movw	%cx, fat_root_entries
-	shll	$5, %ecx
-	addl	$511, %ecx
-	shrl	$9, %ecx
-	movw	%cx, fat_root_sectors
-	addl	%ecx, %eax
-	movl	%eax, fat_data_lba
-
-	/* Search the root one physical sector at a time. */
-	xorw	%dx, %dx
-3:
-	cmpw	fat_root_sectors, %dx
-	jae	9f
-	movl	fat_root_lba, %eax
-	movzwl	%dx, %ecx
-	addl	%ecx, %eax
-	xorw	%bp, %bp
-	call	read_fixed_lba
-	jc	9f
-	pushw	%cs
-	popw	%ds
-	xorw	%di, %di
-	movw	$16, %cx
-4:
-	cmpb	$0, %es:(%di)
-	je	9f
-	cmpb	$0xe5, %es:(%di)
-	je	5f
-	cmpb	$0x0f, %es:0x0b(%di)
-	je	5f
-	pushw	%cx
-	pushw	%di
-	movw	$stage2_name, %si
-	movw	$11, %cx
-	repe cmpsb
-	popw	%di
-	popw	%cx
-	je	stage2_found
-5:
-	addw	$32, %di
-	loop	4b
-	incw	%dx
-	jmp	3b
-
-stage2_found:
-	movw	%es:0x1a(%di), %ax
-	cmpw	$2, %ax
-	jb	9f
-	movw	%ax, fat_cluster
-	movl	%es:0x1c(%di), %eax
-	cmpl	$20, %eax
-	jb	9f
-	cmpl	$0xf000, %eax
-	ja	9f
-	movl	%eax, stage2_file_size
-	movl	%eax, stage2_remaining
-	movw	$0, stage2_offset
-
-stage2_cluster_loop:
-	movb	$0, fat_sector_in_cluster
-stage2_sector_loop:
-	movzwl	fat_cluster, %eax
-	subl	$2, %eax
-	movzbl	fat_spc, %ecx
-	imull	%ecx, %eax
-	movzbl	fat_sector_in_cluster, %ecx
-	addl	%ecx, %eax
-	addl	fat_data_lba, %eax
-	movw	$0x2000, %cx
-	movw	%cx, %es
-	movw	stage2_offset, %bp
-	call	read_fixed_lba
-	jc	9f
-	pushw	%cs
-	popw	%ds
-	addw	$512, stage2_offset
-	cmpl	$512, stage2_remaining
-	jbe	stage2_loaded
-	subl	$512, stage2_remaining
-	incb	fat_sector_in_cluster
-	movb	fat_sector_in_cluster, %al
-	cmpb	fat_spc, %al
-	jb	stage2_sector_loop
-	movw	fat_cluster, %ax
-	call	stage2_fat_next
-	cmpw	$0xfff8, %ax
-	jae	9f
-	cmpw	$2, %ax
-	jb	9f
-	movw	%ax, fat_cluster
-	jmp	stage2_cluster_loop
-
-stage2_loaded:
-	call	validate_stage2
-	jc	9f
-	call	append_shell_menu
-	clc
-	ret
-9:
-	stc
-	ret
-
-stage2_fat_next:
-	pushw	%bx
-	pushw	%dx
-	pushw	%es
-	pushw	%bp
-	movzwl	%ax, %edx
-	shll	$1, %edx
-	movl	%edx, %eax
-	shrl	$9, %eax
-	addl	fat_lba, %eax
-	andw	$511, %dx
-	movw	$0x0800, %bx
-	movw	%bx, %es
-	xorw	%bp, %bp
-	call	read_fixed_lba
-	jc	1f
-	movw	%dx, %bx
-	movw	%es:(%bx), %ax
-	jmp	2f
-1:
-	movw	$0xffff, %ax
-2:
-	pushw	%cs
-	popw	%ds
-	popw	%bp
-	popw	%es
-	popw	%dx
-	popw	%bx
-	ret
-
-validate_stage2:
-	movw	$0x2000, %ax
-	movw	%ax, %es
-	cmpl	$0x53383942, %es:0
-	jne	8f
-	cmpw	$1, %es:4
-	jne	8f
-	cmpw	$20, %es:6
-	jne	8f
-	movl	%es:8, %ecx
-	cmpl	stage2_file_size, %ecx
-	jne	8f
-	movl	%es:12, %eax
-	cmpl	$20, %eax
-	jb	8f
-	cmpl	%ecx, %eax
-	jae	8f
-	movl	%eax, stage2_entry_offset
-	subl	$20, %ecx
-	movw	$20, %si
-	xorl	%ebx, %ebx
-1:
-	testl	%ecx, %ecx
-	jz	2f
-	movzbl	%es:(%si), %eax
-	addl	%eax, %ebx
-	incw	%si
-	decl	%ecx
-	jmp	1b
-2:
-	cmpl	%es:16, %ebx
-	jne	8f
-	clc
-	ret
-8:
-	stc
-	ret
-
-append_shell_menu:
-	cmpb	$MENU_MAX, menu_count
-	jae	2f
-	pushw	%es
-	pushw	%ds
-	popw	%es
-	movw	boot_menu_entry, %si
-	movzbl	menu_count, %edi
-	shlw	$4, %di
-	addw	$menu_table, %di
-	movw	$8, %cx
-	rep movsw
-	subw	$MENU_SIZE, %di
-	movb	$MENU_TYPE_SHELL, MENU_TYPE(%di)
-	incb	menu_count
-	movb	$1, stage2_valid
-	popw	%es
-2:
-	ret
-
-show_menu:
-	movw	$probing_label, %si
-	movw	$(6 * 160), %di
-	call	print_string
-	movw	$found_label, %si
-	movw	$(7 * 160), %di
-	call	print_string
-	movb	device_count, %al
-	call	print_hex8
-	movw	$menu_label, %si
-	movw	$(8 * 160), %di
-	call	print_string
-	xorw	%bx, %bx
-1:
-	cmpb	menu_count, %bl
-	jae	7f
-	cmpb	$9, %bl
-	jae	7f
-	movw	%bx, %si
-	shlw	$4, %si
-	addw	$menu_table, %si
-	movw	%bx, %di
-	addw	$9, %di
-	imulw	$160, %di, %di
-	movb	%bl, %al
-	addb	$'1', %al
-	call	print_char
-	movb	$')', %al
-	call	print_char
-	movb	$' ', %al
-	call	print_char
-	movb	MENU_CLASS(%si), %al
-	cmpb	$DEV_CLASS_FDD, %al
-	jne	2f
-	pushw	%si
-	movw	$fd_name, %si
-	call	print_string
-	popw	%si
-	jmp	4f
-2:
-	cmpb	$DEV_CLASS_IDE, %al
-	jne	3f
-	pushw	%si
-	movw	$ide_name, %si
-	call	print_string
-	popw	%si
-	jmp	4f
-3:
-	pushw	%si
-	movw	$scsi_name, %si
-	call	print_string
-	popw	%si
-4:
-	movb	MENU_DEV_INDEX(%si), %al
-	call	print_hex8
-	cmpb	$MENU_TYPE_PART, MENU_TYPE(%si)
-	je	4f
-	cmpb	$MENU_TYPE_SHELL, MENU_TYPE(%si)
-	jne	5f
-	pushw	%si
-	movw	$shell_label, %si
-	call	print_string
-	popw	%si
-	jmp	6f
-4:
-	pushw	%si
-	movw	$part_label, %si
-	call	print_string
-	popw	%si
-	movb	MENU_PART_INDEX(%si), %al
-	call	print_hex8
-	pushw	%si
-	movw	$partition_lba_label, %si
-	call	print_string
-	popw	%si
-	movl	MENU_LBA(%si), %eax
-	call	print_hex32
-	jmp	6f
-5:
-	pushw	%si
-	movw	$disk_ipl_label, %si
-	call	print_string
-	popw	%si
-6:
-	incw	%bx
-	jmp	1b
-7:
-	movw	$select_label, %si
-	movw	%bx, %di
-	addw	$9, %di
-	imulw	$160, %di, %di
-	call	print_string
-	ret
-
-chain_selected:
-	movzbl	selected_menu, %esi
-	shlw	$4, %si
-	addw	$menu_table, %si
-	movw	%si, chain_entry
-	movw	$0x1fc0, %ax
-	movw	%ax, %es
-	cmpb	$DEV_CLASS_FDD, MENU_CLASS(%si)
-	jne	1f
-	xorw	%bp, %bp
-	call	read_fdd_boot
-	jc	chain_failed
-	jmp	4f
-1:
-	/* Preserve the native table next to the target IPL/PBR. */
-	movl	$1, %eax
-	movw	$0x0200, %bp
-	call	read_fixed_lba
-	jc	chain_failed
-	movw	chain_entry, %si
-	movl	MENU_LBA(%si), %eax
-	xorw	%bp, %bp
-	call	read_fixed_lba
-	jc	chain_failed
-	movw	chain_entry, %si
-	cmpb	$MENU_TYPE_PART, MENU_TYPE(%si)
-	jne	4f
-	/* Put the selected entry first, matching the firmware IPL convention. */
-	movzbl	MENU_PART_INDEX(%si), %eax
-	shlw	$5, %ax
-	addw	$0x0200, %ax
-	pushw	%ds
-	pushw	%es
-	popw	%ds
-	movw	%ax, %si
-	movw	$0x0200, %di
-	movw	$16, %cx
-	rep movsw
-	popw	%ds
-4:
-	cli
-	movw	chain_entry, %si
-	movb	MENU_BIOS_ID(%si), %al
-	andb	$0x7f, %al
-	pushw	%ds
-	xorw	%dx, %dx
-	movw	%dx, %ds
-	movb	%al, 0x0584
-	movw	HANDOFF+12, %si
-	movw	HANDOFF+14, %di
-	popw	%ds
-	sti
-	ljmp	$0x1fc0, $0
-
-chain_failed:
-	/* BIOS calls may disturb the GDC, so rebuild the complete menu. */
-	movb	$0x42, %ah
-	movb	$0xc0, %ch
-	int	$0x18
-	movb	$0x40, %ah
-	int	$0x18
-	call	clear_upper
-	call	draw_banner
-	movw	$chain_error, %si
-	movw	$(5 * 160), %di
-	call	print_string
-	call	show_menu
-	ret
-
-/* Fixed-disk one-sector read.  EAX=LBA, ES:BP=destination. */
-read_fixed_lba:
-	pushl	%eax
-	pushw	%bx
-	pushw	%cx
-	pushw	%dx
-	pushw	%si
-	pushw	%di
-	pushw	%ds
-	pushw	%es
-	pushw	%bp
-	xorl	%edx, %edx
-	movw	%cs:chain_entry, %si
-	movzbl	%cs:MENU_HEADS(%si), %edi
-	movzbl	%cs:MENU_SECTORS(%si), %ecx
-	imull	%ecx, %edi
-	testl	%edi, %edi
-	jz	8f
-	divl	%edi
-	cmpl	$0xffff, %eax
-	ja	8f
-	movw	%ax, %cx
-	movl	%edx, %eax
-	xorl	%edx, %edx
-	movzbl	%cs:MENU_SECTORS(%si), %edi
-	divl	%edi
-	movb	%al, %dh
-	xorw	%ax, %ax
-	movw	%ax, %ds
-	movw	%cs:chain_entry, %si
-	movb	%cs:MENU_BIOS_ID(%si), %al
-	movb	$0x06, %ah
-	movw	$512, %bx
-	movw	HANDOFF+12, %si
-	movw	HANDOFF+14, %di
-	int	$0x1b
-	pushfw
-	popw	%ax
-	movw	%ax, %cs:chain_flags
-	jmp	9f
-8:
-	movw	$1, %cs:chain_flags
-9:
-	popw	%bp
-	popw	%es
-	popw	%ds
-	popw	%di
-	popw	%si
-	popw	%dx
-	popw	%cx
-	popw	%bx
-	popl	%eax
-	pushw	%cs:chain_flags
-	popfw
-	ret
-
-/* 1.44 MiB FDD boot sector: C=0, H=0, R=1, N=2. */
-read_fdd_boot:
-	pushw	%ax
-	pushw	%bx
-	pushw	%cx
-	pushw	%dx
-	pushw	%si
-	pushw	%di
-	pushw	%ds
-	pushw	%es
-	pushw	%bp
-	xorw	%ax, %ax
-	movw	%ax, %ds
-	movw	%cs:chain_entry, %si
-	movb	%cs:MENU_BIOS_ID(%si), %al
-	movb	$0x56, %ah
-	movw	$512, %bx
-	movw	$0x0200, %cx
-	movw	$0x0001, %dx
-	movw	HANDOFF+12, %si
-	movw	HANDOFF+14, %di
-	int	$0x1b
-	pushfw
-	popw	%ax
-	movw	%ax, %cs:chain_flags
-	popw	%bp
-	popw	%es
-	popw	%ds
-	popw	%di
-	popw	%si
-	popw	%dx
-	popw	%cx
-	popw	%bx
-	popw	%ax
-	pushw	%cs:chain_flags
-	popfw
-	ret
-
-show_devices:
-	movw	$found_label, %si
-	movw	$160, %di
-	call	print_string
-	movb	device_count, %al
-	call	print_hex8
-
-	xorw	%bx, %bx
-1:
-	cmpb	device_count, %bl
-	jae	5f
-	cmpb	$8, %bl
-	jae	5f
-	movw	%bx, %ax
-	shlw	$4, %ax
-	movw	%ax, %si
-	addw	$device_table, %si
-	movw	%bx, %di
-	addw	$3, %di
-	imulw	$160, %di, %di
-
-	movb	DEV_CLASS(%si), %al
-	cmpb	$DEV_CLASS_FDD, %al
-	jne	2f
-	pushw	%si
-	movw	$fd_name, %si
-	call	print_string
-	popw	%si
-	jmp	4f
-2:
-	cmpb	$DEV_CLASS_IDE, %al
-	jne	3f
-	pushw	%si
-	movw	$ide_name, %si
-	call	print_string
-	popw	%si
-	jmp	4f
-3:
-	pushw	%si
-	movw	$scsi_name, %si
-	call	print_string
-	popw	%si
-4:
-	movb	DEV_INDEX(%si), %al
-	call	print_hex8
-	pushw	%si
-	movw	$bios_label, %si
-	call	print_string
-	popw	%si
-	movb	DEV_BIOS_ID(%si), %al
-	call	print_hex8
-	pushw	%si
-	movw	$status_label, %si
-	call	print_string
-	popw	%si
-	movb	10(%si), %al
-	call	print_hex8
-	testb	$DEV_FLAG_GEOMETRY, DEV_FLAGS(%si)
-	jz	6f
-	pushw	%si
-	movw	$geometry_label, %si
-	call	print_string
-	popw	%si
-	movb	DEV_HEADS(%si), %al
-	call	print_hex8
-	movb	$'/', %al
-	call	print_char
-	movb	DEV_SECTORS(%si), %al
-	call	print_hex8
-6:
-	incw	%bx
-	jmp	1b
-5:
-	ret
-
-/* Cache LBA 1 from the first fixed disk before the final GDC redraw. */
-load_first_partition_table:
-	xorw	%bx, %bx
-1:
-	cmpb	device_count, %bl
-	jae	3f
-	movw	%bx, %si
-	shlw	$4, %si
-	addw	$device_table, %si
-	testb	$DEV_FLAG_GEOMETRY, DEV_FLAGS(%si)
-	jnz	2f
-	incw	%bx
-	jmp	1b
-2:
-	movb	DEV_BIOS_ID(%si), %al
-	call	bios_read_partition_table
-	jc	3f
-	cmpb	$0x20, read_status
-	jae	3f
-	/* Copy the BIOS bounce buffer only after a successful transfer. */
-	pushw	%ds
-	pushw	%es
-	movw	$0x0800, %ax
-	movw	%ax, %ds
-	pushw	%cs
-	popw	%es
-	xorw	%si, %si
-	movw	$partition_table, %di
-	movw	$256, %cx
-	rep movsw
-	popw	%es
-	popw	%ds
-	/* Recover the descriptor pointer clobbered by the copy. */
-	movw	%bx, %si
-	shlw	$4, %si
-	addw	$device_table, %si
-	movb	DEV_HEADS(%si), %al
-	movb	%al, partition_heads
-	movb	DEV_SECTORS(%si), %al
-	movb	%al, partition_sectors
-	movb	$1, partition_table_valid
-3:
-	ret
-
-/* Show up to four non-empty entries from the cached table. */
-show_partitions:
-	cmpb	$1, partition_table_valid
-	jne	8f
-	movw	$partitions_label, %si
-	movw	$(7 * 160), %di
-	call	print_string
-	xorw	%bx, %bx
-	xorw	%dx, %dx
-3:
-	cmpw	$16, %bx
-	jae	9f
-	cmpw	$4, %dx
-	jae	9f
-	movw	%bx, %si
-	shlw	$5, %si
-	addw	$partition_table, %si
-	movb	(%si), %al
-	testb	%al, %al
-	jz	7f
-	movw	%dx, %di
-	addw	$8, %di
-	imulw	$160, %di, %di
-	movb	$'#', %al
-	call	print_char
-	movb	%bl, %al
-	call	print_hex8
-	pushw	%si
-	movw	$partition_id_label, %si
-	call	print_string
-	popw	%si
-	movb	(%si), %al
-	call	print_hex8
-	movb	$'/', %al
-	call	print_char
-	movb	1(%si), %al
-	call	print_hex8
-	pushw	%si
-	movw	$partition_lba_label, %si
-	call	print_string
-	popw	%si
-	movzwl	10(%si), %eax
-	movzbl	partition_heads, %ecx
-	imull	%ecx, %eax
-	movzbl	9(%si), %ecx
-	addl	%ecx, %eax
-	movzbl	partition_sectors, %ecx
-	imull	%ecx, %eax
-	movzbl	8(%si), %ecx
-	addl	%ecx, %eax
-	call	print_hex32
-	incw	%dx
-7:
-	incw	%bx
-	jmp	3b
-8:
-9:
 	ret
 
 	.code32
@@ -1664,7 +580,7 @@ gateway16_pm:
 gateway_real:
 	movw	%cs, %ax
 	movw	%ax, %ds
-	movw	$0x9000, %ax
+	movw	$STACK_SEG, %ax
 	movw	%ax, %ss
 	movl	$0x0000eff0, %esp
 	sti
@@ -1729,18 +645,11 @@ gateway_display_reset:
 	movl	$0, %cs:gateway_result
 	jmp	gateway_real_return
 
+/* BOOT.SYS now owns its menu. These legacy service numbers remain stable. */
 gateway_return_menu:
-	pushw	%cs
-	popw	%ds
-	movb	$0x42, %ah
-	movb	$0xc0, %ch
-	int	$0x18
-	movb	$0x40, %ah
-	int	$0x18
-	call	clear_upper
-	call	draw_banner
-	call	show_menu
-	jmp	menu_input
+gateway_reprobe:
+	movl	$0, %cs:gateway_result
+	jmp	gateway_real_return
 
 gateway_iplware:
 	movw	%es:2(%bx), %ax
@@ -1752,7 +661,6 @@ gateway_iplware:
 	movl	%eax, gateway_lba
 	movl	%es:12(%bx), %eax
 	movl	%eax, gateway_buffer
-	/* Type-2 COM trampoline: near CALL 0100h, then far return. */
 	movw	$0x6000, %ax
 	movw	%ax, %es
 	movb	$0xe8, %es:0
@@ -1788,76 +696,95 @@ gateway_iplware:
 	cli
 	movw	%cs, %ax
 	movw	%ax, %ds
-	movw	$0x9000, %ax
+	movw	$STACK_SEG, %ax
 	movw	%ax, %ss
 	movl	$0x0000eff0, %esp
-	movb	$0, device_count
-	call	probe_all
-	pushw	%cs
-	popw	%ds
-	call	build_menu
-	movb	device_count, %al
-	movb	%al, stage2_handoff+8
 	cmpb	$0x5a, %es:0x00f0
 	jne	3f
-	movl	$0, gateway_result
-	jmp	gateway_real_return
-
-gateway_reprobe:
-	pushw	%cs
-	popw	%ds
-	movb	$0, device_count
-	call	probe_all
-	pushw	%cs
-	popw	%ds
-	call	build_menu
-	movb	device_count, %al
-	movb	%al, stage2_handoff+8
 	movl	$0, gateway_result
 	jmp	gateway_real_return
 3:
 	movl	$0x0006ffff, gateway_result
 	jmp	gateway_real_return
 
-/* Chain a disk IPL or partition PBR selected by Stage 2.  status=0 selects
- * the whole-disk menu entry; status=1 selects the entry whose IPL LBA is
- * supplied in lba.  A successful chain never returns. */
+/* Chain a fixed-disk IPL or partition PBR without a Stage-1 menu table. */
 gateway_chain_boot:
 	pushw	%cs
 	popw	%ds
-	movb	%es:4(%bx), %al
-	movb	%al, gateway_bios_id
 	movw	%es:2(%bx), %ax
 	movw	%ax, gateway_module_type
+	movb	%es:4(%bx), %al
+	movb	%al, gateway_menu+MENU_BIOS_ID
+	movb	%es:5(%bx), %al
+	movb	%al, gateway_menu+MENU_HEADS
+	movb	%es:6(%bx), %al
+	movb	%al, gateway_menu+MENU_SECTORS
 	movl	%es:8(%bx), %eax
 	movl	%eax, gateway_lba
-	xorw	%bx, %bx
-	movw	$menu_table, %si
-1:
-	cmpb	menu_count, %bl
-	jae	3f
-	movb	gateway_bios_id, %al
-	cmpb	%al, MENU_BIOS_ID(%si)
-	jne	2f
-	cmpw	$0, gateway_module_type
-	jne	4f
-	cmpb	$MENU_TYPE_DISK, MENU_TYPE(%si)
-	je	5f
-	jmp	2f
-4:
-	cmpb	$MENU_TYPE_PART, MENU_TYPE(%si)
-	jne	2f
+	movl	%eax, gateway_menu+MENU_LBA
+	movw	$gateway_menu, chain_entry
+	movw	$0x1fc0, %ax
+	movw	%ax, %es
+	movl	$1, %eax
+	movw	$0x0200, %bp
+	call	read_fixed_lba
+	jc	gateway_chain_error
 	movl	gateway_lba, %eax
-	cmpl	%eax, MENU_LBA(%si)
-	je	5f
-2:
-	incb	%bl
-	addw	$MENU_SIZE, %si
-	jmp	1b
-5:
-	movb	%bl, selected_menu
-	call	chain_selected
-3:
+	xorw	%bp, %bp
+	call	read_fixed_lba
+	jc	gateway_chain_error
+	cmpw	$0, gateway_module_type
+	je	gateway_chain_jump
+
+	/* Locate the selected native entry by its IPL LBA and move it first. */
+	xorw	%si, %si
+	movw	$16, %cx
+gateway_chain_find_partition:
+	cmpb	$0, %es:0x0200(%si)
+	je	gateway_chain_next_partition
+	movzwl	%es:0x0206(%si), %eax
+	movzbl	gateway_menu+MENU_HEADS, %edx
+	imull	%edx, %eax
+	movzbl	%es:0x0205(%si), %edx
+	addl	%edx, %eax
+	movzbl	gateway_menu+MENU_SECTORS, %edx
+	imull	%edx, %eax
+	movzbl	%es:0x0204(%si), %edx
+	addl	%edx, %eax
+	cmpl	gateway_lba, %eax
+	je	gateway_chain_partition_found
+gateway_chain_next_partition:
+	addw	$32, %si
+	loop	gateway_chain_find_partition
+	jmp	gateway_chain_error
+
+gateway_chain_partition_found:
+	addw	$0x0200, %si
+	pushw	%ds
+	pushw	%es
+	popw	%ds
+	movw	$0x0200, %di
+	movw	$16, %cx
+	rep movsw
+	popw	%ds
+
+gateway_chain_jump:
+	cli
+	movb	gateway_menu+MENU_BIOS_ID, %al
+	andb	$0x7f, %al
+	pushw	%ds
+	xorw	%dx, %dx
+	movw	%dx, %ds
+	movb	%al, 0x0584
+	movw	HANDOFF+HO_SAVED_SI, %si
+	movw	HANDOFF+HO_SAVED_DI, %di
+	popw	%ds
+	sti
+	ljmp	$0x1fc0, $0
+
+gateway_chain_error:
+	pushw	%cs
+	popw	%ds
 	movl	$0x0008ffff, gateway_result
 	jmp	gateway_real_return
 
@@ -1874,7 +801,7 @@ gateway_disk_read:
 	movl	%es:12(%bx), %eax
 	movl	%eax, gateway_buffer
 	xorw	%bp, %bp
-	movw	$0x0800, %ax
+	movw	$TABLE_SEG, %ax
 	movw	%ax, %es
 	movw	$gateway_menu, chain_entry
 	movl	gateway_lba, %eax
@@ -1900,8 +827,6 @@ gateway_real_return:
 	ljmpl	*gateway_pm_return
 
 enter_stage2:
-	cmpb	$1, stage2_valid
-	jne	menu_input
 	movl	$0x48323842, stage2_handoff
 	movw	$1, stage2_handoff+4
 	movw	$20, stage2_handoff+6
@@ -1910,14 +835,11 @@ enter_stage2:
 	pushw	%ds
 	xorw	%ax, %ax
 	movw	%ax, %ds
-	movb	HANDOFF+8, %al
+	movb	HANDOFF+HO_BOOT_BIOS_ID, %al
 	popw	%ds
 	movb	%al, stage2_handoff+9
 	movl	$(0x10000 + device_table), stage2_handoff+12
 	movl	$(0x10000 + bios_gateway32), stage2_handoff+16
-	movl	stage2_entry_offset, %eax
-	addl	$0x20000, %eax
-	movl	%eax, stage2_target
 	movl	$(0x10000 + protected_entry), %eax
 	movl	%eax, pm_jump
 	movl	$(0x10000 + gdt), %eax
@@ -1943,186 +865,36 @@ protected_entry:
 	jmp	*%eax
 	.code16
 
-clear_upper:
-	movw	$TEXT_SEG, %ax
-	movw	%ax, %es
-	movw	$ATTR_SEG, %ax
-	movw	%ax, %gs
-	xorw	%di, %di
-	movw	$(80 * 20), %cx
-1:
-	movb	$0x20, %es:(%di)
-	movb	$0, %es:1(%di)
-	movb	$0xe1, %gs:(%di)
-	addw	$2, %di
-	loop	1b
-	ret
-
-/*
- * Keep the identity shown by the original PC-98 Linux loader.  The kana are
- * PC-98 ANK bytes, not Shift-JIS; writing them as single cells also works on
- * the character generators found in early machines.
- */
-draw_banner:
-	movw	$banner_machine, %si
-	movw	$(1 * 160), %di
-	call	print_string
-	movw	$banner_loader, %si
-	movw	$(3 * 160), %di
-	call	print_string
-	movw	$banner_copyright, %si
-	movw	$(4 * 160), %di
-	call	print_string
-	ret
-
-print_string:
-1:
-	lodsb
-	testb	%al, %al
-	jz	2f
-	call	print_char
-	jmp	1b
-2:
-	ret
-
-print_char:
-	movb	%al, %es:(%di)
-	movb	$0, %es:1(%di)
-	movb	$0xe1, %gs:(%di)
-	addw	$2, %di
-	ret
-
-print_hex8:
-	pushw	%ax
-	movb	%al, %ah
-	shrb	$4, %al
-	call	print_nibble
-	movb	%ah, %al
-	andb	$0x0f, %al
-	call	print_nibble
-	popw	%ax
-	ret
-
-print_hex32:
-	pushl	%eax
-	rorl	$16, %eax
-	call	print_hex16
-	rorl	$16, %eax
-	call	print_hex16
-	popl	%eax
-	ret
-
-print_hex16:
-	pushw	%ax
-	movb	%ah, %al
-	call	print_hex8
-	popw	%ax
-	call	print_hex8
-	ret
-
-print_nibble:
-	andb	$0x0f, %al
-	cmpb	$10, %al
-	jb	1f
-	addb	$('A' - 10), %al
-	jmp	print_char
-1:
-	addb	$'0', %al
-	jmp	print_char
-
-/* PC-98 ANK text retained from the previous Linux loader. */
-banner_machine:
-	.ascii	"NEC PC-9800 "
-	.byte	0xbc, 0xd8, 0xb0, 0xbd, 0xde
-	.ascii	" "
-	.byte	0xca, 0xdf, 0xb0, 0xbf, 0xc5, 0xd9
-	.ascii	" "
-	.byte	0xba, 0xdd, 0xcb, 0xdf, 0xad, 0xb0, 0xc0
-	.byte	0
-banner_loader:
-	/* Integrated bootloader, version 1.00. */
-	.byte	0xb2, 0xdd, 0xc3, 0xb8, 0xde, 0xda, 0xb0, 0xc3, 0xaf, 0xc4, 0xde
-	.ascii	" "
-	.byte	0xcc, 0xde, 0xb0, 0xc4, 0xdb, 0xb0, 0xc0, 0xde
-	.ascii	" "
-	.byte	0xca, 0xde, 0xb0, 0xbc, 0xde, 0xae, 0xdd
-	.ascii	" 1.00"
-	.byte	0
-banner_copyright:
-	.asciz	"Copyright (C) 2026 NEC FANS on X.com"
-probing_label:   .asciz "Probing disks..."
-found_label:     .asciz "Detected devices: "
-fd_name:         .asciz "fd"
-ide_name:        .asciz "ide"
-scsi_name:       .asciz "scsi"
-bios_label:      .asciz "  BIOS "
-status_label:    .asciz " ST "
-geometry_label:  .asciz "  H/S "
-partitions_label: .asciz "PC-98 partitions (first fixed disk):"
-menu_label:       .asciz "Select boot target:"
-shell_label:      .asciz " Shell"
-disk_ipl_label:   .asciz " disk IPL"
-part_label:       .asciz " part "
-select_label:     .asciz "Press 1-9 to chain-load."
-chain_error:      .asciz "Chain-load read failed."
-stage2_name:      .ascii "BOOT    SYS"
-partition_id_label: .asciz " MID/SID "
-partition_lba_label: .asciz " start LBA "
-partitions_error: .asciz "PC-98 partition table read failed."
-handoff_error:   .asciz "Invalid Stage 0 handoff."
+fatal_handoff_message: .asciz "BOOT98: invalid PBR handoff"
+fatal_stage2_message:  .asciz "BOOT98: cannot load BOOT.SYS"
+stage2_name:           .ascii "BOOT    SYS"
 
 	.balign 2
-sense_bytes:      .word 0
-sense_cylinders:  .word 0
-sense_heads:      .byte 0
-sense_sectors:    .byte 0
-sense_flags:      .word 0
-sense_status:     .byte 0
-read_flags:       .word 0
-read_status:      .byte 0
-timeout_start:    .byte 0
-timeout_calendar: .space 6
-device_count:     .byte 0
-current_class:    .byte 0
-current_index:    .byte 0
-current_bios_id:  .byte 0
-menu_count:        .byte 0
-selected_menu:     .byte 0
-current_menu_type: .byte 0
-current_partition: .byte 0
-partition_heads:  .byte 0
-partition_sectors: .byte 0
-partition_table_valid: .byte 0
+disk_flags:            .word 0
+chain_entry:           .word 0
+clock_calendar:        .space 6
+device_count:          .byte 0
+fat_sector_scale:      .byte 0
 	.balign 2
-current_descriptor: .word 0
-chain_entry:       .word 0
-chain_flags:       .word 0
+fat_root_entries:      .word 0
+fat_root_sectors:      .word 0
+fat_cluster:           .word 0
+fat_spc:               .word 0
+fat_sector_in_cluster: .word 0
+stage2_segment:        .word 0
+stage2_offset:         .word 0
 	.balign 4
-current_lba:       .long 0
-current_data_lba:  .long 0
-fat_partition_lba: .long 0
-fat_lba:           .long 0
-fat_root_lba:      .long 0
-fat_data_lba:      .long 0
-stage2_file_size:  .long 0
-stage2_remaining:  .long 0
-stage2_entry_offset: .long 0
-stage2_target:     .long 0
-	.balign 2
-boot_menu_entry:   .word 0
-active_menu_entry: .word 0
-timeout_budget:    .word 0
-fat_root_entries:  .word 0
-fat_root_sectors:  .word 0
-fat_cluster:       .word 0
-stage2_offset:     .word 0
-fat_sector_scale:  .byte 0
-fat_spc:           .byte 0
-fat_sector_in_cluster: .byte 0
-stage2_valid:      .byte 0
+fat_partition_lba:     .long 0
+fat_lba:               .long 0
+fat_root_lba:          .long 0
+fat_data_lba:          .long 0
+stage2_file_size:      .long 0
+stage2_remaining:      .long 0
+stage2_entry_offset:   .long 0
+
 	.balign 4
-stage2_handoff:    .space 20
-pm_jump:           .long 0
+stage2_handoff:        .space 20
+pm_jump:               .long 0
 	.word 0x08
 	.balign 8
 gdt:
@@ -2138,22 +910,16 @@ gdt_desc:
 gateway_pm_return:
 	.long 0x10000 + gateway32_return
 	.word 0x08
-gateway_request:   .long 0
-gateway_saved_esp: .long 0
-gateway_result:    .long 0
+gateway_request:        .long 0
+gateway_saved_esp:      .long 0
+gateway_result:         .long 0
 gateway_active_service: .byte 0
-gateway_bios_id:   .byte 0
-gateway_heads:     .byte 0
-gateway_sectors:   .byte 0
+gateway_bios_id:        .byte 0
 	.balign 4
-gateway_lba:       .long 0
-gateway_buffer:    .long 0
-gateway_module_type: .word 0
+gateway_lba:            .long 0
+gateway_buffer:         .long 0
+gateway_module_type:    .word 0
 	.balign 16
-gateway_menu:      .space MENU_SIZE
+gateway_menu:           .space MENU_SIZE
 	.balign 16
-device_table:     .space DEV_DESC_SIZE * DEV_MAX
-	.balign 16
-menu_table:       .space MENU_SIZE * MENU_MAX
-	.balign 16
-partition_table:  .space 512
+device_table:           .space DEV_DESC_SIZE

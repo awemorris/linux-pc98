@@ -490,6 +490,93 @@ read_fixed_lba_done:
 	popfw
 	ret
 
+/*
+ * Invoke one fixed-disk INT 1Bh/AH=84h SENSE operation. The PC-98 firmware
+ * is not assumed to preserve general registers; only the documented result
+ * is copied into the local result fields below.
+ */
+bios_sense:
+	pushw	%ax
+	pushw	%bx
+	pushw	%cx
+	pushw	%dx
+	pushw	%si
+	pushw	%di
+	pushw	%ds
+	pushw	%es
+	pushw	%bp
+	pushw	%ds
+	xorw	%bx, %bx
+	movw	%bx, %ds
+	movw	HANDOFF+HO_SAVED_SI, %si
+	movw	HANDOFF+HO_SAVED_DI, %di
+	popw	%ds
+	movw	$0x0100, %bx
+	movb	$0x84, %ah
+	int	$0x1b
+	movb	%ah, %cs:sense_status
+	movw	%bx, %cs:sense_bytes
+	movw	%cx, %cs:sense_cylinders
+	movb	%dh, %cs:sense_heads
+	movb	%dl, %cs:sense_sectors
+	pushfw
+	popw	%ax
+	movw	%ax, %cs:sense_flags
+	popw	%bp
+	popw	%es
+	popw	%ds
+	popw	%di
+	popw	%si
+	popw	%dx
+	popw	%cx
+	popw	%bx
+	popw	%ax
+	pushw	%cs:sense_flags
+	popfw
+	ret
+
+/* Confirm an IDE SENSE result with one read-only sector-zero access. */
+bios_probe_read_lba0:
+	pushw	%ax
+	pushw	%bx
+	pushw	%cx
+	pushw	%dx
+	pushw	%si
+	pushw	%di
+	pushw	%ds
+	pushw	%es
+	pushw	%bp
+	pushw	%ds
+	xorw	%bx, %bx
+	movw	%bx, %ds
+	movw	HANDOFF+HO_SAVED_SI, %si
+	movw	HANDOFF+HO_SAVED_DI, %di
+	popw	%ds
+	movw	$TABLE_SEG, %bx
+	movw	%bx, %es
+	xorw	%bp, %bp
+	movw	$512, %bx
+	xorw	%cx, %cx
+	xorw	%dx, %dx
+	movb	$0x06, %ah
+	int	$0x1b
+	movb	%ah, %cs:probe_read_status
+	pushfw
+	popw	%ax
+	movw	%ax, %cs:probe_read_flags
+	popw	%bp
+	popw	%es
+	popw	%ds
+	popw	%di
+	popw	%si
+	popw	%dx
+	popw	%cx
+	popw	%bx
+	popw	%ax
+	pushw	%cs:probe_read_flags
+	popfw
+	ret
+
 /* Return RTC seconds as binary 0..59, or ffh for invalid BCD. */
 read_clock_second:
 	pushw	%bx
@@ -590,6 +677,8 @@ gateway_real:
 	shrl	$4, %eax
 	movw	%ax, %es
 	movw	%es:(%bx), %ax
+	cmpw	$10, %ax
+	je	gateway_probe_fixed
 	cmpw	$9, %ax
 	je	gateway_clock_second
 	cmpw	$8, %ax
@@ -649,6 +738,95 @@ gateway_display_reset:
 gateway_return_menu:
 gateway_reprobe:
 	movl	$0, %cs:gateway_result
+	jmp	gateway_real_return
+
+/*
+ * Probe exactly one fixed BIOS unit. request.status supplies the IDE/SCSI
+ * class and request.buffer receives one 16-byte boot98_device descriptor.
+ */
+gateway_probe_fixed:
+	movb	%es:2(%bx), %al
+	movb	%al, gateway_probe_class
+	movb	%es:4(%bx), %al
+	movb	%al, gateway_bios_id
+	movl	%es:12(%bx), %eax
+	movl	%eax, gateway_buffer
+	testl	%eax, %eax
+	jz	gateway_probe_failed
+	cmpl	$0x000ffff0, %eax
+	ja	gateway_probe_failed
+	cmpb	$DEV_CLASS_IDE, gateway_probe_class
+	je	1f
+	cmpb	$DEV_CLASS_SCSI, gateway_probe_class
+	jne	gateway_probe_failed
+	movb	gateway_bios_id, %al
+	andb	$0xf8, %al
+	cmpb	$0xa0, %al
+	jne	gateway_probe_failed
+	jmp	2f
+1:
+	movb	gateway_bios_id, %al
+	andb	$0xfc, %al
+	cmpb	$0x80, %al
+	jne	gateway_probe_failed
+2:
+	movb	gateway_bios_id, %al
+	call	bios_sense
+	pushw	%cs
+	popw	%ds
+	jc	gateway_probe_failed
+	cmpb	$0x20, sense_status
+	jae	gateway_probe_failed
+	cmpw	$512, sense_bytes
+	jne	gateway_probe_failed
+	cmpb	$0, sense_heads
+	je	gateway_probe_failed
+	cmpb	$0, sense_sectors
+	je	gateway_probe_failed
+	cmpb	$DEV_CLASS_IDE, gateway_probe_class
+	jne	3f
+	movb	gateway_bios_id, %al
+	call	bios_probe_read_lba0
+	pushw	%cs
+	popw	%ds
+	jc	gateway_probe_failed
+	cmpb	$0x20, probe_read_status
+	jae	gateway_probe_failed
+3:
+	movl	gateway_buffer, %eax
+	movw	%ax, %di
+	andw	$0x000f, %di
+	shrl	$4, %eax
+	movw	%ax, %es
+	pushw	%di
+	movw	$DEV_DESC_SIZE, %cx
+	xorb	%al, %al
+	cld
+	rep stosb
+	popw	%di
+	movb	gateway_probe_class, %al
+	movb	%al, %es:DEV_CLASS(%di)
+	movb	gateway_bios_id, %al
+	movb	%al, %ah
+	andb	$0x0f, %ah
+	movb	%ah, %es:DEV_INDEX(%di)
+	movb	%al, %es:DEV_BIOS_ID(%di)
+	movb	$(DEV_FLAG_PRESENT | DEV_FLAG_GEOMETRY), %es:DEV_FLAGS(%di)
+	movw	sense_bytes, %ax
+	movw	%ax, %es:DEV_SECTOR_SIZE(%di)
+	movw	sense_cylinders, %ax
+	movw	%ax, %es:DEV_CYLINDERS(%di)
+	movb	sense_heads, %al
+	movb	%al, %es:DEV_HEADS(%di)
+	movb	sense_sectors, %al
+	movb	%al, %es:DEV_SECTORS(%di)
+	movb	sense_status, %al
+	movb	%al, %es:10(%di)
+	movl	$0, %cs:gateway_result
+	jmp	gateway_real_return
+
+gateway_probe_failed:
+	movl	$0xffffffff, %cs:gateway_result
 	jmp	gateway_real_return
 
 gateway_iplware:
@@ -915,6 +1093,16 @@ gateway_saved_esp:      .long 0
 gateway_result:         .long 0
 gateway_active_service: .byte 0
 gateway_bios_id:        .byte 0
+gateway_probe_class:    .byte 0
+sense_status:           .byte 0
+sense_heads:            .byte 0
+sense_sectors:          .byte 0
+probe_read_status:      .byte 0
+	.balign 2
+sense_bytes:            .word 0
+sense_cylinders:        .word 0
+sense_flags:            .word 0
+probe_read_flags:       .word 0
 	.balign 4
 gateway_lba:            .long 0
 gateway_buffer:         .long 0

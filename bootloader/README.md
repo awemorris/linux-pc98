@@ -73,6 +73,14 @@ the BIOS drive number, and an ABI version are also passed to Linux in a
 `BOOT.SYS` is the protected-mode third stage. Probe status and the menu are
 written sequentially from the next text row. It displays this menu:
 
+The PBR-provided boot disk is registered first. `BOOT.SYS` then asks the BIOS
+gateway to probe one fixed unit per call, in IDE `80h`-`83h` order followed by
+SCSI `A0h`-`A7h` order. The SCSI option-ROM bitmap at BIOS work-area address
+`0482h` suppresses calls for targets already reported absent. Up to twelve
+fixed disks are retained; the first four receive startup-menu slots and every
+retained disk remains available through `devalias` and the `disk` command.
+Floppy media are deliberately not probed during this phase.
+
 Its shell, configuration reader, applet support, IPLware loader, and kernel
 loader use the generic interfaces in `boot98-fs.h` and `boot98-image.h`.
 FAT-family BPB parsing, 8.3 conversion, and cluster-chain reads live in
@@ -84,18 +92,18 @@ FAT32, ext4, and UFS drivers can be added without changing those consumers.
 ```text
 Boot from:
   1) Auto (HDD 1 partition 1 boot.cfg)
-  2) FDD 1
-  3) FDD 2
-  4) HDD 1
-  5) HDD 2
+  2) HDD 1
+  3) HDD 2
+  4) HDD 3
+  5) HDD 4
 
 Press ESC key to fallback to shell.
 ```
 
-`Auto` executes `BOOT.CFG`.  Escape skips automatic configuration and enters
-the interactive command shell.  FDD and HDD entries chain-load the selected
-device's boot record.  Cursor-key selection is a planned user-interface
-improvement; the current menu uses number keys.
+`Auto` executes `BOOT.CFG`. Escape skips automatic configuration and enters
+the interactive command shell. HDD entries chain-load the selected device's
+boot record; a number whose slot is empty is ignored. Cursor-key selection is
+a planned user-interface improvement; the current menu uses number keys.
 
 The Linux loader prints the ELF file size and updates separate `text` and
 `data` transferred-size counters while reading the kernel.

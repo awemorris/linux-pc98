@@ -19,6 +19,7 @@
 #define PC98_SETUP_NODE_SIZE 32U
 #define CONSOLE_FIRST_ROW 8
 #define STARTUP_TIMEOUT_SECONDS 3
+#define MAX_FIXED_DEVICES 12
 
 /*
  * Stage 2 runs without a C library or operating-system services.  Text and
@@ -30,6 +31,8 @@ static volatile uint8_t *const av = (volatile uint8_t *)0xa2000;
 static boot98_bios_gateway_t gw;
 static const struct boot98_handoff *ho;
 static const struct boot98_device *devs;
+static struct boot98_device discovered_devices[MAX_FIXED_DEVICES];
+static unsigned device_count;
 static struct boot98_bios_request rq;
 static uint8_t sec[512], cfg[CFG_MAX];
 static unsigned row = CONSOLE_FIRST_ROW, col;
@@ -471,7 +474,7 @@ static int number(const char *s)
 
 static void listdev(uint8_t cls)
 {
-	for (unsigned i = 0; i < ho->device_count; i++) {
+	for (unsigned i = 0; i < device_count; i++) {
 		if (cls && devs[i].device_class != cls)
 			continue;
 		devname(i);
@@ -497,7 +500,7 @@ static int selectdisk(const char *c, const char *n)
 	                                 : 0;
 	if (!cls || ix < 0)
 		return 0;
-	for (unsigned i = 0; i < ho->device_count; i++)
+	for (unsigned i = 0; i < device_count; i++)
 		if (devs[i].device_class == cls &&
 		    devs[i].display_index == ix) {
 			curdev = i;
@@ -636,13 +639,48 @@ static int run_applet(const char *n, int argc, char **argv)
 	}
 	return 1;
 }
-static void reprobe(void)
+static int device_is_known(uint8_t device_class, uint8_t bios_id)
 {
-	call(BOOT98_BIOS_REPROBE);
-	curdev = curpart = -1;
-	kernel_name[0] = kernel_arg[0] = 0;
-	findboot();
-	call(BOOT98_BIOS_DISPLAY_RESET);
+	for (unsigned i = 0; i < device_count; i++)
+		if (devs[i].device_class == device_class &&
+		    devs[i].bios_id == bios_id)
+			return 1;
+	return 0;
+}
+
+/* Each gateway invocation performs at most one INT 1Bh SENSE operation. */
+static void probe_fixed_class(uint8_t device_class)
+{
+	uint8_t first = device_class == BOOT98_DEV_IDE ? 0x80 : 0xa0;
+	unsigned count = device_class == BOOT98_DEV_IDE ? 4 : 8;
+	uint8_t scsi_bitmap;
+
+	asm volatile("movb 0x0482,%0" : "=q"(scsi_bitmap));
+
+	for (unsigned index = 0; index < count; index++) {
+		uint8_t bios_id = first + index;
+
+		if (device_count >= MAX_FIXED_DEVICES)
+			return;
+		if (device_is_known(device_class, bios_id))
+			continue;
+		if (device_class == BOOT98_DEV_SCSI &&
+		    !(scsi_bitmap & (1U << index)))
+			continue;
+		memzero(&discovered_devices[device_count],
+		        sizeof(discovered_devices[device_count]));
+		rq.status = device_class;
+		rq.bios_id = bios_id;
+		rq.buffer = (uint32_t)&discovered_devices[device_count];
+		if (call(BOOT98_BIOS_PROBE_FIXED) == 0)
+			device_count++;
+	}
+}
+
+static void discover_fixed_devices(void)
+{
+	probe_fixed_class(BOOT98_DEV_IDE);
+	probe_fixed_class(BOOT98_DEV_SCSI);
 }
 
 /* ELF32 structures used by the uncompressed Linux kernel loader. */
@@ -707,7 +745,7 @@ static void build_pc98_disk_setup(uint8_t *bp)
 
 	*(uint32_t *)(bp + 0x250) = 0;
 	*(uint32_t *)(bp + 0x254) = 0;
-	for (unsigned i = 0; i < ho->device_count; i++) {
+	for (unsigned i = 0; i < device_count; i++) {
 		const struct boot98_device *d = &devs[i];
 		uint8_t *x;
 
@@ -872,7 +910,7 @@ static int command(char *s)
 		return 1;
 	if (streq(v[0], "help")) {
 		puts("help echo pause wait devalias probe-ide probe-scsi "
-		     "probe-fd disk part ls cat source kernel arg boot linux "
+		     "disk part ls cat source kernel arg boot linux "
 		     "run iplware reboot halt\n");
 		return 1;
 	}
@@ -907,18 +945,13 @@ static int command(char *s)
 		return 1;
 	}
 	if (streq(v[0], "probe-ide")) {
-		reprobe();
-		listdev(2);
+		probe_fixed_class(BOOT98_DEV_IDE);
+		listdev(BOOT98_DEV_IDE);
 		return 1;
 	}
 	if (streq(v[0], "probe-scsi")) {
-		reprobe();
-		listdev(3);
-		return 1;
-	}
-	if (streq(v[0], "probe-fd")) {
-		reprobe();
-		listdev(1);
+		probe_fixed_class(BOOT98_DEV_SCSI);
+		listdev(BOOT98_DEV_SCSI);
 		return 1;
 	}
 	if (streq(v[0], "disk")) {
@@ -1043,7 +1076,7 @@ static int command(char *s)
 static void findboot(void)
 {
 	for (unsigned pass = 0; pass < 2; pass++)
-		for (unsigned i = 0; i < ho->device_count; i++) {
+		for (unsigned i = 0; i < device_count; i++) {
 			if (!(devs[i].flags & BOOT98_DEV_HAS_GEOMETRY))
 				continue;
 			if ((pass == 0) !=
@@ -1062,15 +1095,12 @@ static void findboot(void)
 		}
 }
 
-/* Fixed third-stage menu. FDD numbering is separate from the combined
- * fixed-disk order, so IDE and SCSI media can both appear as HDD 1/2. */
-static int menu_device(int floppy, unsigned ordinal)
+/* The startup menu exposes only the first four fixed disks. The full stable
+ * discovery order remains addressable through devalias and disk. */
+static int menu_device(unsigned ordinal)
 {
 	unsigned found = 0;
-	for (unsigned i = 0; i < ho->device_count; i++) {
-		int is_floppy = devs[i].device_class == BOOT98_DEV_FDD;
-		if (is_floppy != floppy)
-			continue;
+	for (unsigned i = 0; i < device_count; i++) {
 		if (++found == ordinal)
 			return (int)i;
 	}
@@ -1082,14 +1112,13 @@ static unsigned fixed_device_ordinal(int device)
 	unsigned ordinal = 0;
 
 	for (int i = 0; i <= device; i++)
-		if (devs[i].device_class != BOOT98_DEV_FDD)
-			ordinal++;
+		ordinal++;
 	return ordinal;
 }
 
-static void chain_menu_device(int floppy, unsigned ordinal)
+static void chain_menu_device(unsigned ordinal)
 {
-	int di = menu_device(floppy, ordinal);
+	int di = menu_device(ordinal);
 	if (di < 0) {
 		puts("Device is not present.\n");
 		return;
@@ -1123,10 +1152,10 @@ static int startup_menu(void)
 			puts("? partition ?");
 		}
 		puts(" boot.cfg)\n"
-		     "  2) FDD 1\n"
-		     "  3) FDD 2\n"
-		     "  4) HDD 1\n"
-		     "  5) HDD 2\n\n"
+		     "  2) HDD 1\n"
+		     "  3) HDD 2\n"
+		     "  4) HDD 3\n"
+		     "  5) HDD 4\n\n"
 		     "Press ESC key to fallback to shell.\n\n"
 		     "Select: ");
 		int k = first ? initial_key() : key();
@@ -1141,16 +1170,16 @@ static int startup_menu(void)
 		case '1':
 			return 1;
 		case '2':
-			chain_menu_device(1, 1);
+			chain_menu_device(1);
 			break;
 		case '3':
-			chain_menu_device(1, 2);
+			chain_menu_device(2);
 			break;
 		case '4':
-			chain_menu_device(0, 1);
+			chain_menu_device(3);
 			break;
 		case '5':
-			chain_menu_device(0, 2);
+			chain_menu_device(4);
 			break;
 		default:
 			continue;
@@ -1170,8 +1199,20 @@ void boot98_main(const struct boot98_handoff *h)
 	    !h->bios_gateway)
 		for (;;)
 			asm volatile("cli; hlt");
-	devs = (const struct boot98_device *)h->device_table;
+	device_count = 0;
+	const struct boot98_device *initial =
+		(const struct boot98_device *)h->device_table;
+	for (unsigned i = 0; i < h->device_count &&
+	     device_count < MAX_FIXED_DEVICES; i++) {
+		if ((initial[i].device_class != BOOT98_DEV_IDE &&
+		     initial[i].device_class != BOOT98_DEV_SCSI) ||
+		    !(initial[i].flags & BOOT98_DEV_PRESENT))
+			continue;
+		discovered_devices[device_count++] = initial[i];
+	}
+	devs = discovered_devices;
 	gw = (boot98_bios_gateway_t)h->bios_gateway;
+	discover_fixed_devices();
 	for (;;) {
 		findboot();
 		call(BOOT98_BIOS_DISPLAY_RESET);

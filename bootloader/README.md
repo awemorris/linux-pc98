@@ -5,6 +5,11 @@ loaders use PC-98 BIOS disk services; the FAT16-hosted 32-bit program provides
 the menu, interactive shell, and Linux ELF loader.  The PC/AT real-mode setup
 code is not executed.
 
+The approved implementation sequence for the next BOOT98 refactoring is in
+[`BOOT98-REFACTOR-PLAN.md`](BOOT98-REFACTOR-PLAN.md).  It is intentionally
+more prescriptive than the architectural design notes so that implementation
+can be delegated commit by commit without reopening settled decisions.
+
 ## Disk layout
 
 | LBA or region | Contents |
@@ -13,7 +18,7 @@ code is not executed.
 | 1 | PC-98 partition table: sixteen 32-byte entries |
 | 2 through 15 | Generic `ipl-lba2.bin` BOOT-partition selector |
 | BOOT partition start | One 1024-byte DOS-compatible FAT16 PBR/BPB reserved sector |
-| BOOT partition files | Contiguous `IO.SYS`, `boot.bin`, `boot.cfg`, `VMLINUX`, applets, and optional extension BIOS files |
+| BOOT partition files | Contiguous `IO.SYS`, `BOOT.SYS`, `boot.cfg`, `VMLINUX`, applets, and optional extension BIOS files |
 | Partition 2 | ext4 root filesystem |
 
 `ipl-lba0.bin` is deliberately generic and silent.  It immediately loads the
@@ -41,7 +46,7 @@ boot menu, while DOS mounts it as an ordinary volume.
 The complete real-mode `IO.SYS` probes BIOS-visible disks with
 `INT 1Bh/AH=84h`, uses each disk's returned logical CHS to interpret its
 PC-98 partition table, opens the FAT16 filesystem at the BOOT entry's start,
-and loads `boot.bin`.  It does not program ATA or SCSI registers and is
+and loads `BOOT.SYS`.  It does not program ATA or SCSI registers and is
 therefore independent of the controller used by the BIOS.
 
 Images created without geometry options use the BIOS 8/17 layout, so
@@ -58,7 +63,7 @@ on-disk partition CHS fields. The geometry actually returned by BIOS SENSE,
 the BIOS drive number, and an ABI version are also passed to Linux in a
 `SETUP_PC98_DISK` setup-data node attached to `boot_params`.
 
-`boot.bin` is the protected-mode third stage. Probe status and the menu are
+`BOOT.SYS` is the protected-mode third stage. Probe status and the menu are
 written sequentially from the next text row. It displays this menu:
 
 ```text
@@ -86,7 +91,7 @@ the NEC fixed-disk boot menu. The image formatter is
 intentionally destructive to that partition: it creates one 1024-byte FAT
 reserved sector at the common IPL/data-start CHS, installs the matching PBR
 and contiguous `IO.SYS`,
-`boot.bin`, `boot.cfg`, and `VMLINUX`, and leaves root, swap, LBA 0, and
+`BOOT.SYS`, `boot.cfg`, and `VMLINUX`, and leaves root, swap, LBA 0, and
 LBA 2–15
 untouched. Pass `--install-disk-stubs` only when the distributed LBA 0 and
 LBA 2–15 images should replace the existing disk IPL. The loaders do not
@@ -201,7 +206,7 @@ one-logical-sector PBR area. It preserves the existing BPB and refuses a
 volume that is not named `BOOT` or is not FAT16 with 1024-byte sectors.
 
 All writes use PC-98 BIOS `INT 1Bh` absolute CHS access and are read back for
-verification. `BOOT.BIN`, `BOOT.CFG`, `VMLINUX`, and other contents are copied
+verification. `BOOT.SYS`, `BOOT.CFG`, `VMLINUX`, and other contents are copied
 normally with DOS commands.
 
 ## Building and updating
@@ -222,7 +227,7 @@ BOOT_LOGO=bootloader/boot-logo.raw \
 ```
 
 `update-kernel.sh` preserves the existing disk IPL code at LBA 0 and LBA 2–15, installs matching
-`IO.SYS`, recreates the BOOT FAT16 filesystem, and stores `boot.bin`,
+`IO.SYS`, recreates the BOOT FAT16 filesystem, and stores `BOOT.SYS`,
 `boot.cfg`, and the ELF input as `VMLINUX`. It does not modify root or swap
 partitions. Canonical release-image profiles additionally install
 `ipl-lba0.bin` and `ipl-lba2.bin`. Image creation rejects compressed or other non-ELF kernel files;

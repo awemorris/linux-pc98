@@ -7,7 +7,7 @@ STAGE2_CFLAGS := -m32 -march=i386 -Os -ffreestanding -fno-pic -fno-pie -fno-stac
 SCRIPTS_DIR := ../scripts
 
 all: boot2.bin ipl-lba0.bin ipl-lba2.bin ipl-lba0.img ipl-lba2.img \
-	ipl-part.img IO.SYS boot.bin \
+	ipl-part.img IO.SYS BOOT.SYS \
 	partition-pbr.bin fat-loader.bin boot98-chain-test.bin \
 	boot98-fdd-ipl.bin boot98-iplware-test.bin \
 	boot98-iplware-com-test.com BOOTAPP.BIN
@@ -118,12 +118,9 @@ boot98-stage2.o: boot98-stage2.c boot98-abi.h
 boot98-stage2.elf: boot98-stage2-entry.o boot98-stage2.o boot98-stage2.ld
 	$(LD) -m elf_i386 -T boot98-stage2.ld -nostdlib boot98-stage2-entry.o boot98-stage2.o -o $@
 
-boot.bin: boot98-stage2.elf $(SCRIPTS_DIR)/patch-boot98-bin.py
+BOOT.SYS: boot98-stage2.elf $(SCRIPTS_DIR)/patch-boot98-bin.py
 	$(OBJCOPY) -O binary $< $@
 	python3 $(SCRIPTS_DIR)/patch-boot98-bin.py $@
-
-BOOT98.BIN: boot.bin
-	cp $< $@
 
 boot98-iplware-test.o: boot98-iplware-test.S
 	$(AS) $(ASFLAGS) $< -o $@

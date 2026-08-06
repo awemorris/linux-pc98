@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Updating BOOT98 is an atomic boot-environment operation.  The disk stubs,
-# partition PBR, FAT-hosted IO.SYS/boot.bin, and their handoff ABI must
+# partition PBR, FAT-hosted IO.SYS/BOOT.SYS, and their handoff ABI must
 # always come from the same source revision.  The BOOT filesystem is rebuilt;
 # root and swap partitions are not modified.
 repo="$(cd "$(dirname "$0")/.." && pwd)"

@@ -14,8 +14,8 @@ boot extensions without making the disk IPL difficult to maintain.
 - Enumerate BIOS-accessible FDD 0-3, IDE 0-3, and SCSI 0-7 devices.
 - Present a boot menu for disks and their PC-98 partitions.
 - Chain-load an existing disk IPL or partition PBR, including DOS partitions.
-- Locate a FAT16 partition named `BOOT` and load `boot.bin` from it.
-- Display the boot menu and Escape-to-shell hint only after `boot.bin` has
+- Locate a FAT16 partition named `BOOT` and load `BOOT.SYS` from it.
+- Display the boot menu and Escape-to-shell hint only after `BOOT.SYS` has
   loaded successfully.
 - Execute `boot.cfg` only when the user selects `Auto`.
 - Load an uncompressed Linux kernel and pass its command line.
@@ -47,7 +47,7 @@ The current tree contains these working loaders:
 | `ipl-lba2.bin` | 7,168 bytes | Replaceable LBA 2–15 BOOT selector |
 | `ipl-part.img` | 1,024 bytes | FAT16 PBR in one reserved logical sector |
 | `IO.SYS` | currently 6,352 bytes | Contiguous FAT16 system-loader file |
-| `boot.bin` | unconstrained by IPL area | FAT16-hosted 32-bit loader |
+| `BOOT.SYS` | unconstrained by IPL area | FAT16-hosted 32-bit loader |
 | `fat-loader.bin` | 4,106 bytes | FAT16 and Linux ELF loader |
 | `boot2.bin` | 984 bytes | Earlier two-sector loader |
 | `dos/linux98.exe` | 16,260 bytes | DOS command-line Linux loader |
@@ -94,12 +94,12 @@ traditional IPL/menu area.
 - Displays the basic device and partition menu.
 - Chain-loads a disk IPL or partition PBR.
 - Locates a partition whose PC-98 partition name is `BOOT`.
-- Reads FAT16 just far enough to load `boot.bin`.
-- Continues to provide device/PBR booting when `boot.bin` is absent or
+- Reads FAT16 just far enough to load `BOOT.SYS`.
+- Continues to provide device/PBR booting when `BOOT.SYS` is absent or
   invalid.
 - Does not contain the interactive shell.
 
-### Stage 3: `boot.bin`
+### Stage 3: `BOOT.SYS`
 
 - Stored as a normal file in the FAT16 `BOOT` partition.
 - Loaded only after its header, size, and checksum have been validated.
@@ -390,7 +390,7 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 
 ## Error behavior
 
-- A missing or invalid `boot.bin` leaves the partition-IPL fallback device/PBR
+- A missing or invalid `BOOT.SYS` leaves the partition-IPL fallback device/PBR
   menu usable.
 - A missing `boot.cfg` selected through `Auto` reports the error and enters
   the shell; entering the shell with Escape is always independent of the file.
@@ -415,9 +415,9 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 ### Phase 2: 32-bit loader loading (implemented)
 
 1. Find a `BOOT` partition.
-2. Implement the minimal FAT16 path needed to find `boot.bin`.
-3. Define and validate the `boot.bin` header and checksum.
-4. Load and enter `boot.bin` while retaining the device table and boot origin.
+2. Implement the minimal FAT16 path needed to find `BOOT.SYS`.
+3. Define and validate the `BOOT.SYS` header and checksum.
+4. Load and enter `BOOT.SYS` while retaining the device table and boot origin.
 5. Add `Shell` only after successful entry.
 
 ### Phase 3: shell and configuration (implemented baseline)
@@ -445,7 +445,7 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 - Complete SCSI target-to-INT-1Bh mapping for different option BIOSes.
 - The PC-98 IDE and SCSI CD-ROM boot conventions to support.
 - Whether the `BOOT` partition may use subdirectories in the first release.
-- The final `boot.bin` load address and low-memory map.
+- The final `BOOT.SYS` load address and low-memory map.
 - The BOOT98 applet register ABI and service dispatch format.
 - The exact formats covered by `loadbios` and whether address discovery can be
   derived from a file header.
@@ -503,12 +503,12 @@ the normal workflow is to prepare a reviewable change and let the user commit.
 Do not reopen these choices without new hardware evidence:
 
 1. BOOT98 is split into the generic LBA 0 IPL, a self-loading LBA 2 boot core,
-   and FAT16-hosted `boot.bin`.  The full shell is not forced into the NEC
+   and FAT16-hosted `BOOT.SYS`.  The full shell is not forced into the NEC
    system area.
 2. The generic IPL loads exactly one LBA 2 sector and does not know BOOT98's
    format or length.  The BOOT98 second stage retains a fallback
-   device/partition/PBR menu when `boot.bin` is missing or damaged.
-   The `Auto` menu and Escape-to-shell hint appear only after `boot.bin`
+   device/partition/PBR menu when `BOOT.SYS` is missing or damaged.
+   The `Auto` menu and Escape-to-shell hint appear only after `BOOT.SYS`
    loads successfully.
 3. BIOS-visible devices are presented as FDD 0-3, IDE 0-3, and SCSI 0-7.
 4. Disk access in the first boot-environment implementation uses INT 1Bh.
@@ -550,7 +550,7 @@ prompt under QEMU:
 
 1. LBA 0 silently enters LBA 2 of the current fixed disk.
 2. The LBA 2 bootstrap loads the remainder of sectors 2-15.
-3. The boot core finds `BOOT`, validates and loads `boot.bin`.
+3. The boot core finds `BOOT`, validates and loads `BOOT.SYS`.
 4. Probe status and the third-stage menu are displayed on consecutive rows.
 5. The first menu selection has a three-second timeout.  Timeout executes
    `Auto`; if the 32-bit loader is unavailable, `IO.SYS` instead chain-loads the
@@ -574,7 +574,7 @@ Minimum Phase 1 QEMU matrix:
 | Primary plus secondary IDE | Both HDDs and their partitions remain distinct. |
 | IDE disk with non-default logical geometry | Partition entries are decoded with SENSE H/S. |
 | PC-9801-92 SCSI HDD | Target is enumerated and its PBR can be selected. |
-| Missing or invalid `boot.bin` | The `IO.SYS` menu still chain-loads a bootable device. |
+| Missing or invalid `BOOT.SYS` | The `IO.SYS` menu still chain-loads a bootable device. |
 
 Real-machine testing should follow QEMU tests, especially on early machines
 with unusual BIOS geometry.  Do not claim broad hardware compatibility from
@@ -590,7 +590,7 @@ QEMU alone.
 - Preserve user disk images.  Work on copies for tests that can modify a disk.
 - Keep `IO.SYS` size visible in every build. The current PBR accepts at most
   127 physical sectors (65,024 bytes); larger functionality still belongs in
-  `boot.bin`, not in the real-mode system loader.
+  `BOOT.SYS`, not in the real-mode system loader.
 
 ### Suggested prompt on another computer
 

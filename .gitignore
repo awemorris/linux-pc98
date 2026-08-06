@@ -5,6 +5,7 @@
 /bootloader/*.elf
 /bootloader/*.o
 /bootloader/*.BIN
+/bootloader/BOOT.SYS
 /bootloader/*.com
 *~
 __pycache__/

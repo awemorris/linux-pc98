@@ -37,7 +37,7 @@ a normal hidden/system/read-only FAT16 file, verifies that its FAT chain is
 contiguous, and writes the 1024-byte partition PBR while preserving the BPB.
 The target must already be a FAT16 partition named `BOOT`, with one 1024-byte
 reserved logical sector and identical IPL/data-start CHS values. `INST.EXE`
-does not create a partition table, format FAT, copy `BOOT.BIN` or `VMLINUX`,
+does not create a partition table, format FAT, copy `BOOT.SYS` or `VMLINUX`,
 or erase the future root partition. Every raw PBR sector is read back after
 writing.
 

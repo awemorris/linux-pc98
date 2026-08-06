@@ -46,7 +46,7 @@ for command in dd mattrib mcopy mformat python3; do
 done
 
 make -C "$bootloader" ipl-lba0.bin ipl-lba2.bin \
-	ipl-lba0.img ipl-lba2.img ipl-part.img IO.SYS boot.bin
+	ipl-lba0.img ipl-lba2.img ipl-part.img IO.SYS BOOT.SYS
 io_sys_size="$(stat -c %s "$bootloader/IO.SYS")"
 
 # Recreate the first FAT16 partition as the BOOT environment.  The volume has
@@ -163,7 +163,8 @@ with open(image, "r+b") as stream:
 PY
 mcopy -o -i "$image@@$offset" "$bootloader/IO.SYS" ::IO.SYS
 mattrib -i "$image@@$offset" +r +h +s ::IO.SYS
-mcopy -o -i "$image@@$offset" "$bootloader/boot.bin" ::BOOT.BIN
+mcopy -o -i "$image@@$offset" "$bootloader/BOOT.SYS" ::BOOT.SYS
+mattrib -i "$image@@$offset" +r +h +s ::BOOT.SYS
 if test -n "$kernel"; then
 	mcopy -o -i "$image@@$offset" "$kernel" ::VMLINUX
 fi

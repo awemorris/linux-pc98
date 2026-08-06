@@ -10,7 +10,7 @@ make -C bootloader
 
 The build reports the `IO.SYS` size and produces `bootloader/ipl-lba0.bin`,
 `bootloader/ipl-lba2.bin`, the 1024-byte `bootloader/ipl-part.img`,
-`bootloader/IO.SYS`, `bootloader/boot.bin`, the applet self-test, and both
+`bootloader/IO.SYS`, `bootloader/BOOT.SYS`, the applet self-test, and both
 IPLware return-style self-tests.
 
 Create a named BusyBox image with the complete three-stage chain:
@@ -22,7 +22,7 @@ Create a named BusyBox image with the complete three-stage chain:
 
 The installer writes the generic stub to LBA 0, the replaceable BOOT selector
 to LBA 2–15, the 1024-byte PBR to the BOOT partition, and contiguous
-`IO.SYS`, `boot.bin`, and `boot.cfg` to its FAT16 data area. LBA 0 loads one LBA 2
+`IO.SYS`, `BOOT.SYS`, and `boot.cfg` to its FAT16 data area. LBA 0 loads one LBA 2
 sector, so the complete LBA 2–15 image may be replaced by the NEC fixed-disk
 menu or another project's compatible bootstrap.
 
@@ -78,9 +78,9 @@ The completed QEMU matrix uses snapshot mode and covers:
 
 - primary and secondary IDE, FDD plus IDE, non-default logical H/S geometry,
   and PC-9801-92 SCSI using the preserved real option ROM;
-- absent and checksum-invalid `boot.bin`, both retaining the partition-IPL fallback menu;
+- absent and checksum-invalid `BOOT.SYS`, both retaining the partition-IPL fallback menu;
 - FAT16 CFG/fragmented-file reads, device reprobe, listing and Escape return;
-- direct `boot.bin`-to-PBR chain boot (`BOOT98-CHAIN.CFG.test`);
+- direct `BOOT.SYS`-to-PBR chain boot (`BOOT98-CHAIN.CFG.test`);
 - applet header/CRC/services/return and IPLware type 1/type 2 register/return
   self-tests;
 - Linux ELF segment loading and entry, observed through PC-98 IDE discovery

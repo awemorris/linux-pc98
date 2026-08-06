@@ -27,5 +27,5 @@ if [ ! -f "$dos_loader" ]; then
 fi
 
 # Recreate only the BOOT filesystem and install the matching partition IPL,
-# boot.bin, kernel, and DOS loader.  Root and swap partitions are untouched.
+# BOOT.SYS, kernel, and DOS loader.  Root and swap partitions are untouched.
 exec "$repo/scripts/install-boot98-image.sh" "$image" "$kernel_image" "$boot_cfg"

@@ -303,7 +303,7 @@ The BusyBox H=8 profiles install the replaceable BOOT98 environment. The
 silent `ipl-lba0.bin` enters `ipl-lba2.bin`; that selector loads the PBR of
 the FAT16 partition named BOOT. The one 1024-byte reserved logical sector
 contains the PBR/BPB only; it loads contiguous `IO.SYS` as an ordinary FAT
-file, and `IO.SYS` then loads `boot.bin`. NEC MS-DOS can mount the same volume.
+file, and `IO.SYS` then loads `BOOT.SYS`. NEC MS-DOS can mount the same volume.
 The first 32-bit menu
 selection has a three-second timeout: it executes `Auto`, reads `BOOT.CFG`,
 and boots `VMLINUX`. Select Escape before the timeout to enter the interactive
@@ -328,7 +328,7 @@ A:\INST /PART C:
 The first two operations map the current DOS drive back to its physical IDE
 disk. `/PART` copies `IO.SYS` as a hidden/system/read-only FAT16 file,
 verifies its traditional contiguous system-file layout, and installs the
-1024-byte PBR while preserving the BPB. `BOOT.BIN`, `VMLINUX`, and
+1024-byte PBR while preserving the BPB. `BOOT.SYS`, `VMLINUX`, and
 `BOOT.CFG` remain ordinary DOS file copies.
 
 Every generated BOOT partition also contains `INST.EXE`, `IPL-LBA0.IMG`,
@@ -394,7 +394,7 @@ The Debian images use the full PC-98 kernel configuration and require 64 MiB.
 Public images use the GDC screen and PC-98 keyboard as the console. The same
 release also contains `vmlinux-i386`, `vmlinux-i486-debian`, `linux98.exe`,
 `inst.exe`, `ipl-lba0.bin`, `ipl-lba2.bin`, their DOS `.img` copies,
-`ipl-part.img`, `IO.SYS`, `boot.bin`,
+`ipl-part.img`, `IO.SYS`, `BOOT.SYS`,
 `boot.cfg`, and
 `qemu-pc98-win64.zip`. The Windows ZIP contains both i386 and x86_64 QEMU,
 `virtpc98.exe`, required DLLs, and the free PC-98 BIOS/SCSI BIOS files.
@@ -414,7 +414,7 @@ partitions.
 | LBA 1 | PC-98 sixteen-entry partition table |
 | LBA 2 through 15 | Replaceable `ipl-lba2.bin` BOOT-partition selector |
 | BOOT partition reserved sector | 1024-byte FAT16 PBR/BPB (`ipl-part.img`) |
-| BOOT partition data area | FAT16 containing contiguous `IO.SYS`, `boot.bin`, `boot.cfg`, non-compressed `VMLINUX`, and `LINUX98.EXE` |
+| BOOT partition data area | FAT16 containing contiguous `IO.SYS`, `BOOT.SYS`, `boot.cfg`, non-compressed `VMLINUX`, and `LINUX98.EXE` |
 | Partition 2 | ext4 root filesystem, mounted as `/dev/sda2` |
 
 The distributed LBA 2 selector and the NEC fixed-disk boot menu both enter the

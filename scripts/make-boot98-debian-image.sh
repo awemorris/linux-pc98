@@ -97,7 +97,7 @@ cleanup()
 trap cleanup EXIT INT TERM
 
 make -C "$bootloader_dir" ipl-lba0.bin ipl-lba2.bin \
-	partition-pbr.bin IO.SYS boot.bin
+	partition-pbr.bin IO.SYS BOOT.SYS
 mkdir -p "$(dirname "$output")" "$mount_dir"
 truncate -s "$total_bytes" "$output"
 dd if="$bootloader_dir/ipl-lba0.bin" of="$output" bs=512 count=1 \

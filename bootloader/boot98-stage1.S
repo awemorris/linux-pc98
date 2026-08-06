@@ -15,7 +15,7 @@
  * Control flow:
  *
  *   FAT16 PBR -> load contiguous IO.SYS from the FAT filesystem
- *   -> probe BIOS devices -> locate FAT16 BOOT/boot.bin
+ *   -> probe BIOS devices -> locate FAT16 BOOT/BOOT.SYS
  *   -> validate Stage 2 -> show menu
  *   -> chain-load an IPL/PBR or enter 32-bit Stage 2.
  *
@@ -938,7 +938,7 @@ consider_active_partition:
 	popw	%ax
 	ret
 
-/* Load and validate boot.bin from the selected BOOT FAT16 partition. */
+/* Load and validate BOOT.SYS from the selected BOOT FAT16 partition. */
 load_stage2:
 	cmpw	$0, boot_menu_entry
 	je	9f
@@ -2065,7 +2065,7 @@ disk_ipl_label:   .asciz " disk IPL"
 part_label:       .asciz " part "
 select_label:     .asciz "Press 1-9 to chain-load."
 chain_error:      .asciz "Chain-load read failed."
-stage2_name:      .ascii "BOOT    BIN"
+stage2_name:      .ascii "BOOT    SYS"
 partition_id_label: .asciz " MID/SID "
 partition_lba_label: .asciz " start LBA "
 partitions_error: .asciz "PC-98 partition table read failed."

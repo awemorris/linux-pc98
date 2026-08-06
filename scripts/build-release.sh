@@ -157,7 +157,7 @@ done
 
 make -C "$repo/bootloader" ipl-lba0.bin ipl-lba2.bin \
 	ipl-lba0.img ipl-lba2.img \
-	ipl-part.img IO.SYS boot.bin
+	ipl-part.img IO.SYS BOOT.SYS
 copy_release_file "$repo/build/i386-video/kernel/vmlinux.boot" vmlinux-i386
 copy_release_file "$repo/build/kernel-7.1-i486/vmlinux.boot" vmlinux-i486-debian
 copy_release_file "$repo/bootloader/dos/linux98.exe" linux98.exe
@@ -168,7 +168,7 @@ copy_release_file "$repo/bootloader/ipl-lba0.img" ipl-lba0.img
 copy_release_file "$repo/bootloader/ipl-lba2.img" ipl-lba2.img
 copy_release_file "$repo/bootloader/ipl-part.img" ipl-part.img
 copy_release_file "$repo/bootloader/IO.SYS" IO.SYS
-copy_release_file "$repo/bootloader/boot.bin" boot.bin
+copy_release_file "$repo/bootloader/BOOT.SYS" BOOT.SYS
 copy_release_file "$repo/releases/boot98.cfg" boot.cfg
 copy_release_file "$note" RELEASE-NOTES.md
 
@@ -187,7 +187,7 @@ fi
 		linux-pc98-i486dx-debian13-scsi92.img.xz \
 		vmlinux-i386 vmlinux-i486-debian linux98.exe inst.exe \
 		ipl-lba0.bin ipl-lba2.bin ipl-lba0.img ipl-lba2.img \
-		ipl-part.img IO.SYS boot.bin boot.cfg \
+		ipl-part.img IO.SYS BOOT.SYS boot.cfg \
 		qemu-pc98-win64.zip >SHA256SUMS
 )
 printf 'Complete %s artifact set: %s\n' "$version" "$release_dir"

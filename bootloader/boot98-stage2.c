@@ -1202,7 +1202,7 @@ static int startup_menu(void)
 		} else {
 			puts("? partition ?");
 		}
-		puts(" boot98.cfg)\n"
+		puts(" boot.cfg)\n"
 		     "  2) FDD 1\n"
 		     "  3) FDD 2\n"
 		     "  4) HDD 1\n"
@@ -1263,9 +1263,9 @@ void boot98_main(const struct boot98_handoff *h)
 		putc('\n');
 	}
 	if (automatic) {
-		char source_cfg[] = "source BOOT98.CFG";
+		char source_cfg[] = "source BOOT.CFG";
 		if (curpart < 0 || !command(source_cfg))
-			puts("BOOT98.CFG automatic boot failed.\n");
+			puts("BOOT.CFG automatic boot failed.\n");
 	}
 	for (;;) {
 		prompt();

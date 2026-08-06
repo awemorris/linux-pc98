@@ -1,6 +1,6 @@
 # BOOT98 Boot Environment Design
 
-Status: initial three-stage boot chain implemented and QEMU-tested; cursor-key
+Status: replaceable disk IPL and BOOT partition IPL implemented and QEMU-tested; cursor-key
 menu selection and hardware coverage remain future work.
 
 This document records the agreed design for a new PC-9800 boot environment.
@@ -14,10 +14,10 @@ boot extensions without making the disk IPL difficult to maintain.
 - Enumerate BIOS-accessible FDD 0-3, IDE 0-3, and SCSI 0-7 devices.
 - Present a boot menu for disks and their PC-98 partitions.
 - Chain-load an existing disk IPL or partition PBR, including DOS partitions.
-- Locate a FAT16 partition named `BOOT` and load `BOOT98.BIN` from it.
-- Display the boot menu and Escape-to-shell hint only after `BOOT98.BIN` has
+- Locate a FAT16 partition named `BOOT` and load `boot.bin` from it.
+- Display the boot menu and Escape-to-shell hint only after `boot.bin` has
   loaded successfully.
-- Execute `BOOT98.CFG` only when the user selects `Auto`.
+- Execute `boot.cfg` only when the user selects `Auto`.
 - Load an uncompressed Linux kernel and pass its command line.
 - Execute existing IPLware modules through the published IPLware ABI.
 - Load BOOT98 applets from the `BOOT` partition on demand.
@@ -32,7 +32,7 @@ boot extensions without making the disk IPL difficult to maintain.
 - FAT filesystem writes, formatting, copying, or deleting files.
 - initrd loading.  Current PC-98 images use a kernel with the required root
   device and filesystem drivers built in.
-- Dynamic menu-entry definition from `BOOT98.CFG`.
+- Dynamic menu-entry definition from `boot.cfg`.
 - LBA48, IDE DMA, or controller-specific disk access in the boot environment.
   The initial implementation uses PC-98 BIOS services.
 - Reimplementation or redistribution of third-party IPLware modules.
@@ -43,8 +43,10 @@ The current tree contains these working loaders:
 
 | File | Current size | Purpose |
 |---|---:|---|
-| `disk-ipl.bin` | 512 bytes | PC-98 `IPL1` disk record |
-| `partition-pbr.bin` | 512 bytes | FAT16 partition PBR |
+| `ipl-lba0.bin` | 512 bytes | PC-98 `IPL1` disk record |
+| `ipl-lba2.bin` | 7,168 bytes | Replaceable LBA 2–15 BOOT selector |
+| `boot.sys` | at most 7,168 bytes | Raw BOOT partition IPL |
+| `boot.bin` | unconstrained by IPL area | FAT16-hosted 32-bit loader |
 | `fat-loader.bin` | 4,106 bytes | FAT16 and Linux ELF loader |
 | `boot2.bin` | 984 bytes | Earlier two-sector loader |
 | `dos/linux98.exe` | 16,260 bytes | DOS command-line Linux loader |
@@ -60,7 +62,7 @@ traditional IPL/menu area.
 
 ## Boot architecture
 
-### Stage 0: generic disk IPL (`disk-ipl.bin`)
+### Stage 0: generic disk IPL (`ipl-lba0.bin`)
 
 - One 512-byte `IPL1` record.
 - Uses PC-98 BIOS disk services.
@@ -69,31 +71,38 @@ traditional IPL/menu area.
 - Has no BOOT98-specific sector count, filesystem code, or next-stage format.
   Another project may install its own one-sector bootstrap at LBA 2.
 
-### Stage 1: self-loading BOOT98 boot core (`boot98-stage1.bin`)
+### Stage 1: BOOT partition selector (`ipl-lba2.bin`)
 
-- Target maximum: sectors 2-15, approximately 7 KiB.
-- Its LBA 2 sector loads the remainder through LBA 15 and enters the complete
-  stage at `1000:0000`.
+- Occupies the replaceable LBA 2–15 area; only its first sector contains code.
+- Reads LBA 1, finds the partition named `BOOT`, and chain-loads its IPL-start
+  CHS. The NEC fixed-disk menu may replace this complete stage.
+
+### Stage 2: BOOT partition IPL (`boot.sys`)
+
+- Stored raw in the BOOT partition's first reserved cylinder, not as a FAT
+  file.
+- Its entry sector rediscovers BOOT and reloads the complete image at
+  `1000:0000`, without relying on private Stage 1 registers.
 - Enumerates BIOS-visible devices.
 - Reads PC-98 partition tables.
 - Displays the basic device and partition menu.
 - Chain-loads a disk IPL or partition PBR.
 - Locates a partition whose PC-98 partition name is `BOOT`.
-- Reads FAT16 just far enough to load `BOOT98.BIN`.
-- Continues to provide device/PBR booting when `BOOT98.BIN` is absent or
+- Reads FAT16 just far enough to load `boot.bin`.
+- Continues to provide device/PBR booting when `boot.bin` is absent or
   invalid.
 - Does not contain the interactive shell.
 
-### Stage 2: `BOOT98.BIN` (third on-disk execution stage)
+### Stage 3: `boot.bin`
 
 - Stored as a normal file in the FAT16 `BOOT` partition.
 - Loaded only after its header, size, and checksum have been validated.
 - Displays `Auto`, `FDD 1`, `FDD 2`, `HDD 1`, and `HDD 2`; the `Auto` entry
   identifies the selected HDD, partition, and configuration file.
-- `Auto` executes `BOOT98.CFG`; Escape bypasses it and opens the prompt.
+- `Auto` executes `boot.cfg`; Escape bypasses it and opens the prompt.
 - Waits three seconds for the first selection and chooses `Auto` on timeout.
 - Implements the lower-half-screen interactive shell.
-- Implements FAT16 file access, `BOOT98.CFG`, the Linux loader, BOOT98
+- Implements FAT16 file access, `boot.cfg`, the Linux loader, BOOT98
   applets, and IPLware compatibility.
 - May grow independently of the traditional system-area size.
 
@@ -108,7 +117,7 @@ The selected source must be displayed so that an unexpected duplicate
 
 ## User interface
 
-The current Stage 2 menu uses number keys.  Cursor-key selection is planned
+The current Stage 3 menu uses number keys.  Cursor-key selection is planned
 but is not part of the first implementation.  Escape at the menu enters the
 shell.  Pressing Escape from the shell returns to the menu; there is no `menu`
 command.
@@ -120,7 +129,7 @@ style `ok` marker:
 ide0:BOOT ok
 ```
 
-Selecting `Auto` runs `source BOOT98.CFG`.  Entering the shell with Escape
+Selecting `Auto` runs `source BOOT.CFG`.  Entering the shell with Escape
 never executes the file.  If automatic execution fails, the user is left in
 the interactive shell with the error visible.
 
@@ -172,7 +181,7 @@ State changes are intentionally conservative:
 - Returning from an IPLware module reprobes devices and invalidates any disk
   or partition state whose BIOS geometry or identity changed.
 
-`BOOT98.CFG` is read completely into memory before its first command is
+`boot.cfg` is read completely into memory before its first command is
 executed.  This allows an IPLware module to change disk BIOS geometry without
 invalidating the file that is currently being interpreted.
 
@@ -183,7 +192,7 @@ Names are provisional and may be adjusted before implementation.
 | Command | Behavior |
 |---|---|
 | `help [command]` | List commands or show command help. |
-| `echo text...` | Display text; especially useful in `BOOT98.CFG`. |
+| `echo text...` | Display text; especially useful in `boot.cfg`. |
 | `pause [text...]` | Display optional text and wait for a key. |
 | `wait seconds` | Wait, allowing a key to interrupt the delay. |
 | `devalias` | List detected device aliases. |
@@ -236,21 +245,21 @@ Linux example:
 ok disk ide 0
 ide0 ok part BOOT
 ide0:BOOT ok kernel VMLINUX
-ide0:BOOT ok arg root=/dev/hd98a3 rw console=tty0
+ide0:BOOT ok arg root=PARTLABEL=LINUXROOT rw console=tty0
 ide0:BOOT ok boot
 ```
 
 The one-shot form remains available:
 
 ```text
-ide0:BOOT ok linux VMLINUX root=/dev/hd98a3 rw
+ide0:BOOT ok linux VMLINUX root=PARTLABEL=LINUXROOT rw
 ```
 
 `kernel` is intentionally not Linux-specific.  The first implementation may
 accept only the already supported ELF32/i386 Linux image, while leaving room
 for later BSD or other kernel formats.
 
-## `BOOT98.CFG`
+## `boot.cfg`
 
 The configuration language is the same line-oriented language used by the
 interactive shell.
@@ -259,7 +268,7 @@ Initial grammar:
 
 - ASCII command names.
 - Space- or tab-separated arguments.
-- Quoted strings may be added because Stage 2 is not limited to the IPL area.
+- Quoted strings may be added because Stage 3 is not limited to the IPL area.
 - CRLF and LF line endings.
 - Empty lines.
 - Lines beginning with `#` or `;` are comments.
@@ -274,7 +283,7 @@ echo Starting Linux...
 disk ide 0
 part BOOT
 kernel VMLINUX
-arg root=/dev/hd98a3 rw console=tty0
+arg root=PARTLABEL=LINUXROOT rw console=tty0
 boot
 ```
 
@@ -290,7 +299,7 @@ iplware LBA_IDE.BIN
 disk ide 0
 part BOOT
 kernel VMLINUX
-arg root=/dev/hd98a3 rw
+arg root=PARTLABEL=LINUXROOT rw
 boot
 ```
 
@@ -375,9 +384,9 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 
 ## Error behavior
 
-- A missing or invalid `BOOT98.BIN` leaves the Stage 1 fallback device/PBR
+- A missing or invalid `boot.bin` leaves the partition-IPL fallback device/PBR
   menu usable.
-- A missing `BOOT98.CFG` selected through `Auto` reports the error and enters
+- A missing `boot.cfg` selected through `Auto` reports the error and enters
   the shell; entering the shell with Escape is always independent of the file.
 - A syntax or command failure in automatic configuration stops execution and
   leaves the user in the shell with the failing line number displayed.
@@ -389,7 +398,7 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 
 ## Implementation phases
 
-### Phase 1: Stage 1 foundation (implemented)
+### Phase 1: partition IPL foundation (implemented)
 
 1. Define an internal BIOS device descriptor.
 2. Enumerate FDD, IDE, and SCSI through INT 1Bh SENSE.
@@ -397,12 +406,12 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 4. Implement the upper menu and PBR/disk-IPL chain loading.
 5. Verify primary and secondary IDE and PC-9801-92 SCSI on QEMU.
 
-### Phase 2: Stage 2 loading (implemented)
+### Phase 2: 32-bit loader loading (implemented)
 
 1. Find a `BOOT` partition.
-2. Implement the minimal FAT16 path needed to find `BOOT98.BIN`.
-3. Define and validate the Stage 2 header and checksum.
-4. Load and enter Stage 2 while retaining the device table and boot origin.
+2. Implement the minimal FAT16 path needed to find `boot.bin`.
+3. Define and validate the `boot.bin` header and checksum.
+4. Load and enter `boot.bin` while retaining the device table and boot origin.
 5. Add `Shell` only after successful entry.
 
 ### Phase 3: shell and configuration (implemented baseline)
@@ -410,7 +419,7 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 1. Implement the lower-half text console and Escape return.
 2. Implement parser, command dispatch, and selection state.
 3. Add `devalias`, probe, `disk`, `part`, `ls`, and `cat`.
-4. Load all of `BOOT98.CFG` and execute it only through `Auto`.
+4. Load all of `boot.cfg` and execute it only through `Auto`.
 5. Integrate the existing ELF Linux loader with `kernel`, `arg`, and `boot`.
 
 ### Phase 4: extensions
@@ -430,7 +439,7 @@ author, drachen6jp's `LBA_IDE`, and a simk98 DOS/IPLware-compatible utility.
 - Complete SCSI target-to-INT-1Bh mapping for different option BIOSes.
 - The PC-98 IDE and SCSI CD-ROM boot conventions to support.
 - Whether the `BOOT` partition may use subdirectories in the first release.
-- The final Stage 2 load address and low-memory map.
+- The final `boot.bin` load address and low-memory map.
 - The BOOT98 applet register ABI and service dispatch format.
 - The exact formats covered by `loadbios` and whether address discovery can be
   derived from a file header.
@@ -488,12 +497,12 @@ the normal workflow is to prepare a reviewable change and let the user commit.
 Do not reopen these choices without new hardware evidence:
 
 1. BOOT98 is split into the generic LBA 0 IPL, a self-loading LBA 2 boot core,
-   and FAT16-hosted `BOOT98.BIN`.  The full shell is not forced into the NEC
+   and FAT16-hosted `boot.bin`.  The full shell is not forced into the NEC
    system area.
 2. The generic IPL loads exactly one LBA 2 sector and does not know BOOT98's
    format or length.  The BOOT98 second stage retains a fallback
-   device/partition/PBR menu when `BOOT98.BIN` is missing or damaged.
-   The `Auto` menu and Escape-to-shell hint appear only after `BOOT98.BIN`
+   device/partition/PBR menu when `boot.bin` is missing or damaged.
+   The `Auto` menu and Escape-to-shell hint appear only after `boot.bin`
    loads successfully.
 3. BIOS-visible devices are presented as FDD 0-3, IDE 0-3, and SCSI 0-7.
 4. Disk access in the first boot-environment implementation uses INT 1Bh.
@@ -503,7 +512,7 @@ Do not reopen these choices without new hardware evidence:
    parameters.  Linux uses that geometry for NEC98 partition interpretation.
    The PC-98 IDE drivers prefer LBA for data I/O and fall back to CHS when LBA
    is unavailable.
-6. `BOOT98.CFG` is a normal multi-line command file, loaded completely before
+6. `boot.cfg` is a normal multi-line command file, loaded completely before
    execution.  It is executed by the `Auto` menu entry; Escape-to-shell
    explicitly bypasses it.  It is not restricted to a single
    kernel-command-line record.
@@ -513,7 +522,7 @@ Do not reopen these choices without new hardware evidence:
    disk ide 0
    part 2
    kernel VMLINUX
-   arg root=/dev/hd98a3 rw
+   arg root=PARTLABEL=LINUXROOT rw
    boot
    ```
 
@@ -523,7 +532,7 @@ Do not reopen these choices without new hardware evidence:
 9. Probe commands report geometry and controller identity.  `devalias` lists
    the stable user-visible device namespace.
 10. IPLware compatibility and native BOOT98 applets are separate mechanisms.
-    Network BOOTP/TFTP and serial support belong in applets, not Stage 1.
+    Network BOOTP/TFTP and serial support belong in applets, not `boot.sys`.
 11. Existing DOS `LINUX98.EXE` remains useful for machines whose custom disk
     geometry is established after DOS boot.  BOOT98 does not make that loader
     obsolete.
@@ -535,10 +544,10 @@ prompt under QEMU:
 
 1. LBA 0 silently enters LBA 2 of the current fixed disk.
 2. The LBA 2 bootstrap loads the remainder of sectors 2-15.
-3. The boot core finds `BOOT`, validates and loads `BOOT98.BIN`.
+3. The boot core finds `BOOT`, validates and loads `boot.bin`.
 4. Probe status and the third-stage menu are displayed on consecutive rows.
 5. The first menu selection has a three-second timeout.  Timeout executes
-   `Auto`; if the third stage is unavailable, Stage 1 instead chain-loads the
+   `Auto`; if the 32-bit loader is unavailable, `boot.sys` instead chain-loads the
    `BOOT` partition PBR or the first active partition PBR.
 6. The headless test waits for the automatic selection and verifies the
    BusyBox prompt without injecting keyboard input.
@@ -559,7 +568,7 @@ Minimum Phase 1 QEMU matrix:
 | Primary plus secondary IDE | Both HDDs and their partitions remain distinct. |
 | IDE disk with non-default logical geometry | Partition entries are decoded with SENSE H/S. |
 | PC-9801-92 SCSI HDD | Target is enumerated and its PBR can be selected. |
-| Missing or invalid `BOOT98.BIN` | Stage 1 menu still chain-loads a bootable device. |
+| Missing or invalid `boot.bin` | The `boot.sys` menu still chain-loads a bootable device. |
 
 Real-machine testing should follow QEMU tests, especially on early machines
 with unusual BIOS geometry.  Do not claim broad hardware compatibility from
@@ -573,8 +582,8 @@ QEMU alone.
   processes in bulk; terminate only processes that this task started and can
   identify precisely.
 - Preserve user disk images.  Work on copies for tests that can modify a disk.
-- Keep Stage 1 size visible in every build.  Exceeding the approximately
-  7 KiB target is an architectural signal to move functionality to Stage 2,
+- Keep `boot.sys` size visible in every build. Exceeding the approximately
+  7 KiB target is an architectural signal to move functionality to `boot.bin`,
   not a reason to silently consume more system-area sectors.
 
 ### Suggested prompt on another computer

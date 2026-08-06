@@ -12,6 +12,7 @@
  */
 
 #include <linux/hdreg.h>
+#include <linux/string.h>
 #include <linux/unaligned.h>
 
 #include <asm/pc9800.h>
@@ -62,6 +63,23 @@ static bool nec98_disk_geometry(struct gendisk *disk, unsigned int *heads,
 	*heads = geometry.heads;
 	*sectors = geometry.sectors;
 	return true;
+}
+
+static void nec98_set_partition_name(struct parsed_partitions *state, int slot,
+				     const struct nec98_partition *entry)
+{
+	struct partition_meta_info *info = &state->parts[slot].info;
+	size_t length = sizeof(entry->name);
+
+	while (length && (entry->name[length - 1] == ' ' ||
+			  entry->name[length - 1] == '\0'))
+		length--;
+	if (!length)
+		return;
+	length = min(length, sizeof(info->volname) - 1);
+	memcpy(info->volname, entry->name, length);
+	info->volname[length] = '\0';
+	state->parts[slot].has_info = true;
 }
 
 static bool nec98_table_valid(const struct nec98_partition *table,
@@ -163,6 +181,7 @@ int nec98_partition(struct parsed_partitions *state)
 			end = capacity - 1;
 
 		put_partition(state, i + 1, start, end - start + 1);
+		nec98_set_partition_name(state, i + 1, entry);
 		found++;
 	}
 

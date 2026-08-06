@@ -1,4 +1,4 @@
-/dev/hd98a2	/	ext4	defaults,noatime	0	1
-/dev/hd98a3	none	swap	sw	0	0
+PARTLABEL=LINUXROOT	/	ext4	defaults,noatime	0	1
+PARTLABEL=LINUXSWAP	none	swap	sw	0	0
 proc	/proc	proc	defaults	0	0
 sysfs	/sys	sysfs	defaults	0	0

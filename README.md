@@ -253,7 +253,8 @@ profiles, including WINnote98, use H=8/S=17. The old profile names ending in
 plain `-scsi` remain aliases for `-scsi92`. Partition sizes are defined in
 bytes and rounded up to whole cylinders, so changing geometry does not nearly
 double the SCSI image capacity. The i386 IDE image uses the small `pc98_ide`
-driver (`/dev/hd98a`); i386 SCSI and both i486/libata images use the standard
+driver (`/dev/hda`, with a second disk at `/dev/hdb`); i386 SCSI and both
+i486/libata images use the standard
 SCSI disk namespace (`/dev/sda`).
 
 BOOT98 and `LINUX98.EXE` pass the BIOS SENSE drive number and logical H/S to
@@ -278,12 +279,14 @@ or 16 for the controller's 8--10, 12--15, or 16--20 MHz range. With the 92
 profile, omitted IRQ and DMA values continue to be read from the board
 configuration registers and the clock defaults to the 8--10 MHz range.
 
-The BusyBox H=8 profiles install the three-stage BOOT98 environment.  The
-silent LBA 0 IPL immediately enters the LBA 2 second stage, which loads
-`BOOT98.BIN`.  The first third-stage menu selection has a three-second
-timeout: it executes `Auto`, reads `BOOT98.CFG`, and boots `VMLINUX`.  Select
-Escape before the timeout to enter the interactive shell instead.  The `Auto`
-entry identifies the selected HDD, partition, and `BOOT98.CFG` source.
+The BusyBox H=8 profiles install the replaceable BOOT98 environment. The
+silent `ipl-lba0.bin` enters `ipl-lba2.bin`; that selector loads `boot.sys`
+from the raw IPL area of the partition named BOOT. `boot.sys` then opens the
+partition's FAT16 data area and loads `boot.bin`. The first 32-bit menu
+selection has a three-second timeout: it executes `Auto`, reads `BOOT.CFG`,
+and boots `VMLINUX`. Select Escape before the timeout to enter the interactive
+shell instead. The `Auto` entry identifies the selected HDD, partition, and
+`BOOT.CFG` source.
 The headless `busybox-i386` smoke test uses this unattended path without
 synthetic keyboard input.
 
@@ -345,7 +348,7 @@ The Debian images use the full PC-98 kernel configuration and require 64 MiB.
 
 Public images use the GDC screen and PC-98 keyboard as the console. The same
 release also contains `vmlinux-i386`, `vmlinux-i486-debian`, `linux98.exe`,
-the LBA 0 and LBA 2 loader sectors, `boot98.bin`, `boot98.cfg`, and
+`ipl-lba0.bin`, `ipl-lba2.bin`, `boot.sys`, `boot.bin`, `boot.cfg`, and
 `qemu-pc98-win64.zip`. The Windows ZIP contains both i386 and x86_64 QEMU,
 `virtpc98.exe`, required DLLs, and the free PC-98 BIOS/SCSI BIOS files.
 
@@ -360,21 +363,27 @@ partitions.
 
 | Region | Contents |
 | --- | --- |
-| LBA 0 | Disk IPL with the `IPL1` marker |
+| LBA 0 | `ipl-lba0.bin`, with the `IPL1` marker |
 | LBA 1 | PC-98 sixteen-entry partition table |
-| LBA 2 through 135 | FAT16-aware Linux second-stage loader |
-| Partition 1 | 200 MiB PC-98 DOS-compatible FAT16 containing non-compressed `VMLINUX` and `LINUX98.EXE` |
+| LBA 2 through 15 | Replaceable `ipl-lba2.bin` BOOT-partition selector |
+| BOOT partition IPL cylinder | Raw `boot.sys` partition IPL |
+| BOOT partition data area | FAT16 containing `boot.bin`, `boot.cfg`, non-compressed `VMLINUX`, and `LINUX98.EXE` |
 | Partition 2 | ext4 root filesystem, mounted as `/dev/sda2` |
 
-The LBA 0 IPL loads the Linux loader directly from LBA 2. Partition 1 also
-has a free PC-98 FAT16 PBR, so a genuine PC-98 disk IPL can boot Linux after
-the user selects the active Linux partition. The BPB uses the NEC fixed-disk
-convention of 1024-byte logical DOS sectors and includes the PC-98 extension
-at offsets `0x3e..0x45`.
+The distributed LBA 2 selector and the NEC fixed-disk boot menu both enter the
+same partition IPL. The BOOT filesystem begins one cylinder after its IPL
+start, leaving enough raw space for `boot.sys` without depending on FAT file
+placement.
+
+`./build.sh boot-install --partition N IMAGE VMLINUX BOOT.CFG` destructively
+recreates only the selected BOOT partition and preserves an NEC or third-party
+disk IPL at LBA 0 and LBA 2–15. Add `--install-disk-stubs` when the distributed LBA 0
+and LBA 2–15 stubs should also be installed.
 
 The kernel no longer overrides the command line supplied by BOOT98.
-`BOOT98.CFG` in each image selects the matching root device. A manually
-installed standalone configuration must therefore use `/dev/hd98a2` for the
+`BOOT.CFG` in each image selects the matching root device. A manually
+installed standalone configuration should therefore use
+`root=PARTLABEL=LINUXROOT` (or `/dev/hda2` for a fixed single-disk setup) for the
 i386 IDE image and `/dev/sda2` for i386 SCSI or i486/libata images.
 
 DOS may install its own PBR and filesystem in Partition 1. Reformatting it

@@ -54,7 +54,7 @@ fi
 
 sudo python3 "$repo/tools/mk-pc98-linux-disk.py" create \
 	"$output" \
-	"$repo/bootloader/disk-ipl.bin" \
+	"$repo/bootloader/ipl-lba0.bin" \
 	"$repo/bootloader/partition-pbr.bin" \
 	"$repo/bootloader/fat-loader.bin" \
 	"$kernel_image" \

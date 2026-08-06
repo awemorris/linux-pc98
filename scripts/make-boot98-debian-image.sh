@@ -81,7 +81,7 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/boot98-debian.XXXXXX")"
 root_image="$work/root.ext4"
 swap_image="$work/swap.img"
 mount_dir="$work/root"
-cfg="$work/BOOT98.CFG"
+cfg="$work/BOOT.CFG"
 kernel_extra_args="${KERNEL_EXTRA_ARGS:-}"
 mounted=0
 
@@ -95,16 +95,15 @@ cleanup()
 }
 trap cleanup EXIT INT TERM
 
-make -C "$bootloader_dir" disk-ipl.bin boot98-stage1.bin \
-	boot98-chain-test.bin BOOT98.BIN
+make -C "$bootloader_dir" ipl-lba0.bin ipl-lba2.bin boot.sys boot.bin
 mkdir -p "$(dirname "$output")" "$mount_dir"
 truncate -s "$total_bytes" "$output"
-dd if="$bootloader_dir/disk-ipl.bin" of="$output" bs=512 count=1 \
+dd if="$bootloader_dir/ipl-lba0.bin" of="$output" bs=512 count=1 \
 	conv=notrunc status=none
-dd if="$bootloader_dir/boot98-stage1.bin" of="$output" bs=512 seek=2 \
+dd if="$bootloader_dir/ipl-lba2.bin" of="$output" bs=512 seek=2 count=14 \
 	conv=notrunc status=none
-dd if="$bootloader_dir/boot98-chain-test.bin" of="$output" bs=512 \
-	seek="$ipl_start" count=1 conv=notrunc status=none
+dd if="$bootloader_dir/boot.sys" of="$output" bs=512 \
+	seek="$ipl_start" conv=notrunc status=none
 python3 - "$output" "$boot_last_cylinder" "$root_start_cylinder" \
 	"$root_last_cylinder" "$swap_start_cylinder" \
 	"$swap_last_cylinder" "$heads" "$sectors" <<'PY'
@@ -137,7 +136,7 @@ def entry(flags, kind, first_ipl, first_data, last, name):
 
 
 table = bytearray(512)
-table[0:32] = entry(0xA1, 0x20, 1, 2, boot_last, "BOOT")
+table[0:32] = entry(0xA1, 0x91, 1, 2, boot_last, "BOOT")
 table[32:64] = entry(0x21, 0x83, root_start, root_start, root_last,
                      "DEBIAN13")
 table[64:96] = entry(0x21, 0x82, swap_start, swap_start, swap_last,
@@ -155,9 +154,9 @@ printf '%s\n' \
 	"arg root=/dev/sda2 rootfstype=ext4 rw${kernel_extra_args:+ $kernel_extra_args}" \
 	'boot' >"$cfg"
 mcopy -i "$output@@$((boot_start * 512))" \
-	"$bootloader_dir/BOOT98.BIN" ::BOOT98.BIN
+	"$bootloader_dir/boot.bin" ::BOOT.BIN
 mcopy -i "$output@@$((boot_start * 512))" "$kernel" ::VMLINUX
-mcopy -i "$output@@$((boot_start * 512))" "$cfg" ::BOOT98.CFG
+mcopy -i "$output@@$((boot_start * 512))" "$cfg" ::BOOT.CFG
 
 truncate -s "$root_bytes" "$root_image"
 mkfs.ext4 -q -F -L DEBIAN13 "$root_image"

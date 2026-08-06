@@ -122,7 +122,8 @@ make -C "$source" O="$build" ARCH=i386 tinyconfig
 	--disable SOUND
 
 # PC-98 IDE.  The low-memory driver exposes the master CF/HDD directly as
-# /dev/hd98a and deliberately avoids the libata and SCSI-disk frameworks.
+# /dev/hda (and /dev/hdb for a second disk) and deliberately avoids the
+# libata and SCSI-disk frameworks.
 "$sc" --file "$config" \
 	--disable SCSI \
 	--disable SCSI_MOD \
@@ -224,7 +225,7 @@ make -C "$source" O="$build" ARCH=i386 tinyconfig
 	--enable TRIM_UNUSED_KSYMS
 
 "$sc" --file "$config" --set-str CMDLINE \
-	"no387 vdso=0 console=ttyS0 console=tty0 earlyprintk=pc9800 root=/dev/hd98a2 rootfstype=ext4 rw init=/sbin/i386-init"
+	"no387 vdso=0 console=ttyS0 console=tty0 earlyprintk=pc9800 root=PARTLABEL=LINUXROOT rootfstype=ext4 rw init=/sbin/i386-init"
 "$sc" --file "$config" --enable CMDLINE_BOOL
 "$sc" --file "$config" --enable CMDLINE_OVERRIDE
 

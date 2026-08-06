@@ -155,14 +155,15 @@ for raw in \
 	compress_image "$release_dir/$raw"
 done
 
-make -C "$repo/bootloader" disk-ipl.bin boot98-stage1.bin BOOT98.BIN
+make -C "$repo/bootloader" ipl-lba0.bin ipl-lba2.bin boot.sys boot.bin
 copy_release_file "$repo/build/i386-video/kernel/vmlinux.boot" vmlinux-i386
 copy_release_file "$repo/build/kernel-7.1-i486/vmlinux.boot" vmlinux-i486-debian
 copy_release_file "$repo/bootloader/dos/linux98.exe" linux98.exe
-copy_release_file "$repo/bootloader/disk-ipl.bin" ipl-lba0.img
-copy_release_file "$repo/bootloader/boot98-stage1.bin" ipl-lba2.img
-copy_release_file "$repo/bootloader/BOOT98.BIN" boot98.bin
-copy_release_file "$repo/releases/boot98.cfg" boot98.cfg
+copy_release_file "$repo/bootloader/ipl-lba0.bin" ipl-lba0.bin
+copy_release_file "$repo/bootloader/ipl-lba2.bin" ipl-lba2.bin
+copy_release_file "$repo/bootloader/boot.sys" boot.sys
+copy_release_file "$repo/bootloader/boot.bin" boot.bin
+copy_release_file "$repo/releases/boot98.cfg" boot.cfg
 copy_release_file "$note" RELEASE-NOTES.md
 
 if test "$build_win64" -eq 1; then
@@ -179,7 +180,7 @@ fi
 		linux-pc98-i486dx-debian13-scsi55.img.xz \
 		linux-pc98-i486dx-debian13-scsi92.img.xz \
 		vmlinux-i386 vmlinux-i486-debian linux98.exe \
-		ipl-lba0.img ipl-lba2.img boot98.bin boot98.cfg \
+		ipl-lba0.bin ipl-lba2.bin boot.sys boot.bin boot.cfg \
 		qemu-pc98-win64.zip >SHA256SUMS
 )
 printf 'Complete %s artifact set: %s\n' "$version" "$release_dir"

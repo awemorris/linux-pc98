@@ -1,0 +1,15 @@
+#!/bin/sh
+
+# BusyBox swapon does not resolve PARTLABEL= entries in fstab.  Find the
+# PC-98 partition label exported by the kernel and pass its device node to
+# swapon, so the same rootfs works as either /dev/hda3 or /dev/hdb3.
+for block in /sys/class/block/*; do
+	[ -r "$block/uevent" ] || continue
+	while IFS= read -r property; do
+		if [ "$property" = "PARTNAME=LINUXSWAP" ]; then
+			exec /sbin/swapon "/dev/${block##*/}"
+		fi
+	done < "$block/uevent"
+done
+
+exit 0

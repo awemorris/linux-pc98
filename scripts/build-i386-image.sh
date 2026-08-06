@@ -40,12 +40,14 @@ boot_vmlinux="$kernel_build/vmlinux.boot"
 root_stage="${ROOT_STAGE:-$buildroot_work/output/target}"
 skip_rootfs_build="${SKIP_ROOTFS_BUILD:-0}"
 skip_kernel_build="${SKIP_KERNEL_BUILD:-0}"
-root_device="${ROOT_DEVICE:-/dev/hd98a2}"
+root_device="${ROOT_DEVICE:-PARTLABEL=LINUXROOT}"
+swap_device="${SWAP_DEVICE:-PARTLABEL=LINUXSWAP}"
 kernel_extra_args="${KERNEL_EXTRA_ARGS:-}"
 
 case "$root_device" in
-/dev/*2) swap_device="${root_device%2}3" ;;
-*) echo "ROOT_DEVICE must be an absolute /dev path: $root_device" >&2; exit 1 ;;
+/dev/*2) swap_device="${SWAP_DEVICE:-${root_device%2}3}" ;;
+PARTLABEL=*) ;;
+*) echo "ROOT_DEVICE must be /dev/...2 or PARTLABEL=...: $root_device" >&2; exit 1 ;;
 esac
 
 if [ "$skip_kernel_build" = 0 ]; then
@@ -131,4 +133,5 @@ printf '%s\n' \
 	"arg root=$root_device rootfstype=ext4 rw${kernel_extra_args:+ $kernel_extra_args}" \
 	'boot' >"$cfg"
 DISK_HEADS="${DISK_HEADS:-8}" DISK_SECTORS="${DISK_SECTORS:-17}" \
-	"$repo/scripts/install-boot98-image.sh" "$output" "$boot_vmlinux" "$cfg"
+	"$repo/scripts/install-boot98-image.sh" --install-disk-stubs \
+		"$output" "$boot_vmlinux" "$cfg"

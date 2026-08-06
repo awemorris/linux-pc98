@@ -30,7 +30,7 @@ Options:
   --base-image PATH     copy an existing raw/raw.xz image before updating it
   --base-image NAME     fetch NAME from the package-server image cache
   --output FILE         output path (must not already exist)
-  --config FILE         BOOT98.CFG replacement for a BOOT98 base image
+  --config FILE         BOOT.CFG replacement for a BOOT98 base image
   --swap-mb N           swap size for newly created images
   --boot-mb N           FAT16 BOOT size for newly created BusyBox images
   --root-mb N           ext4 root size for newly created BusyBox images
@@ -133,7 +133,7 @@ cpu_family=""
 default_rootfs=""
 default_kernel=""
 default_swap=128
-root_device=/dev/hd98a2
+root_device=PARTLABEL=LINUXROOT
 kernel_extra_args=""
 
 case "$profile" in
@@ -155,7 +155,7 @@ case "$profile" in
 		kind=boot98
 		cpu_family=386
 		sectors=32
-		root_device=/dev/sda2
+		root_device=PARTLABEL=LINUXROOT
 		kernel_extra_args="rootwait pc9801_scsi=92,mode=dma"
 		boot_mb=8
 		root_mb=20
@@ -165,7 +165,7 @@ case "$profile" in
 	busybox-i386-scsi55)
 		kind=boot98
 		cpu_family=386
-		root_device=/dev/sda2
+		root_device=PARTLABEL=LINUXROOT
 		kernel_extra_args="rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=dma"
 		boot_mb=8
 		root_mb=20

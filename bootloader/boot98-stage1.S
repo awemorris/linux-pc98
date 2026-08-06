@@ -6,7 +6,7 @@
  */
 
 /*
- * BOOT98 Stage 1 foundation.
+ * BOOT98 partition IPL (boot.sys).
  *
  * Stage 0 currently reuses disk-ipl.S.  This stage stays in real mode,
  * enumerates the bounded BIOS device namespace with INT 1Bh SENSE, and
@@ -14,8 +14,9 @@
  *
  * Control flow:
  *
- *   Stage 0 handoff -> probe BIOS devices -> build the fallback menu
- *   -> locate FAT16 BOOT/BOOT98.BIN -> validate Stage 2 -> show menu
+ *   partition IPL -> reload boot.sys from the BOOT IPL area
+ *   -> probe BIOS devices -> locate FAT16 BOOT/boot.bin
+ *   -> validate Stage 2 -> show menu
  *   -> chain-load an IPL/PBR or enter 32-bit Stage 2.
  *
  * The fallback menu must remain usable when Stage 2 is absent or corrupt.
@@ -38,6 +39,7 @@
 
 	.set HANDOFF,          0x0700
 	.set HANDOFF_MAGIC,    0x4839384c /* "L98H", current Stage 0 ABI */
+	.set TABLE_SEG,        0x0800
 	.set TEXT_SEG,         0xa000
 	.set ATTR_SEG,         0xa200
 	.set STACK_SEG,        0x9000
@@ -75,40 +77,137 @@
 
 _start:
 	/*
-	 * A generic disk IPL loads only the LBA 2 entry sector at the normal
-	 * firmware address 1fc0:0000.  That sector owns its continuation format:
-	 * BOOT98 reloads LBA 2..15 at 1000:0000 and then enters the full real-mode
-	 * second stage.  Older development IPLs which preloaded the whole image at
-	 * 1000:0000 may still enter it directly.
+	 * A fixed-disk menu loads only this partition IPL sector at the normal
+	 * firmware address 1fc0:0000.  Do not depend on its private register
+	 * contract: recover the boot drive from the BIOS work area, find BOOT in
+	 * the native partition table, and reload the complete boot.sys image from
+	 * that partition's IPL-start CHS.  Development media may still preload the
+	 * image at 1000:0000 and enter it directly.
 	 */
 	movw	%cs, %ax
 	cmpw	$0x1000, %ax
 	je	stage1_main
 	cli
 	cld
-	movb	$2, %cs:bootstrap_sector
+	pushw	%cs
+	popw	%ds
+	movw	%si, bootstrap_saved_si
+	movw	%di, bootstrap_saved_di
+	movw	$STACK_SEG, %ax
+	movw	%ax, %ss
+	movw	$0xfffe, %sp
+	sti
+
+	pushw	%ds
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	movb	0x0584, %al
+	popw	%ds
+	andb	$0x7f, %al
+	orb	$0x80, %al
+	movb	%al, bootstrap_boot_id
+	call	bootstrap_write_handoff
+
+	/* Read the PC-98 partition table from physical LBA 1 (CHS 0/0/1). */
+	movw	$TABLE_SEG, %ax
+	movw	%ax, %es
+	xorw	%bp, %bp
+	xorw	%cx, %cx
+	movw	$0x0001, %dx
+	call	bootstrap_read
+	jc	bootstrap_failure
+
+	movw	$TABLE_SEG, %ax
+	movw	%ax, %ds
+	xorw	%si, %si
+	movw	$16, %cx
+bootstrap_find_partition:
+	cmpb	$0, (%si)
+	je	bootstrap_next_partition
+	pushw	%cx
+	pushw	%si
+	addw	$16, %si
+	xorw	%bx, %bx
+	movw	$16, %cx
+bootstrap_compare_name:
+	lodsb
+	cmpb	%cs:bootstrap_boot_name(%bx), %al
+	jne	bootstrap_name_mismatch
+	incw	%bx
+	loop	bootstrap_compare_name
+	popw	%si
+	popw	%cx
+	movb	4(%si), %al
+	movb	%al, %cs:bootstrap_ipl_sector
+	movb	5(%si), %al
+	movb	%al, %cs:bootstrap_ipl_head
+	movw	6(%si), %ax
+	movw	%ax, %cs:bootstrap_ipl_cylinder
+	jmp	bootstrap_partition_found
+bootstrap_name_mismatch:
+	popw	%si
+	popw	%cx
+bootstrap_next_partition:
+	addw	$32, %si
+	loop	bootstrap_find_partition
+	jmp	bootstrap_failure
+
+bootstrap_partition_found:
+	pushw	%cs
+	popw	%ds
+	movb	$14, bootstrap_remaining
 	movw	$0, %cs:bootstrap_offset
 bootstrap_load:
 	movw	$0x1000, %ax
 	movw	%ax, %es
 	movw	%cs:bootstrap_offset, %bp
-	xorw	%ax, %ax
-	movw	%ax, %ds
-	movb	HANDOFF+8, %al
-	movb	$0x06, %ah
-	movw	$512, %bx
-	xorw	%cx, %cx
-	xorw	%dx, %dx
-	movb	%cs:bootstrap_sector, %dl
-	movw	HANDOFF+12, %si
-	movw	HANDOFF+14, %di
-	int	$0x1b
+	movw	%cs:bootstrap_ipl_cylinder, %cx
+	movb	%cs:bootstrap_ipl_head, %dh
+	movb	%cs:bootstrap_ipl_sector, %dl
+	call	bootstrap_read
 	jc	bootstrap_failure
 	addw	$512, %cs:bootstrap_offset
-	incb	%cs:bootstrap_sector
-	cmpb	$16, %cs:bootstrap_sector
-	jb	bootstrap_load
+	incb	%cs:bootstrap_ipl_sector
+	decb	%cs:bootstrap_remaining
+	jnz	bootstrap_load
 	ljmp	$0x1000, $stage1_main
+
+bootstrap_write_handoff:
+	pushw	%es
+	xorw	%ax, %ax
+	movw	%ax, %es
+	movl	$0, %es:HANDOFF
+	movl	$0, %es:HANDOFF+4
+	movl	$0, %es:HANDOFF+8
+	movl	$0, %es:HANDOFF+12
+	movl	$HANDOFF_MAGIC, %es:HANDOFF
+	movb	%cs:bootstrap_boot_id, %al
+	movb	%al, %es:HANDOFF+8
+	movb	$1, %es:HANDOFF+11
+	movw	%cs:bootstrap_saved_si, %ax
+	movw	%ax, %es:HANDOFF+12
+	movw	%cs:bootstrap_saved_di, %ax
+	movw	%ax, %es:HANDOFF+14
+	popw	%es
+	ret
+
+bootstrap_read:
+	pushw	%ds
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	movb	%cs:bootstrap_boot_id, %al
+	movb	$0x06, %ah
+	movw	$512, %bx
+	movw	%cs:bootstrap_saved_si, %si
+	movw	%cs:bootstrap_saved_di, %di
+	int	$0x1b
+	pushfw
+	popw	%ax
+	movw	%ax, %cs:bootstrap_read_flags
+	popw	%ds
+	pushw	%cs:bootstrap_read_flags
+	popfw
+	ret
 
 bootstrap_failure:
 	movb	$0x06, %al
@@ -117,12 +216,20 @@ bootstrap_failure:
 	hlt
 	jmp	1b
 
-bootstrap_sector:
-	.byte	0
-bootstrap_offset:
-	.word	0
+bootstrap_boot_name:      .ascii "BOOT            "
+bootstrap_saved_si:       .word 0
+bootstrap_saved_di:       .word 0
+bootstrap_read_flags:     .word 0
+bootstrap_offset:         .word 0
+bootstrap_ipl_cylinder:   .word 0
+bootstrap_boot_id:        .byte 0
+bootstrap_ipl_head:       .byte 0
+bootstrap_ipl_sector:     .byte 0
+bootstrap_remaining:      .byte 0
 
-	/* Keep the complete LBA 2 bootstrap in its first 512-byte sector. */
+	/* Keep the complete partition-IPL bootstrap in its first 512-byte sector. */
+	.org	0x01fe
+	.word	0xaa55
 	.org	512
 
 stage1_main:
@@ -763,16 +870,20 @@ append_menu:
 consider_boot_partition:
 	pushw	%ax
 	pushw	%bx
+	pushw	%cx
 	pushw	%si
 	pushw	%di
-	cmpl	$0x544f4f42, 16(%si)	/* "BOOT" */
-	jne	2f
-	movb	20(%si), %al
-	cmpb	$' ', %al
-	je	1f
-	testb	%al, %al
-	jnz	2f
+	movw	%si, %bx
+	addw	$16, %bx
+	xorw	%di, %di
+	movw	$16, %cx
 1:
+	movb	(%bx), %al
+	cmpb	bootstrap_boot_name(%di), %al
+	jne	2f
+	incw	%bx
+	incw	%di
+	loop	1b
 	movzbl	menu_count, %edi
 	decw	%di
 	shlw	$4, %di
@@ -793,6 +904,7 @@ consider_boot_partition:
 2:
 	popw	%di
 	popw	%si
+	popw	%cx
 	popw	%bx
 	popw	%ax
 	ret
@@ -816,7 +928,7 @@ consider_active_partition:
 	popw	%ax
 	ret
 
-/* Load and validate BOOT98.BIN from the selected BOOT FAT16 partition. */
+/* Load and validate boot.bin from the selected BOOT FAT16 partition. */
 load_stage2:
 	cmpw	$0, boot_menu_entry
 	je	9f
@@ -1943,7 +2055,7 @@ disk_ipl_label:   .asciz " disk IPL"
 part_label:       .asciz " part "
 select_label:     .asciz "Press 1-9 to chain-load."
 chain_error:      .asciz "Chain-load read failed."
-stage2_name:      .ascii "BOOT98  BIN"
+stage2_name:      .ascii "BOOT    BIN"
 partition_id_label: .asciz " MID/SID "
 partition_lba_label: .asciz " start LBA "
 partitions_error: .asciz "PC-98 partition table read failed."

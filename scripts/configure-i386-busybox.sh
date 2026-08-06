@@ -73,7 +73,7 @@ esac
 # watermarks, bound dirty data, reclaim VFS metadata aggressively, and favor
 # the CF swap partition over retaining anonymous pages.
 "$sc" --file "$config" --set-str CMDLINE \
-	"vdso=0 $console_args earlyprintk=pc9800 root=/dev/hd98a2 rootfstype=ext4 rw sysctl.vm.min_free_kbytes=64 sysctl.vm.dirty_background_bytes=32768 sysctl.vm.dirty_bytes=65536 sysctl.vm.vfs_cache_pressure=200 sysctl.vm.swappiness=100 sysctl.vm.page-cluster=0"
+	"vdso=0 $console_args earlyprintk=pc9800 root=PARTLABEL=LINUXROOT rootfstype=ext4 rw sysctl.vm.min_free_kbytes=64 sysctl.vm.dirty_background_bytes=32768 sysctl.vm.dirty_bytes=65536 sysctl.vm.vfs_cache_pressure=200 sysctl.vm.swappiness=100 sysctl.vm.page-cluster=0"
 
 make -C "$source" O="$build" ARCH=i386 olddefconfig
 cp "$config" "$output"

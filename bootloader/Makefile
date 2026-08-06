@@ -6,7 +6,10 @@ ASFLAGS := --32
 STAGE2_CFLAGS := -m32 -march=i386 -Os -ffreestanding -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -Wall -Wextra -Werror
 SCRIPTS_DIR := ../scripts
 
-all: boot2.bin disk-ipl.bin partition-pbr.bin fat-loader.bin boot98-stage1.bin boot98-chain-test.bin boot98-fdd-ipl.bin BOOT98.BIN boot98-iplware-test.bin boot98-iplware-com-test.com BOOTAPP.BIN
+all: boot2.bin ipl-lba0.bin ipl-lba2.bin boot.sys boot.bin \
+	partition-pbr.bin fat-loader.bin boot98-chain-test.bin \
+	boot98-fdd-ipl.bin boot98-iplware-test.bin \
+	boot98-iplware-com-test.com BOOTAPP.BIN
 
 boot2.o: boot2.S
 	$(AS) $(ASFLAGS) $< -o $@
@@ -24,9 +27,24 @@ disk-ipl.o: disk-ipl.S
 disk-ipl.elf: disk-ipl.o
 	$(LD) -m elf_i386 -Ttext=0 -e _start $< -o $@
 
-disk-ipl.bin: disk-ipl.elf
+ipl-lba0.bin: disk-ipl.elf
 	$(OBJCOPY) -O binary -j .text $< $@
 	@test $$(stat -c%s $@) -eq 512
+
+# Compatibility target for older local scripts.  Release artifacts use the
+# descriptive on-disk name above.
+disk-ipl.bin: ipl-lba0.bin
+	cp $< $@
+
+boot98-lba2.o: boot98-lba2.S
+	$(AS) $(ASFLAGS) $< -o $@
+
+boot98-lba2.elf: boot98-lba2.o
+	$(LD) -m elf_i386 -Ttext=0 -e _start $< -o $@
+
+ipl-lba2.bin: boot98-lba2.elf
+	$(OBJCOPY) -O binary -j .text $< $@
+	@test $$(stat -c%s $@) -eq 7168
 
 partition-pbr.o: partition-pbr.S
 	$(AS) $(ASFLAGS) $< -o $@
@@ -54,9 +72,12 @@ boot98-stage1.o: boot98-stage1.S
 boot98-stage1.elf: boot98-stage1.o
 	$(LD) -m elf_i386 -Ttext=0 -e _start $< -o $@
 
-boot98-stage1.bin: boot98-stage1.elf
+boot.sys: boot98-stage1.elf
 	$(OBJCOPY) -O binary -j .text $< $@
-	@sz=$$(stat -c%s $@); remaining=$$((7168 - sz)); echo "boot98-stage1.bin: $$sz bytes ($$remaining bytes free of 7 KiB)"; test $$sz -le 7168
+	@sz=$$(stat -c%s $@); remaining=$$((7168 - sz)); echo "boot.sys: $$sz bytes ($$remaining bytes free of 7 KiB)"; test $$sz -le 7168
+
+boot98-stage1.bin: boot.sys
+	cp $< $@
 
 boot98-chain-test.o: boot98-chain-test.S
 	$(AS) $(ASFLAGS) $< -o $@
@@ -87,9 +108,12 @@ boot98-stage2.o: boot98-stage2.c boot98-abi.h
 boot98-stage2.elf: boot98-stage2-entry.o boot98-stage2.o boot98-stage2.ld
 	$(LD) -m elf_i386 -T boot98-stage2.ld -nostdlib boot98-stage2-entry.o boot98-stage2.o -o $@
 
-BOOT98.BIN: boot98-stage2.elf $(SCRIPTS_DIR)/patch-boot98-bin.py
+boot.bin: boot98-stage2.elf $(SCRIPTS_DIR)/patch-boot98-bin.py
 	$(OBJCOPY) -O binary $< $@
 	python3 $(SCRIPTS_DIR)/patch-boot98-bin.py $@
+
+BOOT98.BIN: boot.bin
+	cp $< $@
 
 boot98-iplware-test.o: boot98-iplware-test.S
 	$(AS) $(ASFLAGS) $< -o $@

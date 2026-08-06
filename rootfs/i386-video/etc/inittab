@@ -1,6 +1,6 @@
 ::sysinit:/bin/mount -t proc proc /proc
 ::sysinit:/bin/mount -t sysfs sysfs /sys
-::sysinit:/sbin/swapon -a
+::sysinit:/bin/sh /etc/pc98-swapon
 ::sysinit:/bin/echo I386-BUSYBOX-SUCCESS
 tty1::askfirst:-/bin/sh
 ::ctrlaltdel:/bin/reboot

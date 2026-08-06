@@ -1,6 +1,7 @@
 /build/
 /dist/
 /bootloader/*.bin
+/bootloader/*.sys
 /bootloader/*.elf
 /bootloader/*.o
 /bootloader/*.BIN

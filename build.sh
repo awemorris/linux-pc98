@@ -11,6 +11,7 @@ Usage: ./build.sh COMMAND [options]
 Primary commands:
   setup [options]             install Debian 13 host build/test dependencies
   bootloader                  build IPL and BOOT98 binaries
+  boot-install [options]      destructively create a BOOT partition environment
   dos-loader                  rebuild LINUX98.EXE (requires OpenWatcom 1.9)
   kernel [options]            configure and build Linux 7.1
   rootfs PROFILE              build a root filesystem
@@ -48,6 +49,9 @@ Kernel options:
 
 Run './build.sh image --help' for image-specific options.
 Run './build.sh test --help' for reproducible QEMU test options.
+BOOT installation syntax:
+  ./build.sh boot-install [--partition N] [--install-disk-stubs]
+                          IMAGE [VMLINUX [BOOT.CFG]]
 EOF
 }
 
@@ -133,6 +137,7 @@ case "$command" in
 	help | -h | --help) usage ;;
 	setup) "$repo/scripts/setup.sh" "$@" ;;
 	bootloader) make -C "$repo/bootloader" "$@" ;;
+	boot-install) "$repo/scripts/install-boot98-image.sh" "$@" ;;
 	dos-loader) make -C "$repo/bootloader/dos" "$@" ;;
 	kernel) build_kernel "$@" ;;
 	rootfs) build_rootfs "$@" ;;

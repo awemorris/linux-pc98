@@ -4,8 +4,9 @@
  *
  * This is intentionally a small, fixed-configuration alternative to the
  * libata/SCSI-disk path for memory-constrained i386 machines.  It supports
- * one master ATA disk, 512-byte LBA28/CHS PIO reads and writes, and cache flush.
- * The device interrupt is disabled and commands are polled synchronously.
+ * the master and slave ATA disks, 512-byte LBA28/CHS PIO reads and writes,
+ * and cache flush.  The device interrupt is disabled and commands are polled
+ * synchronously.
  *
  * Hardware mapping derived from the Linux/98 project PC-9800 IDE driver.
  * Copyright (C) 1997-2000 Linux/98 project,
@@ -17,13 +18,17 @@
 #include <linux/blkdev.h>
 #include <linux/delay.h>
 #include <linux/highmem.h>
+#include <linux/hdreg.h>
 #include <linux/io.h>
 #include <linux/ioport.h>
 #include <linux/module.h>
+#include <linux/spinlock.h>
+
+#include <asm/pc9800.h>
 
 #define DRV_NAME		"pc98ide"
-#define PC98IDE_DISK_NAME	"hd98a"
 #define PC98IDE_MINORS		16
+#define PC98IDE_DEVICES		2
 
 #define PC98IDE_BANK		0x0432
 #define PC98IDE_DATA		0x0640
@@ -70,10 +75,14 @@ struct pc98ide_device {
 	u8 sectors_per_track;
 	bool lba_supported;
 	bool flush_supported;
+	u8 unit;
+	bool present;
+	bool registered;
 };
 
-static struct pc98ide_device pc98ide;
+static struct pc98ide_device pc98ide[PC98IDE_DEVICES];
 static int pc98ide_major;
+static DEFINE_SPINLOCK(pc98ide_lock);
 
 static int pc98ide_wait(bool drq)
 {
@@ -102,7 +111,7 @@ static void pc98ide_400ns_delay(void)
 	inb(PC98IDE_ALTSTATUS);
 }
 
-static int pc98ide_select_sector(u32 lba)
+static int pc98ide_select_sector(struct pc98ide_device *dev, u32 lba)
 {
 	u32 track, cylinder;
 	u8 head, sector;
@@ -112,8 +121,9 @@ static int pc98ide_select_sector(u32 lba)
 	if (ret)
 		return ret;
 
-	if (pc98ide.lba_supported) {
-		outb(ATA_DEV_LBA | ((lba >> 24) & 0x0f), PC98IDE_DEVICE);
+	if (dev->lba_supported) {
+		outb(ATA_DEV_LBA | (dev->unit << 4) |
+		     ((lba >> 24) & 0x0f), PC98IDE_DEVICE);
 		pc98ide_400ns_delay();
 		outb(1, PC98IDE_NSECTOR);
 		outb(lba, PC98IDE_LBAL);
@@ -122,14 +132,14 @@ static int pc98ide_select_sector(u32 lba)
 		return 0;
 	}
 
-	track = lba / pc98ide.sectors_per_track;
-	sector = lba % pc98ide.sectors_per_track + 1;
-	head = track % pc98ide.heads;
-	cylinder = track / pc98ide.heads;
-	if (cylinder >= pc98ide.cylinders)
+	track = lba / dev->sectors_per_track;
+	sector = lba % dev->sectors_per_track + 1;
+	head = track % dev->heads;
+	cylinder = track / dev->heads;
+	if (cylinder >= dev->cylinders)
 		return -ERANGE;
 
-	outb(0xa0 | head, PC98IDE_DEVICE);
+	outb(0xa0 | (dev->unit << 4) | head, PC98IDE_DEVICE);
 	pc98ide_400ns_delay();
 	outb(1, PC98IDE_NSECTOR);
 	outb(sector, PC98IDE_LBAL);
@@ -138,15 +148,16 @@ static int pc98ide_select_sector(u32 lba)
 	return 0;
 }
 
-static int pc98ide_rw_sector(sector_t sector, void *buffer, bool write)
+static int pc98ide_rw_sector(struct pc98ide_device *dev, sector_t sector,
+			    void *buffer, bool write)
 {
 	int ret;
 
-	if (sector >= pc98ide.sectors ||
-	    (pc98ide.lba_supported && sector > 0x0fffffff))
+	if (sector >= dev->sectors ||
+	    (dev->lba_supported && sector > 0x0fffffff))
 		return -EIO;
 
-	ret = pc98ide_select_sector((u32)sector);
+	ret = pc98ide_select_sector(dev, (u32)sector);
 	if (ret)
 		return ret;
 
@@ -164,17 +175,17 @@ static int pc98ide_rw_sector(sector_t sector, void *buffer, bool write)
 	return 0;
 }
 
-static int pc98ide_flush(void)
+static int pc98ide_flush(struct pc98ide_device *dev)
 {
 	int ret;
 
-	if (!pc98ide.flush_supported)
+	if (!dev->flush_supported)
 		return 0;
 
 	ret = pc98ide_wait(false);
 	if (ret)
 		return ret;
-	outb(ATA_DEV_LBA, PC98IDE_DEVICE);
+	outb(ATA_DEV_LBA | (dev->unit << 4), PC98IDE_DEVICE);
 	pc98ide_400ns_delay();
 	outb(ATA_CMD_FLUSH, PC98IDE_COMMAND);
 	return pc98ide_wait(false);
@@ -183,6 +194,7 @@ static int pc98ide_flush(void)
 static blk_status_t pc98ide_queue_rq(struct blk_mq_hw_ctx *hctx,
 				     const struct blk_mq_queue_data *bd)
 {
+	struct pc98ide_device *dev = hctx->queue->queuedata;
 	struct request *rq = bd->rq;
 	struct req_iterator iter;
 	struct bio_vec bvec;
@@ -190,15 +202,13 @@ static blk_status_t pc98ide_queue_rq(struct blk_mq_hw_ctx *hctx,
 	blk_status_t status = BLK_STS_OK;
 	bool write;
 
-	/*
-	 * The single hardware queue has depth one and this polling request is
-	 * completed before queue_rq() returns, so blk-mq already serializes all
-	 * access.  In particular, do not disable interrupts around slow PIO.
-	 */
+	/* Each disk has a depth-one blk-mq queue, but both share one ATA bus. */
+	if (!spin_trylock(&pc98ide_lock))
+		return BLK_STS_RESOURCE;
 	blk_mq_start_request(rq);
 
 	if (req_op(rq) == REQ_OP_FLUSH) {
-		if (pc98ide_flush())
+		if (pc98ide_flush(dev))
 			status = BLK_STS_IOERR;
 		goto done;
 	}
@@ -221,7 +231,8 @@ static blk_status_t pc98ide_queue_rq(struct blk_mq_hw_ctx *hctx,
 		mapping = kmap_local_page(bvec.bv_page);
 		buffer = (u8 *)mapping + bvec.bv_offset;
 		for (offset = 0; offset < bvec.bv_len; offset += 512) {
-			if (pc98ide_rw_sector(sector++, buffer + offset, write)) {
+			if (pc98ide_rw_sector(dev, sector++, buffer + offset,
+					       write)) {
 				status = BLK_STS_IOERR;
 				break;
 			}
@@ -232,11 +243,12 @@ static blk_status_t pc98ide_queue_rq(struct blk_mq_hw_ctx *hctx,
 	}
 
 	if (status == BLK_STS_OK && write && (rq->cmd_flags & REQ_FUA) &&
-	    pc98ide_flush())
+	    pc98ide_flush(dev))
 		status = BLK_STS_IOERR;
 
 done:
 	blk_mq_end_request(rq, status);
+	spin_unlock(&pc98ide_lock);
 	return BLK_STS_OK;
 }
 
@@ -244,29 +256,43 @@ static const struct blk_mq_ops pc98ide_mq_ops = {
 	.queue_rq = pc98ide_queue_rq,
 };
 
+static int pc98ide_getgeo(struct gendisk *disk, struct hd_geometry *geo)
+{
+	struct pc98ide_device *dev = disk->private_data;
+	unsigned int heads = dev->heads ? dev->heads : 8;
+	unsigned int sectors = dev->sectors_per_track ?
+		dev->sectors_per_track : 17;
+	sector_t cylinders = dev->sectors;
+
+	pc9800_get_boot_disk_geometry_for(0x80, dev->unit, &heads, &sectors);
+	sector_div(cylinders, heads * sectors);
+	geo->heads = heads;
+	geo->sectors = sectors;
+	geo->cylinders = min_t(sector_t, cylinders, 0xffff);
+	geo->start = 0;
+	return 0;
+}
+
 static const struct block_device_operations pc98ide_fops = {
 	.owner = THIS_MODULE,
+	.getgeo = pc98ide_getgeo,
 };
 
-static int __init pc98ide_identify(void)
+static int __init pc98ide_identify(struct pc98ide_device *dev)
 {
 	u16 id[256];
 	u16 heads, sectors_per_track;
 	u32 sectors;
 	int ret;
 
-	outb(0, PC98IDE_BANK);
-	outb(ATA_CTL_NIEN | ATA_CTL_SRST, PC98IDE_CONTROL);
-	udelay(10);
-	outb(ATA_CTL_NIEN, PC98IDE_CONTROL);
-	udelay(2000);
-
 	ret = pc98ide_wait(false);
 	if (ret)
 		return ret;
 
-	outb(ATA_DEV_LBA, PC98IDE_DEVICE);
+	outb(ATA_DEV_LBA | (dev->unit << 4), PC98IDE_DEVICE);
 	pc98ide_400ns_delay();
+	if (inb(PC98IDE_STATUS) == 0 || inb(PC98IDE_STATUS) == 0xff)
+		return -ENODEV;
 	outb(ATA_CMD_IDENTIFY, PC98IDE_COMMAND);
 	if (inb(PC98IDE_STATUS) == 0)
 		return -ENODEV;
@@ -275,26 +301,27 @@ static int __init pc98ide_identify(void)
 		return ret;
 	insw(PC98IDE_DATA, id, 256);
 
-	pc98ide.lba_supported = !!(id[49] & ATA_ID_LBA);
-	if (pc98ide.lba_supported) {
+	dev->lba_supported = !!(id[49] & ATA_ID_LBA);
+	if (dev->lba_supported) {
 		sectors = (u32)id[ATA_ID_LBA_CAPACITY] |
 			  ((u32)id[ATA_ID_LBA_CAPACITY + 1] << 16);
 		if (!sectors)
 			return -ENODEV;
-		pc98ide.sectors = min_t(sector_t, sectors, 0x10000000ULL);
+		dev->sectors = min_t(sector_t, sectors, 0x10000000ULL);
 	} else {
-		pc98ide.cylinders = id[1];
+		dev->cylinders = id[1];
 		heads = id[3];
 		sectors_per_track = id[6];
-		if (!pc98ide.cylinders || !heads || heads > 16 ||
+		if (!dev->cylinders || !heads || heads > 16 ||
 		    !sectors_per_track || sectors_per_track > 255)
 			return -ENODEV;
-		pc98ide.heads = heads;
-		pc98ide.sectors_per_track = sectors_per_track;
-		pc98ide.sectors = (sector_t)pc98ide.cylinders *
-			pc98ide.heads * pc98ide.sectors_per_track;
+		dev->heads = heads;
+		dev->sectors_per_track = sectors_per_track;
+		dev->sectors = (sector_t)dev->cylinders *
+			dev->heads * dev->sectors_per_track;
 	}
-	pc98ide.flush_supported = id[ATA_ID_COMMAND_SET_1] & ATA_ID_FLUSH;
+	dev->flush_supported = id[ATA_ID_COMMAND_SET_1] & ATA_ID_FLUSH;
+	dev->present = true;
 	return 0;
 }
 
@@ -303,6 +330,60 @@ static void pc98ide_release_regions(void)
 	release_region(PC98IDE_BANK, 1);
 	release_region(PC98IDE_CONTROL, 1);
 	release_region(PC98IDE_DATA, 16);
+}
+
+static void pc98ide_unregister_device(struct pc98ide_device *dev)
+{
+	if (!dev->registered)
+		return;
+	del_gendisk(dev->disk);
+	put_disk(dev->disk);
+	blk_mq_free_tag_set(&dev->tag_set);
+	dev->disk = NULL;
+	dev->registered = false;
+}
+
+static int __init pc98ide_register_device(struct pc98ide_device *dev,
+					  struct queue_limits *limits)
+{
+	char name[DISK_NAME_LEN];
+	int ret;
+
+	ret = blk_mq_alloc_sq_tag_set(&dev->tag_set, &pc98ide_mq_ops, 1, 0);
+	if (ret)
+		return ret;
+
+	dev->disk = blk_mq_alloc_disk(&dev->tag_set, limits, dev);
+	if (IS_ERR(dev->disk)) {
+		ret = PTR_ERR(dev->disk);
+		dev->disk = NULL;
+		blk_mq_free_tag_set(&dev->tag_set);
+		return ret;
+	}
+
+	snprintf(name, sizeof(name), "hd%c", 'a' + dev->unit);
+	dev->disk->major = pc98ide_major;
+	dev->disk->first_minor = dev->unit * PC98IDE_MINORS;
+	dev->disk->minors = PC98IDE_MINORS;
+	dev->disk->fops = &pc98ide_fops;
+	dev->disk->private_data = dev;
+	strscpy(dev->disk->disk_name, name, sizeof(dev->disk->disk_name));
+	set_capacity(dev->disk, dev->sectors);
+
+	ret = add_disk(dev->disk);
+	if (ret) {
+		put_disk(dev->disk);
+		dev->disk = NULL;
+		blk_mq_free_tag_set(&dev->tag_set);
+		return ret;
+	}
+	dev->registered = true;
+
+	pr_info(DRV_NAME ": %s: %llu sectors (%llu MiB), %s polling PIO\n",
+		name, (unsigned long long)dev->sectors,
+		(unsigned long long)(dev->sectors >> 11),
+		dev->lba_supported ? "LBA28" : "CHS");
+	return 0;
 }
 
 static int __init pc98ide_init(void)
@@ -315,7 +396,8 @@ static int __init pc98ide_init(void)
 		.max_segment_size = PAGE_SIZE,
 		.features = BLK_FEAT_WRITE_CACHE,
 	};
-	int ret;
+	unsigned int found = 0;
+	int i, ret;
 
 	if (!request_region(PC98IDE_DATA, 16, DRV_NAME))
 		return -EBUSY;
@@ -329,9 +411,22 @@ static int __init pc98ide_init(void)
 		return -EBUSY;
 	}
 
-	ret = pc98ide_identify();
-	if (ret)
+	/* Reset both devices once, then identify master and slave separately. */
+	outb(0, PC98IDE_BANK);
+	outb(ATA_CTL_NIEN | ATA_CTL_SRST, PC98IDE_CONTROL);
+	udelay(10);
+	outb(ATA_CTL_NIEN, PC98IDE_CONTROL);
+	udelay(2000);
+
+	for (i = 0; i < PC98IDE_DEVICES; i++) {
+		pc98ide[i].unit = i;
+		if (!pc98ide_identify(&pc98ide[i]))
+			found++;
+	}
+	if (!found) {
+		ret = -ENODEV;
 		goto out_regions;
+	}
 
 	pc98ide_major = register_blkdev(0, DRV_NAME);
 	if (pc98ide_major < 0) {
@@ -339,40 +434,18 @@ static int __init pc98ide_init(void)
 		goto out_regions;
 	}
 
-	ret = blk_mq_alloc_sq_tag_set(&pc98ide.tag_set, &pc98ide_mq_ops, 1, 0);
-	if (ret)
-		goto out_major;
-
-	pc98ide.disk = blk_mq_alloc_disk(&pc98ide.tag_set, &limits, &pc98ide);
-	if (IS_ERR(pc98ide.disk)) {
-		ret = PTR_ERR(pc98ide.disk);
-		goto out_tags;
+	for (i = 0; i < PC98IDE_DEVICES; i++) {
+		if (!pc98ide[i].present)
+			continue;
+		ret = pc98ide_register_device(&pc98ide[i], &limits);
+		if (ret)
+			goto out_devices;
 	}
-
-	pc98ide.disk->major = pc98ide_major;
-	pc98ide.disk->first_minor = 0;
-	pc98ide.disk->minors = PC98IDE_MINORS;
-	pc98ide.disk->fops = &pc98ide_fops;
-	pc98ide.disk->private_data = &pc98ide;
-	strscpy(pc98ide.disk->disk_name, PC98IDE_DISK_NAME,
-		sizeof(pc98ide.disk->disk_name));
-	set_capacity(pc98ide.disk, pc98ide.sectors);
-
-	ret = add_disk(pc98ide.disk);
-	if (ret)
-		goto out_disk;
-
-	pr_info(DRV_NAME ": %s: %llu sectors (%llu MiB), %s polling PIO\n",
-		PC98IDE_DISK_NAME, (unsigned long long)pc98ide.sectors,
-		(unsigned long long)(pc98ide.sectors >> 11),
-		pc98ide.lba_supported ? "LBA28" : "CHS");
 	return 0;
 
-out_disk:
-	put_disk(pc98ide.disk);
-out_tags:
-	blk_mq_free_tag_set(&pc98ide.tag_set);
-out_major:
+out_devices:
+	while (--i >= 0)
+		pc98ide_unregister_device(&pc98ide[i]);
 	unregister_blkdev(pc98ide_major, DRV_NAME);
 out_regions:
 	pc98ide_release_regions();
@@ -381,9 +454,10 @@ out_regions:
 
 static void __exit pc98ide_exit(void)
 {
-	del_gendisk(pc98ide.disk);
-	put_disk(pc98ide.disk);
-	blk_mq_free_tag_set(&pc98ide.tag_set);
+	int i;
+
+	for (i = PC98IDE_DEVICES - 1; i >= 0; i--)
+		pc98ide_unregister_device(&pc98ide[i]);
 	unregister_blkdev(pc98ide_major, DRV_NAME);
 	pc98ide_release_regions();
 }

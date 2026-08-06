@@ -22,7 +22,7 @@ OpenWatcom 1.9 from the repository root:
 Run from plain real-mode DOS:
 
 ```dos
-LINUX98.EXE VMLINUX ide0 root=/dev/hd98a2 rw
+LINUX98.EXE VMLINUX ide0 root=PARTLABEL=LINUXROOT rw
 LINUX98.EXE VMLINUX scsi0 root=/dev/sda2 rw
 ```
 

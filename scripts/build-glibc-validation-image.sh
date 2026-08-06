@@ -70,8 +70,8 @@ if [ "$family" = i386 ]; then
 fi
 
 cat >"$root_stage/etc/fstab" <<'EOF'
-/dev/hd98a2 / ext4 defaults,noatime 0 1
-/dev/hd98a3 none swap sw 0 0
+/dev/hda2 / ext4 defaults,noatime 0 1
+/dev/hda3 none swap sw 0 0
 proc /proc proc defaults 0 0
 sysfs /sys sysfs defaults 0 0
 EOF

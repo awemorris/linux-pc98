@@ -68,10 +68,11 @@ written sequentially from the next text row. It displays this menu:
 
 Its shell, configuration reader, applet support, IPLware loader, and kernel
 loader use the generic interfaces in `boot98-fs.h` and `boot98-image.h`.
-FAT16 is currently the only registered filesystem driver, but 8.3 conversion,
-cluster traversal, and directory-entry parsing are private to that driver.
-The public path interface accepts up to 255 bytes so that FAT32, ext4, and UFS
-drivers can be added without changing those consumers.
+FAT-family BPB parsing, 8.3 conversion, and cluster-chain reads live in
+`boot98-fat.[ch]`; fixed-root traversal and 16-bit FAT-entry decoding are
+isolated in `boot98-fat16.[ch]`. FAT16 is currently the only registered
+filesystem driver. The public path interface accepts up to 255 bytes so that
+FAT32, ext4, and UFS drivers can be added without changing those consumers.
 
 ```text
 Boot from:

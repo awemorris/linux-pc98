@@ -2,11 +2,12 @@ AS := as
 LD := ld
 OBJCOPY := objcopy
 CC := gcc
+HOSTCC ?= cc
 ASFLAGS := --32
 STAGE2_CFLAGS := -m32 -march=i386 -Os -ffreestanding -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -Wall -Wextra -Werror
 SCRIPTS_DIR := ../scripts
 STAGE2_OBJS := boot98-stage2-entry.o boot98-stage2.o boot98-fs.o \
-	boot98-image.o
+	boot98-fat.o boot98-fat16.o boot98-image.o
 
 all: boot2.bin ipl-lba0.bin ipl-lba2.bin ipl-lba0.img ipl-lba2.img \
 	ipl-part.img IO.SYS BOOT.SYS \
@@ -114,10 +115,17 @@ boot98-fdd-ipl.bin: boot98-fdd-ipl.elf
 boot98-stage2-entry.o: boot98-stage2-entry.S
 	$(AS) $(ASFLAGS) $< -o $@
 
-boot98-stage2.o: boot98-stage2.c boot98-abi.h boot98-fs.h boot98-image.h
+boot98-stage2.o: boot98-stage2.c boot98-abi.h boot98-fat16.h boot98-fs.h \
+	boot98-image.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
 boot98-fs.o: boot98-fs.c boot98-fs.h
+	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
+
+boot98-fat.o: boot98-fat.c boot98-fat.h boot98-fs.h
+	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
+
+boot98-fat16.o: boot98-fat16.c boot98-fat16.h boot98-fat.h boot98-fs.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
 boot98-image.o: boot98-image.c boot98-image.h boot98-fs.h
@@ -158,7 +166,15 @@ BOOTAPP.BIN: boot98-applet-test.elf $(SCRIPTS_DIR)/patch-boot98-applet.py
 	$(OBJCOPY) -O binary $< $@
 	python3 $(SCRIPTS_DIR)/patch-boot98-applet.py $@
 
-clean:
-	rm -f *.o *.elf *.bin *.com *.BIN *.SYS
+tests/boot98-fat-host-test: tests/boot98-fat-host-test.c boot98-fs.c \
+	boot98-fat.c boot98-fat16.c boot98-fs.h boot98-fat.h boot98-fat16.h
+	$(HOSTCC) -std=c11 -O2 -Wall -Wextra -Werror -I. \
+		boot98-fs.c boot98-fat.c boot98-fat16.c $< -o $@
 
-.PHONY: all clean
+check: tests/boot98-fat-host-test
+	./tests/boot98-fat-host-test
+
+clean:
+	rm -f *.o *.elf *.bin *.com *.BIN *.SYS tests/boot98-fat-host-test
+
+.PHONY: all check clean

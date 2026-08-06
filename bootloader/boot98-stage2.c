@@ -39,9 +39,35 @@ static uint32_t load_data_done, load_data_total;
 static int load_progress_class = -1;
 
 struct part {
-	uint8_t valid, index;
+	uint8_t valid, index, bootable;
 	char name[17];
 	uint32_t start, data;
+};
+
+enum startup_phase {
+	STARTUP_DRAW,
+	STARTUP_PROBE,
+	STARTUP_TIMEOUT,
+	STARTUP_SELECTED,
+	STARTUP_SHELL,
+};
+
+enum startup_auto_kind {
+	STARTUP_AUTO_NONE,
+	STARTUP_AUTO_CONFIG,
+	STARTUP_AUTO_PBR,
+};
+
+struct startup_state {
+	enum startup_phase phase;
+	unsigned next_candidate;
+	unsigned fixed_count;
+	int auto_device;
+	int auto_partition;
+	int auto_priority;
+	enum startup_auto_kind auto_kind;
+	int timeout_start;
+	unsigned timeout_budget;
 };
 static struct boot98_filesystem mounted_fs;
 static struct part parts[MAX_PARTS];
@@ -220,6 +246,7 @@ static int scanparts(int di)
 			continue;
 		parts[i].valid = 1;
 		parts[i].index = i;
+		parts[i].bootable = (p[0] & 0x80) && (p[1] & 0x80);
 		parts[i].start = chs(&devs[di], p + 4);
 		parts[i].data = chs(&devs[di], p + 8);
 		for (int j = 0; j < 16; j++) {
@@ -296,24 +323,6 @@ static int clock_second(void)
 	return (int)second;
 }
 
-/* Only the first startup selection is timed.  The loop budget is a safety
- * fallback for firmware whose calendar service is missing or stuck. */
-static int initial_key(void)
-{
-	int start = clock_second();
-	unsigned budget = 0x20000;
-	for (;;) {
-		int k = poll();
-		if (k >= 0)
-			return key();
-		int now = clock_second();
-		if (start >= 0 && now >= 0 && (now - start + 60) % 60 >=
-		    STARTUP_TIMEOUT_SECONDS)
-			return -1;
-		if (!--budget)
-			return -1;
-	}
-}
 static int line(char *b)
 {
 	unsigned n = 0;
@@ -553,39 +562,40 @@ static int device_is_known(uint8_t device_class, uint8_t bios_id)
 	return 0;
 }
 
-/* Each gateway invocation performs at most one INT 1Bh SENSE operation. */
+/* Probe exactly one BIOS unit.  A nonnegative result is the new list index. */
+static int probe_fixed_device(uint8_t device_class, uint8_t bios_id)
+{
+	uint8_t scsi_bitmap;
+	int new_index;
+
+	if (device_count >= MAX_FIXED_DEVICES ||
+	    device_is_known(device_class, bios_id))
+		return -1;
+	if (device_class == BOOT98_DEV_SCSI) {
+		asm volatile("movb 0x0482,%0" : "=q"(scsi_bitmap));
+		if (!(scsi_bitmap & (1U << (bios_id - 0xa0))))
+			return -1;
+	}
+	new_index = (int)device_count;
+	memzero(&discovered_devices[device_count],
+	        sizeof(discovered_devices[device_count]));
+	rq.status = device_class;
+	rq.bios_id = bios_id;
+	rq.buffer = (uint32_t)&discovered_devices[device_count];
+	if (call(BOOT98_BIOS_PROBE_FIXED) != 0)
+		return -1;
+	device_count++;
+	return new_index;
+}
+
+/* Shell probes remain exhaustive; startup uses probe_fixed_device directly. */
 static void probe_fixed_class(uint8_t device_class)
 {
 	uint8_t first = device_class == BOOT98_DEV_IDE ? 0x80 : 0xa0;
 	unsigned count = device_class == BOOT98_DEV_IDE ? 4 : 8;
-	uint8_t scsi_bitmap;
 
-	asm volatile("movb 0x0482,%0" : "=q"(scsi_bitmap));
-
-	for (unsigned index = 0; index < count; index++) {
-		uint8_t bios_id = first + index;
-
-		if (device_count >= MAX_FIXED_DEVICES)
-			return;
-		if (device_is_known(device_class, bios_id))
-			continue;
-		if (device_class == BOOT98_DEV_SCSI &&
-		    !(scsi_bitmap & (1U << index)))
-			continue;
-		memzero(&discovered_devices[device_count],
-		        sizeof(discovered_devices[device_count]));
-		rq.status = device_class;
-		rq.bios_id = bios_id;
-		rq.buffer = (uint32_t)&discovered_devices[device_count];
-		if (call(BOOT98_BIOS_PROBE_FIXED) == 0)
-			device_count++;
-	}
-}
-
-static void discover_fixed_devices(void)
-{
-	probe_fixed_class(BOOT98_DEV_IDE);
-	probe_fixed_class(BOOT98_DEV_SCSI);
+	for (unsigned index = 0; index < count; index++)
+		probe_fixed_device(device_class, first + index);
 }
 
 /* ELF32 structures used by the uncompressed Linux kernel loader. */
@@ -1023,12 +1033,62 @@ static unsigned fixed_device_ordinal(int device)
 	return ordinal;
 }
 
-static int automatic_config_available(void)
+static void consider_automatic_device(struct startup_state *state, int device)
+{
+	struct boot98_file file;
+	int first_bootable = -1;
+	int config_partition = -1;
+	int priority;
+
+	if (device < 0 || !(devs[device].flags & BOOT98_DEV_HAS_GEOMETRY) ||
+	    !scanparts(device))
+		return;
+	for (int partition = 0; partition < MAX_PARTS; partition++) {
+		if (!parts[partition].valid)
+			continue;
+		/* The BOOT volume's PBR reloads this loader.  It must not be the
+		 * fallback target when BOOT.CFG is absent, or Auto loops forever. */
+		if (first_bootable < 0 && parts[partition].bootable &&
+		    !streq(parts[partition].name, "BOOT"))
+			first_bootable = partition;
+		if (config_partition < 0 && streq(parts[partition].name, "BOOT") &&
+		    mountpart(device, partition) &&
+		    boot98_fs_open(&mounted_fs, "BOOT.CFG", &file))
+			config_partition = partition;
+	}
+	if (config_partition >= 0) {
+		priority = devs[device].bios_id == ho->boot_bios_id ? 1 : 2;
+		if (priority < state->auto_priority) {
+			state->auto_priority = priority;
+			state->auto_kind = STARTUP_AUTO_CONFIG;
+			state->auto_device = device;
+			state->auto_partition = config_partition;
+		}
+	}
+	if (first_bootable >= 0 && 3 < state->auto_priority) {
+		state->auto_priority = 3;
+		state->auto_kind = STARTUP_AUTO_PBR;
+		state->auto_device = device;
+		state->auto_partition = first_bootable;
+	}
+}
+
+static int activate_automatic_target(const struct startup_state *state)
 {
 	struct boot98_file file;
 
-	return curdev >= 0 && curpart >= 0 &&
-	       boot98_fs_open(&mounted_fs, "BOOT.CFG", &file);
+	if (state->auto_kind == STARTUP_AUTO_NONE ||
+	    !scanparts(state->auto_device) ||
+	    !parts[state->auto_partition].valid)
+		return 0;
+	if (state->auto_kind == STARTUP_AUTO_CONFIG &&
+	    (!mountpart(state->auto_device, state->auto_partition) ||
+	     !boot98_fs_open(&mounted_fs, "BOOT.CFG", &file)))
+		return 0;
+	curdev = state->auto_device;
+	curpart = state->auto_partition;
+	kernel_name[0] = kernel_arg[0] = 0;
+	return 1;
 }
 
 static void draw_startup_header(void)
@@ -1039,23 +1099,24 @@ static void draw_startup_header(void)
 	boot98_console_write_at(5, 0, boot98_msg_probing);
 }
 
-static void draw_startup_menu(void)
+static void draw_startup_menu(const struct startup_state *state)
 {
-	int has_config = automatic_config_available();
-
 	for (unsigned menu_row = 6; menu_row <= 17; menu_row++)
 		boot98_console_clear_row(menu_row);
 	boot98_console_write_at(6, 0, (const uint8_t *)"");
-	dec(device_count);
+	dec(state->fixed_count);
 	puts((const char *)boot98_msg_found_suffix);
 	boot98_console_write_at(8, 0, boot98_msg_boot_from);
 	boot98_console_write_at(9, 0, boot98_msg_auto_prefix);
-	if (has_config) {
+	if (state->phase == STARTUP_DRAW || state->phase == STARTUP_PROBE) {
+		puts((const char *)boot98_msg_searching);
+	} else if (state->auto_kind != STARTUP_AUTO_NONE) {
 		puts("HDD ");
-		dec(fixed_device_ordinal(curdev));
+		dec(fixed_device_ordinal(state->auto_device));
 		puts((const char *)boot98_msg_partition);
-		dec((unsigned)parts[curpart].index + 1);
-		puts((const char *)boot98_msg_run_cfg);
+		dec((unsigned)state->auto_partition + 1);
+		if (state->auto_kind == STARTUP_AUTO_CONFIG)
+			puts((const char *)boot98_msg_run_cfg);
 	} else {
 		puts((const char *)boot98_msg_unavailable);
 	}
@@ -1104,63 +1165,151 @@ static void chain_menu_device(unsigned ordinal)
 		puts("Boot failed.\n");
 }
 
-/* Return one for Auto and zero for an interactive Shell. Successful chain
- * boots do not return through the BIOS gateway. */
-static int startup_menu(void)
+static void chain_automatic_partition(const struct startup_state *state)
 {
-	int first = 1;
+	if (!activate_automatic_target(state)) {
+		puts("Automatic target is no longer readable.\n");
+		return;
+	}
+	rq.status = 1;
+	rq.bios_id = devs[curdev].bios_id;
+	rq.heads = devs[curdev].heads;
+	rq.sectors = devs[curdev].sectors;
+	rq.lba = parts[curpart].start;
+	if (call(BOOT98_BIOS_CHAIN_BOOT) != 0)
+		puts("Boot failed.\n");
+}
 
-	draw_startup_menu();
+/* Return -1 for an ignored key, zero for Shell, and one for BOOT.CFG. */
+static int handle_startup_key(struct startup_state *state, int key_code)
+{
+	if (key_code == 0x1b) {
+		accept_startup_selection(key_code);
+		state->phase = STARTUP_SHELL;
+		if (state->auto_kind == STARTUP_AUTO_CONFIG)
+			activate_automatic_target(state);
+		return 0;
+	}
+	if (key_code == '1') {
+		if (state->auto_kind == STARTUP_AUTO_NONE)
+			return -1;
+		accept_startup_selection(key_code);
+		state->phase = STARTUP_SELECTED;
+		if (state->auto_kind == STARTUP_AUTO_CONFIG)
+			return activate_automatic_target(state) ? 1 : 0;
+		chain_automatic_partition(state);
+		state->phase = STARTUP_SHELL;
+		return 0;
+	}
+	if (key_code >= '2' && key_code <= '5') {
+		unsigned ordinal = (unsigned)(key_code - '1');
+
+		if (menu_device(ordinal) < 0)
+			return -1;
+		accept_startup_selection(key_code);
+		state->phase = STARTUP_SELECTED;
+		chain_menu_device(ordinal);
+		state->phase = STARTUP_SHELL;
+		return 0;
+	}
+	return -1;
+}
+
+static int pending_startup_key(void)
+{
+	return poll() >= 0 ? key() : -1;
+}
+
+/* Process one stable candidate; at most one invocation reaches INT 1Bh. */
+static void probe_next_startup_device(struct startup_state *state)
+{
+	unsigned candidate = state->next_candidate++;
+	uint8_t device_class;
+	uint8_t bios_id;
+	int new_device;
+
+	if (candidate < 4) {
+		device_class = BOOT98_DEV_IDE;
+		bios_id = 0x80 + candidate;
+	} else {
+		device_class = BOOT98_DEV_SCSI;
+		bios_id = 0xa0 + candidate - 4;
+	}
+	new_device = probe_fixed_device(device_class, bios_id);
+	state->fixed_count = device_count;
+	if (new_device >= 0)
+		consider_automatic_device(state, new_device);
+}
+
+/* Explicit cooperative startup state machine.  BIOS SENSE itself may block,
+ * but keyboard input is checked immediately before and after every candidate. */
+static int startup_menu(struct startup_state *state)
+{
+	curdev = curpart = -1;
+	state->phase = STARTUP_DRAW;
+	state->next_candidate = 0;
+	state->fixed_count = device_count;
+	state->auto_device = state->auto_partition = -1;
+	state->auto_priority = 4;
+	state->auto_kind = STARTUP_AUTO_NONE;
+	state->timeout_start = -1;
+	state->timeout_budget = 0x20000;
+
+	boot98_console_reset();
+	draw_startup_header();
+	for (unsigned device = 0; device < device_count; device++)
+		consider_automatic_device(state, device);
+	draw_startup_menu(state);
+	state->phase = STARTUP_PROBE;
 	for (;;) {
-		int has_config = automatic_config_available();
-		int k = first && has_config ? initial_key() : key();
-		first = 0;
-		if (k < 0) {
-			accept_startup_selection(-1);
-			return 1;
-		}
-		if (k == 0x1b) {
-			accept_startup_selection(k);
-			return 0;
-		}
-		switch (k) {
-		case '1':
-			if (!has_config)
+		int key_code;
+		int result;
+
+		if (state->phase == STARTUP_PROBE) {
+			key_code = pending_startup_key();
+			if (key_code >= 0 &&
+			    (result = handle_startup_key(state, key_code)) >= 0)
+				return result;
+			if (state->next_candidate < MAX_FIXED_DEVICES) {
+				probe_next_startup_device(state);
+				draw_startup_menu(state);
+				key_code = pending_startup_key();
+				if (key_code >= 0 &&
+				    (result = handle_startup_key(state,
+							 key_code)) >= 0)
+					return result;
 				continue;
-			accept_startup_selection(k);
-			return 1;
-		case '2':
-			if (menu_device(1) < 0)
-				continue;
-			accept_startup_selection(k);
-			chain_menu_device(1);
-			break;
-		case '3':
-			if (menu_device(2) < 0)
-				continue;
-			accept_startup_selection(k);
-			chain_menu_device(2);
-			break;
-		case '4':
-			if (menu_device(3) < 0)
-				continue;
-			accept_startup_selection(k);
-			chain_menu_device(3);
-			break;
-		case '5':
-			if (menu_device(4) < 0)
-				continue;
-			accept_startup_selection(k);
-			chain_menu_device(4);
-			break;
-		default:
+			}
+			state->phase = STARTUP_TIMEOUT;
+			state->timeout_start = clock_second();
+			draw_startup_menu(state);
 			continue;
 		}
-		puts("Press any key to return to the menu.\n");
-		key();
-		boot98_console_reset();
-		draw_startup_header();
-		draw_startup_menu();
+
+		if (state->auto_kind == STARTUP_AUTO_NONE) {
+			key_code = key();
+			result = handle_startup_key(state, key_code);
+			if (result >= 0)
+				return result;
+			continue;
+		}
+
+		key_code = pending_startup_key();
+		if (key_code >= 0 &&
+		    (result = handle_startup_key(state, key_code)) >= 0)
+			return result;
+		int now = clock_second();
+		if ((state->timeout_start >= 0 && now >= 0 &&
+		     (now - state->timeout_start + 60) % 60 >=
+		     STARTUP_TIMEOUT_SECONDS) || !--state->timeout_budget) {
+			accept_startup_selection(-1);
+			state->phase = STARTUP_SELECTED;
+			if (state->auto_kind == STARTUP_AUTO_CONFIG)
+				return activate_automatic_target(state) ? 1 : 0;
+			chain_automatic_partition(state);
+			state->phase = STARTUP_SHELL;
+			return 0;
+		}
 	}
 }
 
@@ -1188,13 +1337,10 @@ void boot98_main(const struct boot98_handoff *h)
 	devs = discovered_devices;
 	gw = (boot98_bios_gateway_t)h->bios_gateway;
 	for (;;) {
+		struct startup_state startup;
+
 		call(BOOT98_BIOS_DISPLAY_RESET);
-		boot98_console_reset();
-		draw_startup_header();
-		discover_fixed_devices();
-		curdev = curpart = -1;
-		findboot();
-		int automatic = startup_menu();
+		int automatic = startup_menu(&startup);
 		if (curpart >= 0) {
 			puts("source: ");
 			devname(curdev);

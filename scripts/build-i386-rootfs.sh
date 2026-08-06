@@ -86,6 +86,14 @@ if [ ! -x "$busybox" ]; then
 	echo "BusyBox was not installed: $busybox" >&2
 	exit 1
 fi
+if ! "$busybox" --list | grep -qx ifconfig; then
+	echo "BusyBox was built without the required ifconfig applet" >&2
+	exit 1
+fi
+if [ ! -L "$output/target/sbin/ifconfig" ]; then
+	echo "BusyBox ifconfig installation link is missing" >&2
+	exit 1
+fi
 
 bad=$("$output/host/bin/i386-buildroot-linux-musl-objdump" -d "$busybox" |
 	awk -F '\t' 'NF >= 3 {

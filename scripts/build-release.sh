@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 release_dir="$repo/build/releases"
-version="${RELEASE_VERSION:-v0.7.0}"
+version="${RELEASE_VERSION:-v0.8.0}"
 jobs="${JOBS:-$(nproc)}"
 publish_rootfs=0
 build_win64=1
@@ -99,7 +99,8 @@ copy_release_file()
 mkdir -p "$release_dir"
 test -f "$note" || { echo "Release note not found: $note" >&2; exit 1; }
 # Keep the staging directory unambiguous.  These files were uploaded by older
-# releases, but v0.7.0 publishes the complete loader kit as bootloader.zip.
+# releases, but current releases publish the complete loader kit as
+# bootloader.zip.
 rm -f -- \
 	"$release_dir"/boot.bin "$release_dir"/boot.sys \
 	"$release_dir"/boot.cfg "$release_dir"/IO.SYS \

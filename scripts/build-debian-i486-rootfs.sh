@@ -34,6 +34,12 @@ printf 'deb [trusted=yes] %s %s main\n' "$mirror" "$suite" |
 	sudo tee "$stage/etc/apt/sources.list" >/dev/null
 sudo chroot "$stage" dpkg --audit
 sudo chroot "$stage" apt-get update
+sudo chroot "$stage" dpkg-query -W -f='${Status}\n' net-tools |
+	grep -qx 'install ok installed'
+test -x "$stage/usr/sbin/ifconfig" || test -x "$stage/sbin/ifconfig" || {
+	echo "net-tools did not install ifconfig in the Debian rootfs" >&2
+	exit 1
+}
 sudo chroot "$stage" apt-get clean
 printf '%s\n' "$manifest_sha256" |
 	sudo tee "$stage/etc/linux-pc98-rootfs-profile" >/dev/null

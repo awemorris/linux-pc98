@@ -10,6 +10,7 @@ kmod
 udev
 ifupdown
 iproute2
+net-tools
 dhcpcd-base
 ca-certificates
 

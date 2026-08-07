@@ -12,6 +12,7 @@ Primary commands:
   setup [options]             install Debian 13 host build/test dependencies
   bootloader                  build IPL and BOOT98 binaries
   bootloader-dist             build build/releases/bootloader.zip
+  noct COMMAND                build or verify the imported Noct core
   boot-install [options]      destructively create a BOOT partition environment
   dos-loader                  rebuild LINUX98.EXE and INST.EXE (OpenWatcom)
   kernel [options]            configure and build Linux 7.1
@@ -54,6 +55,46 @@ BOOT installation syntax:
   ./build.sh boot-install [--partition N] [--install-disk-stubs]
                           IMAGE [VMLINUX [BOOT.CFG]]
 EOF
+}
+
+build_noct()
+{
+	local action="${1:-objects}"
+	shift || true
+	case "$action" in
+		objects)
+			make -C "$repo/bootloader" noct-objects "$@"
+			;;
+		opcode-check)
+			make -C "$repo/bootloader" noct-opcode-check "$@"
+			;;
+		verify)
+			"$repo/scripts/update-noct.sh" verify
+			make -C "$repo/bootloader" noct-objects noct-opcode-check "$@"
+			;;
+		status)
+			"$repo/scripts/update-noct.sh" status
+			;;
+		clean)
+			make -C "$repo/bootloader" noct-clean "$@"
+			;;
+		-h | --help | help)
+			cat <<'EOF'
+Usage: ./build.sh noct COMMAND
+
+Commands:
+  objects       compile the selected PC98BE Noct core objects
+  opcode-check  compile and reject post-i386 instructions
+  verify        verify the vendored snapshot, compile, and opcode-check
+  status        print the imported origin and revision
+  clean         remove only the selected Noct object files
+EOF
+			;;
+		*)
+			echo "Unknown Noct command: $action" >&2
+			exit 2
+			;;
+	esac
 }
 
 build_kernel()
@@ -139,6 +180,7 @@ case "$command" in
 	setup) "$repo/scripts/setup.sh" "$@" ;;
 	bootloader) make -C "$repo/bootloader" "$@" ;;
 	bootloader-dist) "$repo/scripts/build-bootloader-dist.sh" "$@" ;;
+	noct) build_noct "$@" ;;
 	boot-install) "$repo/scripts/install-boot98-image.sh" "$@" ;;
 	dos-loader) make -C "$repo/bootloader/dos" "$@" ;;
 	kernel) build_kernel "$@" ;;

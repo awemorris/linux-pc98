@@ -13,6 +13,8 @@ reviewable milestone at a time.  The baseline recorded before source changes
 is in [`PC98BE-NOCT-M0-BASELINE.md`](PC98BE-NOCT-M0-BASELINE.md).
 The review record for the upstream Noct PC98BE portability milestone is in
 [`PC98BE-NOCT-M1-UPSTREAM.md`](PC98BE-NOCT-M1-UPSTREAM.md).
+The review record for the vendored Noct snapshot and offline object build is
+in [`PC98BE-NOCT-M2-IMPORT.md`](PC98BE-NOCT-M2-IMPORT.md).
 
 ## Disk layout
 

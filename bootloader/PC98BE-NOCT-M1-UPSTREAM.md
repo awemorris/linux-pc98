@@ -1,12 +1,13 @@
 # PC-98 Bootstrap Environment: M1 Noct Upstream Portability
 
-Status: **M1 IMPLEMENTED — AWAITING USER REVIEW**
+Status: **M1 COMPLETE — REVIEWED 2026-08-07**
 
 Recorded on 2026-08-07 for M1 of
-`PC98BE-NOCT-IMPLEMENTATION-PLAN.md`.  The implementation is an uncommitted
-change in the separate `~/NoctLang` repository, based on upstream commit
-`40670781403c760a0793cfb324b2b53a4c2f0228` (`Add api-thread.c (wip)`).
-No M2 import or BOOT.SYS link change has been made.
+`PC98BE-NOCT-IMPLEMENTATION-PLAN.md`.  The implementation was reviewed,
+committed, and published in the separate `~/NoctLang` repository as commit
+`86079e47b8430a9fce4c67fab584499a3531658e` (`Add PC98BE target`).
+M2 imports exactly that approved revision; M1 itself made no BOOT.SYS link
+change.
 
 ## 1. Implemented portability surface
 
@@ -115,8 +116,7 @@ M1.
 
 ## 4. Review boundary
 
-Review and commit the `~/NoctLang` change separately from the documentation
-change in `~/linux-pc98`.  M2 must not begin until this milestone is accepted.
-The next milestone will import an approved Noct revision into linux-pc98 and
+The `~/NoctLang` change was reviewed and committed separately from
+`linux-pc98`.  M2 may now import the approved revision into linux-pc98 and
 establish an offline, reproducible selected-source build, without linking it
 into BOOT.SYS yet.

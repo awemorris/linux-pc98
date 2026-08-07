@@ -1013,7 +1013,7 @@ recorded. Stop if the baseline itself is broken.
 
 ### M1 — Upstream Noct PC98BE portability
 
-Status: **IMPLEMENTED — AWAITING USER REVIEW**.  See
+Status: **COMPLETE — REVIEWED 2026-08-07**.  See
 `PC98BE-NOCT-M1-UPSTREAM.md` for the exact source and verification record.
 
 Repository: NoctLang only.
@@ -1025,6 +1025,10 @@ Acceptance: upstream host tests pass; a PC98BE object-only build compiles the
 selected core with custom allocator declarations and no POSIX/DOS4G branch.
 
 ### M2 — Import Noct and establish reproducible build
+
+Status: **IMPLEMENTED — AWAITING USER REVIEW**.  See
+`PC98BE-NOCT-M2-IMPORT.md` for the imported revision, build boundary, and
+verification record.
 
 Repository: linux-pc98.
 

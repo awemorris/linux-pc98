@@ -182,7 +182,9 @@ tests/boot98-fat-host-test: tests/boot98-fat-host-test.c boot98-fs.c \
 check: tests/boot98-fat-host-test
 	./tests/boot98-fat-host-test
 
-clean:
+include noct.mk
+
+clean: noct-clean
 	rm -f *.o *.elf *.bin *.com *.BIN *.SYS tests/boot98-fat-host-test
 
 .PHONY: all check clean

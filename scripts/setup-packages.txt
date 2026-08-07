@@ -17,8 +17,10 @@ e2fsprogs
 file
 flex
 gawk
+gcc-multilib
 git
 gzip
+libc6-dev-i386
 libelf-dev
 libfdt-dev
 libglib2.0-dev

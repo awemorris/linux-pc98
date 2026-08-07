@@ -76,7 +76,10 @@ build_noct()
 			;;
 		verify)
 			"$repo/scripts/update-noct.sh" verify
-			make -C "$repo/bootloader" noct-m4-verify "$@"
+			make -C "$repo/bootloader" noct-m5-verify "$@"
+			;;
+		softfloat-test)
+			make -C "$repo/bootloader" boot98-softfloat-host-test "$@"
 			;;
 		lifecycle-test)
 			make -C "$repo/bootloader" boot98-noct-host-test "$@"
@@ -97,7 +100,8 @@ Commands:
   libc-test     run heap/libc host tests, including allocation failures
   link-audit    relocatably link Noct/libc and audit undefined symbols
   lifecycle-test run the M4 VM create/run/destroy/reset host test
-  verify        verify M3 plus the linked M4 interpreter lifecycle
+  softfloat-test run the M5 arithmetic/conversion/math known vectors
+  verify        verify M4 plus M5 soft-float and final i386 opcodes
   status        print the imported origin and revision
   clean         remove only the selected Noct object files
 EOF

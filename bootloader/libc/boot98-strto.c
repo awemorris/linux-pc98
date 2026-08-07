@@ -156,36 +156,6 @@ long long atoll(const char *string) { return strtoll(string, NULL, 10); }
 int abs(int value) { return value < 0 ? -value : value; }
 long labs(long value) { return value < 0 ? -value : value; }
 
-double
-strtod(const char *string, char **end)
-{
-	const char *cursor = skip_space(string);
-	double value = 0.0;
-	double scale = 1.0;
-	int negative = 0;
-	int any = 0;
-
-	if (*cursor == '+' || *cursor == '-') {
-		negative = *cursor == '-';
-		cursor++;
-	}
-	while (isdigit((unsigned char)*cursor)) {
-		value = value * 10.0 + (double)(*cursor++ - '0');
-		any = 1;
-	}
-	if (*cursor == '.') {
-		cursor++;
-		while (isdigit((unsigned char)*cursor)) {
-			scale *= 0.1;
-			value += (double)(*cursor++ - '0') * scale;
-			any = 1;
-		}
-	}
-	if (end != NULL)
-		*end = (char *)(any ? cursor : string);
-	return negative ? -value : value;
-}
-
 double atof(const char *string) { return strtod(string, NULL); }
 
 static unsigned int random_state = 1;

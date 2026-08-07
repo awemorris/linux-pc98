@@ -1,6 +1,6 @@
 # PC-98 Bootstrap Environment: M4 Minimal Noct Lifecycle
 
-Status: **M4 IMPLEMENTED — AWAITING USER REVIEW**
+Status: **M4 COMPLETE — REVIEWED AND COMMITTED 2026-08-07**
 
 Recorded on 2026-08-07 for M4 of
 `PC98BE-NOCT-IMPLEMENTATION-PLAN.md`. This milestone links the JIT-disabled
@@ -72,12 +72,14 @@ zero after every invocation.
 
 ## 4. Deferred floating point
 
-M4 does not claim float support. The 34 compiler/math symbols identified in
-M3 are resolved by explicit i386 assembly guards that all enter a fatal
+At the recorded M4 revision, M4 did not claim float support. The compiler/math
+symbols identified in M3 were resolved by explicit i386 assembly guards that
+all entered a fatal
 `floating point requires M5 soft-float` handler. This makes an accidental
 float path visible and prevents a silent host-libm or x87 dependency. The
 embedded M4 program and both lifecycle error tests are integer/string only.
-M5 replaces these guards with the reviewed soft-float implementation.
+The later M5 working tree replaces these guards with real software floating
+point; this section records the historical M4 gate rather than current code.
 
 ## 5. Host verification
 

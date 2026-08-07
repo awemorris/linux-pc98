@@ -16,7 +16,13 @@
 #define SCRIPT_ARENA_GUARD 0x00010000U
 
 static const char embedded_source[] =
-	"func main() { Console.write(\"Noct M4 main returned.\"); }";
+	"func main() { "
+	"Console.write(\"Noct M5 float: \" + (123.0f / 321.0f)); "
+	"Console.write(\" double: \" + (123.0lf / 321.0lf)); "
+	"Console.write(\" sqrt: \" + Math.sqrt(9.0f)); "
+	"Console.write(\" sin: \" + Math.sin(0.5f)); "
+	"Console.write(\" cos: \" + Math.cos(0.5f)); "
+	"Console.write(\" tan: \" + Math.tan(0.5f)); }";
 
 static void
 console_string(const char *string)
@@ -69,12 +75,6 @@ boot98_libc_panic(const char *message)
 	boot98_console_update_cursor();
 	for (;;)
 		__asm__ volatile ("cli; hlt");
-}
-
-__attribute__((noreturn)) void
-boot98_noct_float_unavailable(void)
-{
-	boot98_libc_panic("floating point requires M5 soft-float");
 }
 
 static void
@@ -135,20 +135,20 @@ boot98_noct_run_embedded(unsigned repeat_count)
 	for (iteration = 0; iteration < repeat_count; iteration++) {
 		if (!boot98_noct_run("<embedded>", embedded_source, &options,
 				     &result)) {
-			console_string("Noct M4 failed: ");
+			console_string("Noct M5 failed: ");
 			console_string(boot98_noct_status_string(result.status));
 			console_string("\n");
 			boot98_console_update_cursor();
 			return 0;
 		}
 		if (result.current_after_reset != 0) {
-			console_string("Noct M4 cleanup failed\n");
+			console_string("Noct M5 cleanup failed\n");
 			boot98_console_update_cursor();
 			return 0;
 		}
 		console_string("\n");
 	}
-	console_string("Noct M4 PASS: runs=");
+	console_string("Noct M5 PASS: runs=");
 	console_decimal(repeat_count);
 	console_string(" peak=");
 	console_decimal(result.heap_peak);

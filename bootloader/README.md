@@ -19,11 +19,13 @@ The review record for the bounded heap and integer-only freestanding libc is
 in [`PC98BE-NOCT-M3-LIBC.md`](PC98BE-NOCT-M3-LIBC.md).
 The review record for the linked, JIT-disabled interpreter lifecycle is in
 [`PC98BE-NOCT-M4-LIFECYCLE.md`](PC98BE-NOCT-M4-LIFECYCLE.md).
+The review record for the GCC/musl software floating-point runtime is in
+[`PC98BE-NOCT-M5-SOFTFLOAT.md`](PC98BE-NOCT-M5-SOFTFLOAT.md).
 
-During M4 development, `noct-test [1..100]` runs a built-in constant Noct
-program from the BOOT.SYS shell. It exists to verify VM creation, the minimal
-`Console.write` Native API, normal return, and complete arena reset before
-file-backed `.NCT` execution is introduced in M7.
+`noct-test [1..100]` runs a built-in constant Noct program from the BOOT.SYS
+shell. It verifies VM creation, software float/double arithmetic and Math
+intrinsics, the minimal `Console.write` Native API, normal return, and complete
+arena reset before file-backed `.NCT` execution is introduced in M7.
 
 ## Disk layout
 

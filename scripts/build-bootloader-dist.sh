@@ -40,12 +40,19 @@ install -m 0644 "$repo/bootloader/BOOT.SYS" "$stage/BOOT.SYS"
 install -m 0644 "$repo/releases/boot98.cfg" "$stage/BOOT.CFG"
 install -m 0644 "$repo/bootloader/README.md" "$stage/README.md"
 install -m 0644 "$repo/bootloader/dos/README.md" "$stage/DOS-README.md"
+install -m 0644 "$repo/toolchain/gcc/COPYING.LIB" \
+	"$stage/GCC-SOFT-FP-LICENSE.txt"
+install -m 0644 "$repo/toolchain/musl/COPYRIGHT" \
+	"$stage/MUSL-COPYRIGHT.txt"
+install -m 0644 "$repo/third_party/noct/LICENSE" \
+	"$stage/NOCT-LICENSE.txt"
 
 (
 	cd "$stage"
 	zip -X -9 -q "$output.part.$$" \
-		BOOT.CFG BOOT.SYS DOS-README.md INST.EXE IO.SYS \
-		IPL-LBA0.IMG IPL-LBA2.IMG IPL-PART.IMG LINUX98.EXE README.md
+		BOOT.CFG BOOT.SYS DOS-README.md GCC-SOFT-FP-LICENSE.txt \
+		INST.EXE IO.SYS IPL-LBA0.IMG IPL-LBA2.IMG IPL-PART.IMG \
+		LINUX98.EXE MUSL-COPYRIGHT.txt NOCT-LICENSE.txt README.md
 )
 unzip -tq "$output.part.$$"
 unzip -p "$output.part.$$" INST.EXE | cmp -s - "$repo/bootloader/dos/inst.exe"

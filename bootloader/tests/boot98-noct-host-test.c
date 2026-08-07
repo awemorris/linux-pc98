@@ -41,7 +41,7 @@ capture(void *context, const char *bytes, size_t length)
 
 static int
 run_case(const char *source, enum boot98_noct_status expected,
-	 int expect_output)
+	 const char *expected_output)
 {
 	struct boot98_noct_options options;
 	struct boot98_noct_result result;
@@ -61,9 +61,9 @@ run_case(const char *source, enum boot98_noct_status expected,
 	if (result.current_after_reset != 0 || boot98_heap_current() != 0 ||
 	    result.heap_errors != 0 || !boot98_heap_validate())
 		return 20;
-	if (expect_output && strcmp(output, "M4 ok") != 0)
+	if (expected_output != NULL && strcmp(output, expected_output) != 0)
 		return 30;
-	if (!expect_output && output_length == 0)
+	if (expected_output == NULL && output_length == 0)
 		return 31;
 	return 0;
 }
@@ -76,19 +76,32 @@ main(void)
 	static const char syntax_error[] = "func main( {";
 	static const char runtime_error[] =
 		"func main() { Console.write(1); }";
+	static const char float_script[] =
+		"func main() { "
+		"Console.write(\"\" + (123.0f / 321.0f)); "
+		"Console.write(\"|\" + (123.0lf / 321.0lf)); "
+		"Console.write(\"|\" + Math.sqrt(9.0f)); "
+		"Console.write(\"|\" + Math.sin(0.5f)); "
+		"Console.write(\"|\" + Math.cos(0.5f)); "
+		"Console.write(\"|\" + Math.tan(0.5f)); }";
+	static const char float_output[] =
+		"0.3831776|0.383177570093458|3|0.4794255|0.8775826|0.5463025";
 	unsigned iteration;
 	int result;
 
 	for (iteration = 0; iteration < 100U; iteration++) {
-		result = run_case(good, BOOT98_NOCT_OK, 1);
+		result = run_case(good, BOOT98_NOCT_OK, "M4 ok");
 		if (result != 0)
 			return result;
 	}
-	result = run_case(syntax_error, BOOT98_NOCT_SOURCE_ERROR, 0);
+	result = run_case(syntax_error, BOOT98_NOCT_SOURCE_ERROR, NULL);
 	if (result != 0)
 		return 40 + result;
-	result = run_case(runtime_error, BOOT98_NOCT_RUNTIME_ERROR, 0);
+	result = run_case(runtime_error, BOOT98_NOCT_RUNTIME_ERROR, NULL);
 	if (result != 0)
 		return 80 + result;
+	result = run_case(float_script, BOOT98_NOCT_OK, float_output);
+	if (result != 0)
+		return 120 + result;
 	return 0;
 }

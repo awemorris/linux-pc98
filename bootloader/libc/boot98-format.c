@@ -17,6 +17,13 @@ struct format_output {
 	size_t length;
 };
 
+#define FLOAT_DIGITS_MAX 17
+
+union double_shape {
+	double value;
+	uint64_t bits;
+};
+
 static void
 emit_character(struct format_output *output, char character)
 {
@@ -37,6 +44,266 @@ emit_bytes(struct format_output *output, const char *text, size_t length)
 {
 	while (length-- != 0)
 		emit_character(output, *text++);
+}
+
+static void
+append_character(char *buffer, size_t capacity, size_t *length, char character)
+{
+	if (*length < capacity)
+		buffer[*length] = character;
+	(*length)++;
+}
+
+static void
+append_exponent(char *buffer, size_t capacity, size_t *length, int exponent,
+	int upper)
+{
+	char reverse[12];
+	unsigned int magnitude;
+	size_t digits = 0;
+
+	append_character(buffer, capacity, length, upper ? 'E' : 'e');
+	append_character(buffer, capacity, length, exponent < 0 ? '-' : '+');
+	magnitude = exponent < 0 ? (unsigned int)(-exponent) :
+		(unsigned int)exponent;
+	do {
+		reverse[digits++] = (char)('0' + magnitude % 10U);
+		magnitude /= 10U;
+	} while (magnitude != 0);
+	while (digits < 2U)
+		reverse[digits++] = '0';
+	while (digits != 0)
+		append_character(buffer, capacity, length, reverse[--digits]);
+}
+
+static int
+double_parts(double value, int *negative, uint64_t *fraction)
+{
+	union double_shape shape = { value };
+	unsigned int exponent = (unsigned int)((shape.bits >> 52) & 0x7ffU);
+
+	*negative = (int)(shape.bits >> 63);
+	*fraction = shape.bits & 0x000fffffffffffffULL;
+	return (int)exponent;
+}
+
+static int
+decimal_digits(double value, char *digits, int count)
+{
+	int exponent = 0;
+	int index;
+
+	if (value == 0.0) {
+		for (index = 0; index <= count; index++)
+			digits[index] = 0;
+		return 0;
+	}
+	while (value >= 10.0) {
+		value /= 10.0;
+		exponent++;
+	}
+	while (value < 1.0) {
+		value *= 10.0;
+		exponent--;
+	}
+	for (index = 0; index <= count; index++) {
+		int digit = (int)value;
+
+		if (digit < 0)
+			digit = 0;
+		if (digit > 9)
+			digit = 9;
+		digits[index] = (char)digit;
+		value = (value - (double)digit) * 10.0;
+	}
+	if (digits[count] >= 5) {
+		index = count - 1;
+		while (index >= 0 && digits[index] == 9)
+			digits[index--] = 0;
+		if (index >= 0)
+			digits[index]++;
+		else {
+			digits[0] = 1;
+			exponent++;
+		}
+	}
+	return exponent;
+}
+
+static size_t
+format_general(char *buffer, size_t capacity, double value, int precision,
+	int upper, int alternate)
+{
+	char digits[FLOAT_DIGITS_MAX + 1];
+	size_t length = 0;
+	int exponent;
+	int digit_count;
+	int index;
+	int scientific;
+
+	if (precision < 0)
+		precision = 6;
+	if (precision == 0)
+		precision = 1;
+	if (precision > FLOAT_DIGITS_MAX)
+		precision = FLOAT_DIGITS_MAX;
+	exponent = decimal_digits(value, digits, precision);
+	digit_count = precision;
+	if (!alternate)
+		while (digit_count > 1 && digits[digit_count - 1] == 0)
+			digit_count--;
+	scientific = exponent < -4 || exponent >= precision;
+	if (scientific) {
+		append_character(buffer, capacity, &length, (char)('0' + digits[0]));
+		if (digit_count > 1 || alternate)
+			append_character(buffer, capacity, &length, '.');
+		for (index = 1; index < digit_count; index++)
+			append_character(buffer, capacity, &length,
+				(char)('0' + digits[index]));
+		append_exponent(buffer, capacity, &length, exponent, upper);
+	} else if (exponent >= 0) {
+		for (index = 0; index <= exponent; index++)
+			append_character(buffer, capacity, &length,
+				index < digit_count ? (char)('0' + digits[index]) : '0');
+		if (digit_count > exponent + 1 || alternate)
+			append_character(buffer, capacity, &length, '.');
+		for (index = exponent + 1; index < digit_count; index++)
+			append_character(buffer, capacity, &length,
+				(char)('0' + digits[index]));
+	} else {
+		append_character(buffer, capacity, &length, '0');
+		append_character(buffer, capacity, &length, '.');
+		for (index = -1; index > exponent; index--)
+			append_character(buffer, capacity, &length, '0');
+		for (index = 0; index < digit_count; index++)
+			append_character(buffer, capacity, &length,
+				(char)('0' + digits[index]));
+	}
+	return length;
+}
+
+static size_t
+format_exponential(char *buffer, size_t capacity, double value, int precision,
+	int upper, int alternate)
+{
+	char digits[FLOAT_DIGITS_MAX + 1];
+	size_t length = 0;
+	int significant;
+	int exponent;
+	int index;
+
+	if (precision < 0)
+		precision = 6;
+	if (precision >= FLOAT_DIGITS_MAX)
+		precision = FLOAT_DIGITS_MAX - 1;
+	significant = precision + 1;
+	exponent = decimal_digits(value, digits, significant);
+	append_character(buffer, capacity, &length, (char)('0' + digits[0]));
+	if (precision != 0 || alternate)
+		append_character(buffer, capacity, &length, '.');
+	for (index = 1; index < significant; index++)
+		append_character(buffer, capacity, &length,
+			(char)('0' + digits[index]));
+	append_exponent(buffer, capacity, &length, exponent, upper);
+	return length;
+}
+
+static size_t
+format_fixed(char *buffer, size_t capacity, double value, int precision,
+	int alternate)
+{
+	char digits[FLOAT_DIGITS_MAX + 1];
+	size_t length = 0;
+	int exponent;
+	int significant;
+	int index;
+
+	if (precision < 0)
+		precision = 6;
+	if (precision > FLOAT_DIGITS_MAX)
+		precision = FLOAT_DIGITS_MAX;
+	significant = exponent = 0;
+	if (value != 0.0) {
+		double normalized = value;
+
+		while (normalized >= 10.0) {
+			normalized /= 10.0;
+			exponent++;
+		}
+		while (normalized < 1.0) {
+			normalized *= 10.0;
+			exponent--;
+		}
+	}
+	significant = exponent + precision + 1;
+	if (significant < 1)
+		significant = 1;
+	if (significant > FLOAT_DIGITS_MAX)
+		significant = FLOAT_DIGITS_MAX;
+	exponent = decimal_digits(value, digits, significant);
+	if (exponent >= 0) {
+		for (index = 0; index <= exponent; index++)
+			append_character(buffer, capacity, &length,
+				index < significant ? (char)('0' + digits[index]) : '0');
+	} else {
+		append_character(buffer, capacity, &length, '0');
+	}
+	if (precision != 0 || alternate)
+		append_character(buffer, capacity, &length, '.');
+	for (index = 1; index <= precision; index++) {
+		int digit_index = exponent + index;
+		char character = digit_index < 0 || digit_index >= significant ?
+			'0' : (char)('0' + digits[digit_index]);
+
+		append_character(buffer, capacity, &length, character);
+	}
+	return length;
+}
+
+static void
+emit_float(struct format_output *output, double value, char conversion,
+	int alternate, int left, int plus, int space, int zero, int width,
+	int precision)
+{
+	char text[384];
+	size_t length = 0;
+	uint64_t fraction;
+	int negative;
+	int exponent = double_parts(value, &negative, &fraction);
+	int upper = conversion == 'F' || conversion == 'E' || conversion == 'G';
+	char prefix = negative ? '-' : (plus ? '+' : (space ? ' ' : '\0'));
+	size_t total;
+
+	if (exponent == 0x7ff) {
+		const char *special = fraction != 0 ? (upper ? "NAN" : "nan") :
+			(upper ? "INF" : "inf");
+
+		while (*special != '\0')
+			append_character(text, sizeof(text), &length, *special++);
+	} else {
+		union double_shape magnitude = { value };
+
+		magnitude.bits &= 0x7fffffffffffffffULL;
+		if (conversion == 'g' || conversion == 'G')
+			length = format_general(text, sizeof(text), magnitude.value,
+				precision, upper, alternate);
+		else if (conversion == 'e' || conversion == 'E')
+			length = format_exponential(text, sizeof(text), magnitude.value,
+				precision, upper, alternate);
+		else
+			length = format_fixed(text, sizeof(text), magnitude.value,
+				precision, alternate);
+	}
+	total = length + (prefix != '\0');
+	if (!left && !zero && width > 0 && (size_t)width > total)
+		emit_repeat(output, ' ', (size_t)width - total);
+	if (prefix != '\0')
+		emit_character(output, prefix);
+	if (!left && zero && width > 0 && (size_t)width > total)
+		emit_repeat(output, '0', (size_t)width - total);
+	emit_bytes(output, text, length < sizeof(text) ? length : sizeof(text));
+	if (left && width > 0 && (size_t)width > total)
+		emit_repeat(output, ' ', (size_t)width - total);
 }
 
 static size_t
@@ -228,8 +495,10 @@ vsnprintf(char *buffer, size_t size, const char *format, va_list arguments)
 		} else if (conversion == 'f' || conversion == 'F' ||
 			   conversion == 'e' || conversion == 'E' ||
 			   conversion == 'g' || conversion == 'G') {
-			(void)va_arg(arguments, double);
-			emit_bytes(&output, "<soft-float-pending>", 20);
+			double value = va_arg(arguments, double);
+
+			emit_float(&output, value, conversion, alternate, left, plus,
+				space, zero, width, precision);
 		} else if (conversion == '\0') {
 			break;
 		} else {

@@ -1054,7 +1054,7 @@ soft-float/math symbols.
 
 ### M4 — Minimal interpreter lifecycle
 
-Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+Status: **COMPLETE — REVIEWED AND COMMITTED 2026-08-07**. See
 `PC98BE-NOCT-M4-LIFECYCLE.md` for lifecycle, size, and QEMU evidence.
 
 1. Link Noct core without standard APIs and with JIT disabled.
@@ -1067,6 +1067,10 @@ Acceptance: `main()` and a deliberate syntax/runtime error both return to a
 usable shell; memory current count returns to baseline after every run.
 
 ### M5 — Soft-float completeness
+
+Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+`PC98BE-NOCT-M5-SOFTFLOAT.md` for source provenance, numerical vectors,
+opcode audit, size, and 6 MiB QEMU evidence.
 
 Implement Section 7 and the float formatting/conversion portion of libc.
 Enable Noct float/double syntax and intrinsics in the interpreter.

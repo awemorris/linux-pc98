@@ -113,6 +113,9 @@ rm -f -- \
 ensure_rootfs busybox-i386 "$busybox_cache" "$busybox_root" bin/busybox
 ensure_debian_rootfs "$debian_root" "$debian_cache"
 
+echo "Verifying the Noct runtime and i386 software floating point"
+"$repo/build.sh" noct verify
+
 echo "Building i386 BusyBox IDE and SCSI images"
 SKIP_ROOTFS_BUILD=1 SKIP_KERNEL_BUILD=0 JOBS="$jobs" \
 	"$repo/build.sh" release-image busybox-i386-ide --jobs "$jobs"

@@ -5,10 +5,12 @@ loaders use PC-98 BIOS disk services; the FAT16-hosted 32-bit program provides
 the menu, interactive shell, and Linux ELF loader.  The PC/AT real-mode setup
 code is not executed.
 
-The approved implementation sequence for the next BOOT98 refactoring is in
-[`BOOT98-REFACTOR-PLAN.md`](BOOT98-REFACTOR-PLAN.md).  It is intentionally
-more prescriptive than the architectural design notes so that implementation
-can be delegated commit by commit without reopening settled decisions.
+The approved implementation sequence for extending `BOOT.SYS` into the
+Noct-powered PC-98 Bootstrap Environment is in
+[`PC98BE-NOCT-IMPLEMENTATION-PLAN.md`](PC98BE-NOCT-IMPLEMENTATION-PLAN.md).
+It is intentionally prescriptive so implementation can be delegated one
+reviewable milestone at a time.  The baseline recorded before source changes
+is in [`PC98BE-NOCT-M0-BASELINE.md`](PC98BE-NOCT-M0-BASELINE.md).
 
 ## Disk layout
 

@@ -423,6 +423,35 @@ capture_output(void *context, const char *bytes, size_t length)
 	return length;
 }
 
+struct repl_input {
+	const char *const *lines;
+	size_t line_count;
+	size_t line_index;
+	int continuation[16];
+	size_t call_count;
+};
+
+static enum boot98_noct_repl_input_result
+read_repl_input(void *context, int continuation, char *line, size_t capacity)
+{
+	struct repl_input *input = context;
+	const char *source;
+	size_t length;
+
+	if (input->call_count <
+	    sizeof(input->continuation) / sizeof(input->continuation[0]))
+		input->continuation[input->call_count] = continuation;
+	input->call_count++;
+	if (input->line_index == input->line_count)
+		return BOOT98_NOCT_REPL_INPUT_EXIT;
+	source = input->lines[input->line_index++];
+	length = strlen(source);
+	if (length >= capacity)
+		return BOOT98_NOCT_REPL_INPUT_ERROR;
+	memcpy(line, source, length + 1U);
+	return BOOT98_NOCT_REPL_INPUT_LINE;
+}
+
 static void
 capture_jit(void *context, const void *code, size_t length)
 {
@@ -505,6 +534,72 @@ run_case(const char *source, int jit_enable,
 {
 	return run_case_args(source, 0, NULL, jit_enable, expected, 0,
 			     expected_output, returned_result);
+}
+
+static int
+run_repl_case(int jit_enable)
+{
+	static const char *const lines[] = {
+		"func keep()",
+		"{",
+		"return \"M15_FUNCTION\";",
+		"}",
+		"Console.print(keep())",
+		"var = 1",
+		"Console.print(\"M15_RECOVERED\")",
+	};
+	static const int expected_continuation[] = {
+		0, 1, 1, 1, 0, 0, 0, 0,
+	};
+	struct boot98_noct_options options;
+	struct boot98_noct_result result;
+	struct repl_input input;
+	size_t index;
+	int success;
+
+	memset(&input, 0, sizeof(input));
+	input.lines = lines;
+	input.line_count = sizeof(lines) / sizeof(lines[0]);
+	output_length = 0;
+	output[0] = '\0';
+	jit_capture_length = 0;
+	options.arena = arena;
+	options.arena_size = sizeof(arena);
+	options.fail_after = BOOT98_NOCT_NO_FAILURE;
+	options.jit_enable = jit_enable;
+	options.jit_threshold = 1;
+	options.write = capture_output;
+	options.write_context = NULL;
+	options.observe_jit_code = capture_jit;
+	options.jit_context = NULL;
+	options.services = &mock_services;
+	options.filesystem = test_filesystem;
+	success = boot98_noct_repl(&options, read_repl_input, &input, &result);
+	if (!success || result.status != BOOT98_NOCT_OK)
+		return 1;
+	if (input.line_index != input.line_count ||
+	    input.call_count != sizeof(expected_continuation) /
+				sizeof(expected_continuation[0]))
+		return 2;
+	for (index = 0; index < input.call_count; index++)
+		if (input.continuation[index] != expected_continuation[index])
+			return 3;
+	if (strstr(output, "M15_FUNCTION\n") == NULL ||
+	    strstr(output, "Noct REPL error:") == NULL ||
+	    strstr(output, "M15_RECOVERED\n") == NULL)
+		return 4;
+	if (result.current_after_reset != 0 || boot98_heap_current() != 0 ||
+	    result.heap_errors != 0 || !boot98_heap_validate())
+		return 5;
+	if (jit_enable) {
+		if (result.jit_code_size != BOOT98_NOCT_JIT_CODE_MAX ||
+		    !result.jit_region_released ||
+		    jit_capture_length != BOOT98_NOCT_JIT_CODE_MAX)
+			return 6;
+	} else if (result.jit_code_size != 0 || result.jit_region_released) {
+		return 7;
+	}
+	return 0;
 }
 
 int
@@ -619,6 +714,14 @@ main(int argc, char **argv)
 			  NULL, &result);
 	if (status != 0)
 		return 180 + status;
+	status = run_repl_case(0);
+	if (status != 0)
+		return 185 + status;
+	for (iteration = 0; iteration < 20U; iteration++) {
+		status = run_repl_case(1);
+		if (status != 0)
+			return 190 + status;
+	}
 	if (boot98_key_normalize_bios_ax(0x1c0d) != BOOT98_KEY_ENTER ||
 	    boot98_key_normalize_bios_ax(0x3b00) != BOOT98_KEY_LEFT ||
 	    boot98_key_normalize_bios_ax(0x3900) != BOOT98_KEY_DELETE ||

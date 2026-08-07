@@ -1305,14 +1305,19 @@ name cases are deterministic, and existing BOOT.CFG files remain compatible.
 
 ### M15 — Boots REPL integration
 
+Status: **IMPLEMENTED AND VERIFIED**.
+
 1. Keep `noct FILE.NCT [args...]` unchanged and make argument-free `noct`
    enter the interactive REPL.
-2. Create one VM on entry, register the same safe NAPI and environment bridge
-   as file scripts, and destroy/reset it on every exit path.
+2. Create one VM on entry, register the same safe NAPI as file scripts, and
+   destroy/reset it on every exit path. Register the M14 environment bridge
+   through this same path after M14 is implemented.
 3. Use the Boots line editor and visible cursor. ASCII Ctrl-C (`0x03`) exits
    to a usable shell and restores console state.
-4. Preserve declarations and variables between successful REPL submissions;
-   syntax/runtime errors report and continue unless VM integrity is lost.
+4. Preserve top-level function declarations between successful REPL
+   submissions. Ordinary `var` declarations remain evaluator-local by Noct
+   language design; use M14 environment variables for persistent values.
+   Syntax/runtime errors report and continue unless VM integrity is lost.
 
 Acceptance: repeated enter/evaluate/error/Ctrl-C cycles return arena use to
 baseline, multiline input works on QEMU `-cpu 386`, and file-script execution
@@ -1333,12 +1338,23 @@ and requires no editor-specific native helper.
 
 ### M17 — TINY and 5 MiB optimization
 
-Measure SMALL peaks, add upstream `NOCT_MEMORY_TINY`, reduce buffers and JIT
-cap based on data, then run the full TINY corpus.
+1. First make the complete Boots + Noct path work with 5 MiB of installed RAM;
+   this is the non-negotiable minimum profile.
+2. Measure SMALL peaks, add upstream `NOCT_MEMORY_TINY`, and reduce buffers,
+   GC working sets, and JIT capacity based on data.
+3. Detect installed memory once and select a runtime profile for 5, 8, 16,
+   32, 64, or more than 64 MiB. Keep one code path and vary bounded arena,
+   GC, source-buffer, and JIT limits rather than building incompatible Boots
+   binaries.
+4. Clamp safely to the next smaller profile when the detected usable region
+   is fragmented or reserved; never let profile selection overlap a loaded
+   kernel or Boots resident memory.
+5. Run the full TINY/SMALL corpus and lifecycle tests at every boundary.
 
-Acceptance: the required 5 MiB QEMU case passes or the project records a
-measured higher minimum without hiding the failure. SMALL remains available
-for 6 MiB and larger machines.
+Acceptance: the required 5 MiB QEMU case passes, every boundary selects the
+documented profile, larger machines receive larger useful Noct/JIT arenas,
+and all exit paths return arena use to baseline. Do not silently raise the
+5 MiB minimum.
 
 ### M18 — Boots naming and zlib license conversion
 

@@ -15,5 +15,8 @@ int boot98_noct_run_file(struct boot98_filesystem *filesystem,
 			 const char *path, int argc, char *const argv[],
 			 boot98_noct_key_fn key_read,
 			 boot98_noct_key_fn key_poll, void *key_context);
+int boot98_noct_run_repl(struct boot98_filesystem *filesystem,
+			 boot98_noct_key_fn key_read,
+			 boot98_noct_key_fn key_poll, void *key_context);
 
 #endif

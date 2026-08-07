@@ -10,6 +10,7 @@
 #include "libc/boot98-stdio-fs.h"
 
 #include <noct/noct.h>
+#include <noct/repl.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -261,6 +262,149 @@ boot98_noct_run(const char *source_name, const char *source,
 				    result);
 }
 
+int
+boot98_noct_repl(const struct boot98_noct_options *options,
+		 boot98_noct_repl_read_fn read_line, void *read_context,
+		 struct boot98_noct_result *result)
+{
+	NoctConfig config;
+	NoctVM *vm = NULL;
+	NoctEnv *env = NULL;
+	NoctReplSession *session = NULL;
+	struct jit_observation jit;
+	enum boot98_noct_status status = BOOT98_NOCT_INVALID_ARGUMENT;
+	char line[BOOT98_NOCT_REPL_LINE_MAX];
+	int vm_created = 0;
+	int continuation = 0;
+	size_t peak = 0;
+	size_t before_reset = 0;
+	size_t after_reset = 0;
+	size_t errors = 0;
+
+	memset(&jit, 0, sizeof(jit));
+	if (result != NULL)
+		memset(result, 0, sizeof(*result));
+	if (options == NULL || options->arena == NULL ||
+	    options->arena_size < 4096U || options->write == NULL ||
+	    options->jit_threshold < 0 || read_line == NULL)
+		goto finish_without_heap;
+	if (lifecycle_active) {
+		status = BOOT98_NOCT_BUSY;
+		goto finish_without_heap;
+	}
+
+	lifecycle_active = 1;
+	active_console.write = options->write;
+	active_console.context = options->write_context;
+	boot98_heap_init(options->arena, options->arena_size);
+	boot98_stdio_set_filesystem(options->filesystem);
+	boot98_heap_set_observer(observe_heap, &jit);
+	if (options->fail_after != BOOT98_NOCT_NO_FAILURE)
+		boot98_heap_set_failure_after(options->fail_after);
+
+	noct_set_default_config(&config);
+	config.jit_enable = options->jit_enable != 0;
+	config.jit_threshold = options->jit_threshold;
+	if (!noct_create_vm(&vm, &env, &config)) {
+		status = BOOT98_NOCT_VM_ERROR;
+		emit_string("Noct: unable to create VM\n");
+		goto cleanup;
+	}
+	vm_created = 1;
+	if (!boot98_noct_napi_register(env, options)) {
+		status = BOOT98_NOCT_API_ERROR;
+		emit_noct_error(env, "Noct API error");
+		goto cleanup;
+	}
+	if (!noct_register_api_file(env)) {
+		status = BOOT98_NOCT_API_ERROR;
+		emit_noct_error(env, "Noct File API error");
+		goto cleanup;
+	}
+	session = noct_repl_create(env, BOOT98_NOCT_REPL_SOURCE_MAX);
+	if (session == NULL) {
+		status = BOOT98_NOCT_VM_ERROR;
+		emit_noct_error(env, "Noct REPL error");
+		goto cleanup;
+	}
+
+	for (;;) {
+		enum boot98_noct_repl_input_result input_result;
+		enum NoctReplResult repl_result;
+
+		line[0] = '\0';
+		input_result = read_line(read_context, continuation, line,
+					 sizeof(line));
+		line[sizeof(line) - 1U] = '\0';
+		if (input_result == BOOT98_NOCT_REPL_INPUT_EXIT) {
+			(void)noct_repl_submit(session, NULL);
+			status = BOOT98_NOCT_OK;
+			break;
+		}
+		if (input_result != BOOT98_NOCT_REPL_INPUT_LINE) {
+			status = BOOT98_NOCT_INPUT_ERROR;
+			break;
+		}
+
+		repl_result = noct_repl_submit(session, line);
+		switch (repl_result) {
+		case NOCT_REPL_READY:
+		case NOCT_REPL_EXECUTED:
+			continuation = 0;
+			break;
+		case NOCT_REPL_NEED_MORE:
+			continuation = 1;
+			break;
+		case NOCT_REPL_ERROR:
+			emit_noct_error(env, "Noct REPL error");
+			continuation = 0;
+			break;
+		case NOCT_REPL_EXIT:
+			status = BOOT98_NOCT_OK;
+			goto cleanup;
+		default:
+			status = BOOT98_NOCT_VM_ERROR;
+			goto cleanup;
+		}
+	}
+
+cleanup:
+	noct_repl_destroy(session);
+	if (jit.region != NULL && options->observe_jit_code != NULL)
+		options->observe_jit_code(options->jit_context, jit.region,
+					  jit.size);
+	if (vm_created && !noct_destroy_vm(vm) && status == BOOT98_NOCT_OK)
+		status = BOOT98_NOCT_CLEANUP_ERROR;
+	if (boot98_stdio_close_all() != 0 && status == BOOT98_NOCT_OK)
+		status = BOOT98_NOCT_CLEANUP_ERROR;
+	boot98_stdio_set_filesystem(NULL);
+	boot98_noct_napi_cleanup();
+	peak = boot98_heap_peak();
+	before_reset = boot98_heap_current();
+	errors = boot98_heap_error_count();
+	boot98_heap_set_observer(NULL, NULL);
+	boot98_heap_reset();
+	after_reset = boot98_heap_current();
+	if ((after_reset != 0 || errors != 0) && status == BOOT98_NOCT_OK)
+		status = BOOT98_NOCT_CLEANUP_ERROR;
+	active_console.write = NULL;
+	active_console.context = NULL;
+	lifecycle_active = 0;
+
+finish_without_heap:
+	if (result != NULL) {
+		result->status = status;
+		result->heap_peak = peak;
+		result->bytes_before_reset = before_reset;
+		result->current_after_reset = after_reset;
+		result->heap_errors = errors;
+		result->jit_code_size = jit.size;
+		result->jit_region_released = jit.released;
+		result->script_status = 0;
+	}
+	return status == BOOT98_NOCT_OK;
+}
+
 const char *
 boot98_noct_status_string(enum boot98_noct_status status)
 {
@@ -281,6 +425,8 @@ boot98_noct_status_string(enum boot98_noct_status status)
 		return "invalid main signature";
 	case BOOT98_NOCT_RUNTIME_ERROR:
 		return "runtime error";
+	case BOOT98_NOCT_INPUT_ERROR:
+		return "input error";
 	case BOOT98_NOCT_CLEANUP_ERROR:
 		return "cleanup error";
 	default:

@@ -41,39 +41,40 @@ func main(args) {
         Console.print("cp: source and destination are the same file");
         return 2;
     }
-    if (!FileUtil.checkFileExists(source_path)) {
-        Console.print("cp: source file not found: " + source_path);
-        return 1;
+    if (FileUtil.checkFileExists(source_path)) {
+        var total = FileUtil.getFileSize(source_path);
+        var source = File.open(source_path, "rb");
+        var destination = File.open(destination_path, "wb");
+        var copied = 0;
+
+        while (copied < total) {
+            var length = 8192;
+            if (total - copied < length)
+                length = total - copied;
+            var data = File.read(source, length);
+            var actual = Packed.size(data);
+            if (actual != length) {
+                File.close(destination);
+                File.close(source);
+                Console.print("cp: short read");
+                return 1;
+            }
+            if (File.write(destination, data, 0, actual)) {
+                copied += actual;
+            } else {
+                File.close(destination);
+                File.close(source);
+                Console.print("cp: short write");
+                return 1;
+            }
+        }
+
+        File.close(destination);
+        File.close(source);
+        Console.print("Copied " + copied + " bytes.");
+        return 0;
     }
 
-    var total = FileUtil.getFileSize(source_path);
-    var source = File.open(source_path, "rb");
-    var destination = File.open(destination_path, "wb");
-    var copied = 0;
-
-    while (copied < total) {
-        var length = 8192;
-        if (total - copied < length)
-            length = total - copied;
-        var data = File.read(source, length);
-        var actual = Packed.size(data);
-        if (actual != length) {
-            File.close(destination);
-            File.close(source);
-            Console.print("cp: short read");
-            return 1;
-        }
-        if (!File.write(destination, data, 0, actual)) {
-            File.close(destination);
-            File.close(source);
-            Console.print("cp: short write");
-            return 1;
-        }
-        copied += actual;
-    }
-
-    File.close(destination);
-    File.close(source);
-    Console.print("Copied " + copied + " bytes.");
-    return 0;
+    Console.print("cp: source file not found: " + source_path);
+    return 1;
 }

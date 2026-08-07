@@ -1092,11 +1092,13 @@ static int command(char *s)
 		return n == 2 && run_iplware(v[1]);
 	if (streq(v[0], "run"))
 		return n >= 2 && run_applet(v[1], n - 2, &v[2]);
-	if (streq(v[0], "noct"))
-		return n >= 2 && boot98_noct_run_file(&mounted_fs, v[1],
-						     n - 2, &v[2],
-						     noct_key_read,
-						     noct_key_poll, 0);
+	if (streq(v[0], "noct")) {
+		if (n == 1)
+			return boot98_noct_run_repl(&mounted_fs, noct_key_read,
+						    noct_key_poll, 0);
+		return boot98_noct_run_file(&mounted_fs, v[1], n - 2, &v[2],
+					    noct_key_read, noct_key_poll, 0);
+	}
 	if (streq(v[0], "noct-test")) {
 		int repeat;
 

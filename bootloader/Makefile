@@ -154,7 +154,7 @@ boot98-image.o: boot98-image.c boot98-image.h boot98-fs.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
 boot98-noct.o: boot98-noct.c boot98-noct.h boot98-noct-napi.h \
-	libc/boot98-heap.h
+	libc/boot98-heap.h $(NOCT_ROOT)/include/noct/repl.h
 	$(CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) -c $< -o $@
 
 boot98-noct-napi.o: boot98-noct-napi.c boot98-noct-napi.h boot98-noct.h \
@@ -315,6 +315,13 @@ noct-m11-verify: noct-m10-verify check BOOT.SYS \
 	noct-m5-final-opcode-check boot98-noct-utilities-qemu-test
 	@echo "PC98BE M11 safe utilities verification: PASS (LS.NCT and CP.NCT)"
 
+boot98-noct-repl-qemu-test: BOOT.SYS
+	$(SCRIPTS_DIR)/test-boot98-noct-repl.sh
+
+noct-m15-verify: noct-m11-verify check BOOT.SYS \
+	noct-m5-final-opcode-check boot98-noct-repl-qemu-test
+	@echo "Boots M15 REPL verification: PASS (keyboard/error/Ctrl-C on i386)"
+
 check: tests/boot98-fat-host-test tests/boot98-fat-write-host-test \
 	boot98-stdio-fs-host-test \
 	boot98-libc-host-test \
@@ -337,4 +344,5 @@ clean: noct-clean boot98-libc-clean boot98-softfloat-clean
 	noct-m8-verify boot98-bios-write-qemu-test noct-m9-verify
 
 .PHONY: boot98-noct-file-qemu-test noct-m10-verify \
-	boot98-noct-utilities-qemu-test noct-m11-verify
+	boot98-noct-utilities-qemu-test noct-m11-verify \
+	boot98-noct-repl-qemu-test noct-m15-verify

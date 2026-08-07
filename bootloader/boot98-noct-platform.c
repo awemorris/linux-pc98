@@ -65,6 +65,52 @@ console_writer(void *context, const char *bytes, size_t length)
 	return length;
 }
 
+static enum boot98_noct_repl_input_result
+repl_read_line(void *context, int continuation, char *line, size_t capacity)
+{
+	struct target_context *target = context;
+	size_t length = 0;
+
+	if (target == NULL || target->key_read == NULL || line == NULL ||
+	    capacity < 2U)
+		return BOOT98_NOCT_REPL_INPUT_ERROR;
+	console_string(continuation ? ". " : "> ");
+	boot98_console_show_cursor(1);
+	for (;;) {
+		int key = target->key_read(target->key_context);
+
+		if (key < 0)
+			return BOOT98_NOCT_REPL_INPUT_ERROR;
+		if (key > 0xff)
+			continue;
+		if (key == 0x03) {
+			console_string("^C\n");
+			line[0] = '\0';
+			boot98_console_update_cursor();
+			return BOOT98_NOCT_REPL_INPUT_EXIT;
+		}
+		if (key == '\r' || key == '\n') {
+			boot98_console_putc('\n');
+			line[length] = '\0';
+			boot98_console_update_cursor();
+			return BOOT98_NOCT_REPL_INPUT_LINE;
+		}
+		if (key == '\b' || key == 0x7f) {
+			if (length != 0) {
+				length--;
+				boot98_console_putc('\b');
+				boot98_console_update_cursor();
+			}
+			continue;
+		}
+		if (key >= 32 && key < 127 && length + 1U < capacity) {
+			line[length++] = (char)key;
+			boot98_console_putc((uint8_t)key);
+			boot98_console_update_cursor();
+		}
+	}
+}
+
 static int
 target_screen_clear(void *context)
 {
@@ -381,6 +427,56 @@ boot98_noct_run_file(struct boot98_filesystem *filesystem, const char *path,
 	} else if (result.script_status != 0) {
 		console_string("Noct: script returned nonzero status\n");
 		ok = 0;
+	}
+	boot98_console_restore_terminal(&console_state);
+	return ok;
+}
+
+int
+boot98_noct_run_repl(struct boot98_filesystem *filesystem,
+		     boot98_noct_key_fn key_read, boot98_noct_key_fn key_poll,
+		     void *key_context)
+{
+	struct boot98_noct_options options;
+	struct boot98_noct_services services;
+	struct target_context target;
+	struct boot98_console_state console_state;
+	struct boot98_noct_result result;
+	size_t arena_size;
+	int ok;
+
+	if (key_read == NULL)
+		return 0;
+	enable_high_memory();
+	target.filesystem = filesystem;
+	target.key_read = key_read;
+	target.key_poll = key_poll;
+	target.key_context = key_context;
+	make_services(&services, &target);
+	arena_size = script_arena_size();
+	if (arena_size < SCRIPT_HEAP_MIN) {
+		console_string("Noct: insufficient script arena\n");
+		boot98_console_update_cursor();
+		return 0;
+	}
+
+	options.arena = (void *)SCRIPT_ARENA_BASE;
+	options.arena_size = arena_size;
+	options.fail_after = BOOT98_NOCT_NO_FAILURE;
+	options.jit_enable = 1;
+	options.jit_threshold = 1;
+	options.write = console_writer;
+	options.write_context = NULL;
+	options.observe_jit_code = NULL;
+	options.jit_context = NULL;
+	options.services = &services;
+	options.filesystem = filesystem;
+	boot98_console_save_state(&console_state);
+	ok = boot98_noct_repl(&options, repl_read_line, &target, &result);
+	if (!ok) {
+		console_string("Noct: ");
+		console_string(boot98_noct_status_string(result.status));
+		console_string("\n");
 	}
 	boot98_console_restore_terminal(&console_state);
 	return ok;

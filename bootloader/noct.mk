@@ -31,13 +31,16 @@ NOCT_SOURCE_REL := \
 	src/core/gc.c \
 	src/core/intrinsics.c \
 	src/core/objectmodel-st.c \
+	src/repl/repl.c \
 	src/api/api-file.c
 
 NOCT_SOURCES := $(addprefix $(NOCT_ROOT)/,$(NOCT_SOURCE_REL))
 NOCT_CORE_SOURCES := $(filter $(NOCT_ROOT)/src/core/%,$(NOCT_SOURCES))
+NOCT_REPL_SOURCES := $(filter $(NOCT_ROOT)/src/repl/%,$(NOCT_SOURCES))
 NOCT_API_SOURCES := $(filter $(NOCT_ROOT)/src/api/%,$(NOCT_SOURCES))
 NOCT_OBJECTS := \
 	$(patsubst $(NOCT_ROOT)/src/core/%.c,$(NOCT_BUILD_DIR)/%.o,$(NOCT_CORE_SOURCES)) \
+	$(patsubst $(NOCT_ROOT)/src/repl/%.c,$(NOCT_BUILD_DIR)/repl-%.o,$(NOCT_REPL_SOURCES)) \
 	$(patsubst $(NOCT_ROOT)/src/api/%.c,$(NOCT_BUILD_DIR)/%.o,$(NOCT_API_SOURCES))
 NOCT_UPSTREAM_COMMIT := $(shell git -C $(NOCT_ROOT) rev-parse HEAD 2>/dev/null || echo unknown)
 
@@ -90,6 +93,11 @@ $(NOCT_BUILD_DIR)/%.o: $(NOCT_ROOT)/src/core/%.c
 		$(NOCT_WARNING_EXCEPTIONS) -c $< -o $@
 
 $(NOCT_BUILD_DIR)/api-%.o: $(NOCT_ROOT)/src/api/api-%.c
+	@mkdir -p $(NOCT_BUILD_DIR)
+	$(NOCT_CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) \
+		$(NOCT_WARNING_EXCEPTIONS) -c $< -o $@
+
+$(NOCT_BUILD_DIR)/repl-%.o: $(NOCT_ROOT)/src/repl/%.c
 	@mkdir -p $(NOCT_BUILD_DIR)
 	$(NOCT_CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) \
 		$(NOCT_WARNING_EXCEPTIONS) -c $< -o $@

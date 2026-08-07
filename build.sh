@@ -76,7 +76,7 @@ build_noct()
 			;;
 		verify)
 			"$repo/scripts/update-noct.sh" verify
-			make -C "$repo/bootloader" noct-m11-verify "$@"
+			make -C "$repo/bootloader" noct-m15-verify "$@"
 			;;
 		softfloat-test)
 			make -C "$repo/bootloader" boot98-softfloat-host-test "$@"
@@ -105,9 +105,9 @@ Commands:
   opcode-check  compile and reject post-i386 instructions
   libc-test     run heap/libc host tests, including allocation failures
   link-audit    relocatably link Noct/libc and audit undefined symbols
-  lifecycle-test run the M11 lifecycle, File, utility, and native-API host test
+  lifecycle-test run the M15 lifecycle, File, utility, native-API, and REPL host test
   softfloat-test run the M5 arithmetic/conversion/math known vectors
-  verify        verify M4-M11, static i386 opcodes, and IDE/SCSI QEMU paths
+  verify        verify M4-M15, static i386 opcodes, and QEMU REPL paths
   init          initialize the pinned Noct submodule
   update [REF]  fetch and stage a newer Noct gitlink (default: origin/main)
   status        print the submodule origin and pinned/current revisions

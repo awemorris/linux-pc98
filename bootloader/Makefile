@@ -213,16 +213,34 @@ tests/boot98-fat-host-test: tests/boot98-fat-host-test.c boot98-fs.c \
 	$(HOSTCC) -std=c11 -O2 -Wall -Wextra -Werror -I. \
 		boot98-fs.c boot98-fat.c boot98-fat16.c $< -o $@
 
+tests/boot98-fat-write-host-test: tests/boot98-fat-write-host-test.c \
+	boot98-fs.c boot98-fat.c boot98-fat16.c boot98-fs.h boot98-fat.h \
+	boot98-fat16.h
+	$(HOSTCC) -std=c11 -O2 -Wall -Wextra -Werror -I. \
+		boot98-fs.c boot98-fat.c boot98-fat16.c $< -o $@
+
+BOOT98_STDIO_FS_TEST := ../build/bootloader/tests/boot98-stdio-fs-host-test
+
+$(BOOT98_STDIO_FS_TEST): tests/boot98-stdio-fs-host-test.c boot98-fs.c \
+	boot98-fs.h $(BOOT98_LIBC_SOURCE_REL)
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(BOOT98_HOST_TEST_CFLAGS) -I. boot98-fs.c \
+		$(BOOT98_LIBC_SOURCE_REL) $< -o $@
+
+boot98-stdio-fs-host-test: $(BOOT98_STDIO_FS_TEST)
+	$(BOOT98_STDIO_FS_TEST)
+
 BOOT98_NOCT_TEST := ../build/bootloader/tests/boot98-noct-host-test
 
 $(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c \
 	boot98-noct-m6-script.h boot98-noct.o boot98-noct-napi.o \
-	$(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) $(BOOT98_SOFTFLOAT_OBJECTS)
+	boot98-fs.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
+	$(BOOT98_SOFTFLOAT_OBJECTS)
 	@mkdir -p $(dir $@)
 	$(HOSTCC) -m32 -no-pie -fno-builtin -fno-stack-protector -Wall -Wextra \
 		-Werror -I. -Ilibc/include -Ilibc -I$(NOCT_ROOT)/include \
-		tests/boot98-noct-host-test.c boot98-noct.o boot98-noct-napi.o \
-		$(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
+	tests/boot98-noct-host-test.c boot98-noct.o boot98-noct-napi.o \
+		boot98-fs.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
 		$(BOOT98_SOFTFLOAT_OBJECTS) -o $@
 
 NOCT_M6_JIT_CODE := ../build/logs/boot98-m6-jit-code.bin
@@ -296,18 +314,33 @@ noct-m9-verify: noct-m8-verify check BOOT.SYS BOOT-M9.SYS \
 	boot98-bios-write-qemu-test
 	@echo "PC98BE M9 verification: PASS (IDE/SCSI BIOS write/read/restore)"
 
-check: tests/boot98-fat-host-test boot98-libc-host-test \
+boot98-noct-file-qemu-test: BOOT.SYS
+	$(SCRIPTS_DIR)/test-boot98-noct-file.sh
+
+noct-m10-verify: noct-m9-verify check BOOT.SYS \
+	noct-m5-final-opcode-check boot98-noct-file-qemu-test
+	@echo "PC98BE M10 verification: PASS (FAT16 writer and Noct File API)"
+
+check: tests/boot98-fat-host-test tests/boot98-fat-write-host-test \
+	boot98-stdio-fs-host-test \
+	boot98-libc-host-test \
 	boot98-softfloat-host-test boot98-noct-host-test
 	./tests/boot98-fat-host-test
+	./tests/boot98-fat-write-host-test
 
 clean: noct-clean boot98-libc-clean boot98-softfloat-clean
 	rm -f *.o *.elf *.bin *.com *.BIN *.SYS tests/boot98-fat-host-test \
+		tests/boot98-fat-write-host-test \
+		$(BOOT98_STDIO_FS_TEST) \
 		$(BOOT98_NOCT_TEST) $(NOCT_M5_DISASSEMBLY) $(NOCT_M5_REJECTED) \
 		$(NOCT_M6_JIT_CODE) $(NOCT_M6_JIT_DISASSEMBLY) \
 		$(NOCT_M6_JIT_REJECTED)
 
-.PHONY: all check clean boot98-noct-host-test noct-m4-opcode-check \
+.PHONY: all check clean boot98-stdio-fs-host-test boot98-noct-host-test \
+	noct-m4-opcode-check \
 	noct-m4-verify noct-m5-final-opcode-check noct-m5-verify
 
 .PHONY: noct-m6-generated-opcode-check noct-m6-verify noct-m7-verify \
 	noct-m8-verify boot98-bios-write-qemu-test noct-m9-verify
+
+.PHONY: boot98-noct-file-qemu-test noct-m10-verify

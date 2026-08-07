@@ -17,7 +17,8 @@ BOOT98_LIBC_SOURCE_REL := \
 	libc/boot98-int64.c \
 	libc/boot98-strto.c \
 	libc/boot98-format.c \
-	libc/boot98-stdio.c
+	libc/boot98-stdio.c \
+	libc/boot98-stdio-fs.c
 
 BOOT98_LIBC_OBJECTS := $(patsubst libc/%.c,$(BOOT98_LIBC_BUILD_DIR)/%.o,\
 	$(BOOT98_LIBC_SOURCE_REL))
@@ -43,10 +44,11 @@ $(BOOT98_LIBC_BUILD_DIR)/%.o: libc/%.c
 	$(BOOT98_LIBC_CC) $(BOOT98_LIBC_CPPFLAGS) $(BOOT98_LIBC_CFLAGS) \
 		-c $< -o $@
 
-$(BOOT98_LIBC_TEST): tests/boot98-libc-host-test.c $(BOOT98_LIBC_SOURCE_REL)
+$(BOOT98_LIBC_TEST): tests/boot98-libc-host-test.c $(BOOT98_LIBC_SOURCE_REL) \
+	boot98-fs.c boot98-fs.h
 	@mkdir -p $(BOOT98_TEST_BUILD_DIR)
 	$(HOSTCC) $(BOOT98_HOST_TEST_CFLAGS) \
-		$(BOOT98_LIBC_SOURCE_REL) $< -o $@
+		boot98-fs.c $(BOOT98_LIBC_SOURCE_REL) $< -o $@
 
 boot98-libc-objects: $(BOOT98_LIBC_OBJECTS)
 

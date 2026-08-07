@@ -12,6 +12,11 @@
 /* BOOT98 keeps one filesystem mounted, so one shared physical-sector cache is
  * sufficient and avoids consuming stack or private-handle space. */
 static uint8_t sector_cache[512];
+static uint8_t bpb_cache[512];
+static struct boot98_filesystem *sector_cache_owner;
+static uint32_t sector_cache_lba;
+static int sector_cache_valid;
+static int sector_cache_dirty;
 
 _Static_assert(sizeof(struct boot98_fat_state) <=
 	       sizeof(((struct boot98_filesystem *)0)->private_data),
@@ -55,9 +60,124 @@ struct boot98_fat_file_state *boot98_fat_file_state(
 const uint8_t *boot98_fat_read_sector(struct boot98_filesystem *filesystem,
 				      uint32_t lba)
 {
-	if (!boot98_volume_read(&filesystem->volume, lba, sector_cache))
+	const uint8_t *sector;
+
+	if (boot98_fat_read_sector_result(filesystem, lba, &sector) !=
+	    BOOT98_FS_OK)
 		return 0;
-	return sector_cache;
+	return sector;
+}
+
+enum boot98_fs_result boot98_fat_flush(
+	struct boot98_filesystem *filesystem)
+{
+	enum boot98_fs_result result;
+
+	if (!sector_cache_dirty || sector_cache_owner != filesystem)
+		return BOOT98_FS_OK;
+	result = boot98_volume_write_result(&filesystem->volume,
+					    sector_cache_lba, sector_cache);
+	if (result == BOOT98_FS_OK)
+		sector_cache_dirty = 0;
+	return result;
+}
+
+void boot98_fat_invalidate(struct boot98_filesystem *filesystem)
+{
+	if (sector_cache_owner == filesystem) {
+		sector_cache_owner = 0;
+		sector_cache_valid = 0;
+		sector_cache_dirty = 0;
+	}
+}
+
+enum boot98_fs_result boot98_fat_read_sector_result(
+	struct boot98_filesystem *filesystem, uint32_t lba,
+	const uint8_t **sector)
+{
+	enum boot98_fs_result result;
+	struct boot98_fat_state *fat;
+
+	if (!filesystem || !sector)
+		return BOOT98_FS_INVALID_ARGUMENT;
+	fat = boot98_fat_state(filesystem);
+	if (lba >= fat->total_sectors)
+		return BOOT98_FS_CORRUPT;
+	if (sector_cache_owner == filesystem && sector_cache_valid &&
+	    sector_cache_lba == lba) {
+		*sector = sector_cache;
+		return BOOT98_FS_OK;
+	}
+	if (sector_cache_dirty && sector_cache_owner != 0) {
+		result = boot98_fat_flush(sector_cache_owner);
+		if (result != BOOT98_FS_OK)
+			return result;
+	}
+	sector_cache_owner = filesystem;
+	sector_cache_valid = 0;
+	sector_cache_dirty = 0;
+	result = boot98_volume_read_result(&filesystem->volume, lba,
+					  sector_cache);
+	if (result != BOOT98_FS_OK)
+		return result;
+	sector_cache_lba = lba;
+	sector_cache_valid = 1;
+	*sector = sector_cache;
+	return BOOT98_FS_OK;
+}
+
+enum boot98_fs_result boot98_fat_write_sector_result(
+	struct boot98_filesystem *filesystem, uint32_t lba, uint8_t **sector)
+{
+	const uint8_t *read_sector;
+	enum boot98_fs_result result;
+
+	if (!filesystem || !sector)
+		return BOOT98_FS_INVALID_ARGUMENT;
+	if (!filesystem->volume.write)
+		return BOOT98_FS_READ_ONLY;
+	result = boot98_fat_read_sector_result(filesystem, lba, &read_sector);
+	if (result != BOOT98_FS_OK)
+		return result;
+	*sector = (uint8_t *)read_sector;
+	return BOOT98_FS_OK;
+}
+
+enum boot98_fs_result boot98_fat_mark_sector_dirty(
+	struct boot98_filesystem *filesystem)
+{
+	if (!filesystem || !filesystem->volume.write)
+		return BOOT98_FS_READ_ONLY;
+	if (sector_cache_owner != filesystem || !sector_cache_valid)
+		return BOOT98_FS_CORRUPT;
+	sector_cache_dirty = 1;
+	return BOOT98_FS_OK;
+}
+
+enum boot98_fs_result boot98_fat_cluster_lba(
+	struct boot98_filesystem *filesystem, uint32_t cluster,
+	uint32_t sector_in_cluster, uint32_t *lba)
+{
+	struct boot98_fat_state *fat;
+	uint32_t cluster_offset;
+
+	if (!filesystem || !lba)
+		return BOOT98_FS_INVALID_ARGUMENT;
+	fat = boot98_fat_state(filesystem);
+	if (cluster < 2 || cluster >= fat->cluster_count + 2 ||
+	    sector_in_cluster >= fat->sectors_per_cluster)
+		return BOOT98_FS_CORRUPT;
+	if (cluster - 2 >
+	    (0xffffffffU - fat->data_start) / fat->sectors_per_cluster)
+		return BOOT98_FS_CORRUPT;
+	cluster_offset = fat->data_start +
+			 (cluster - 2) * fat->sectors_per_cluster;
+	if (sector_in_cluster > 0xffffffffU - cluster_offset)
+		return BOOT98_FS_CORRUPT;
+	*lba = cluster_offset + sector_in_cluster;
+	if (*lba >= fat->total_sectors)
+		return BOOT98_FS_CORRUPT;
+	return BOOT98_FS_OK;
 }
 
 static enum boot98_fs_result parse_bpb(const struct boot98_volume *volume,
@@ -68,21 +188,21 @@ static enum boot98_fs_result parse_bpb(const struct boot98_volume *volume,
 	uint16_t bytes, fat16_sectors;
 	uint8_t sectors_per_cluster;
 
-	if (!boot98_volume_read(volume, 0, sector_cache))
+	if (!boot98_volume_read(volume, 0, bpb_cache))
 		return BOOT98_FS_IO_ERROR;
-	bytes = boot98_fat_get16(sector_cache + 11);
+	bytes = boot98_fat_get16(bpb_cache + 11);
 	fat->sector_scale = bytes == 512 ? 1 : bytes == 1024 ? 2 : 0;
-	sectors_per_cluster = sector_cache[13];
-	reserved = boot98_fat_get16(sector_cache + 14);
-	fat->number_of_fats = sector_cache[16];
-	fat->root_entries = boot98_fat_get16(sector_cache + 17);
-	total = boot98_fat_get16(sector_cache + 19);
+	sectors_per_cluster = bpb_cache[13];
+	reserved = boot98_fat_get16(bpb_cache + 14);
+	fat->number_of_fats = bpb_cache[16];
+	fat->root_entries = boot98_fat_get16(bpb_cache + 17);
+	total = boot98_fat_get16(bpb_cache + 19);
 	if (!total)
-		total = boot98_fat_get32(sector_cache + 32);
-	fat16_sectors = boot98_fat_get16(sector_cache + 22);
+		total = boot98_fat_get32(bpb_cache + 32);
+	fat16_sectors = boot98_fat_get16(bpb_cache + 22);
 	fat_sectors = fat16_sectors;
 	if (!fat_sectors)
-		fat_sectors = boot98_fat_get32(sector_cache + 36);
+		fat_sectors = boot98_fat_get32(bpb_cache + 36);
 	if (!fat->sector_scale || !sectors_per_cluster || !reserved ||
 	    !fat->number_of_fats || !fat_sectors || !total)
 		return BOOT98_FS_CORRUPT;
@@ -142,6 +262,8 @@ enum boot98_fs_result boot98_fat_mount(
 	if (fat->type != required_type ||
 	    (required_type == BOOT98_FAT16 && !fat->fat16_layout))
 		return BOOT98_FS_UNSUPPORTED;
+	fat->allocation_hint = 2;
+	boot98_fat_invalidate(filesystem);
 	return BOOT98_FS_OK;
 }
 
@@ -239,22 +361,17 @@ enum boot98_fs_result boot98_fat_read_chain(
 		skip -= fat->sectors_per_cluster;
 	}
 	while (length) {
-		uint32_t lba, cluster_lba;
+		uint32_t lba;
 		uint32_t chunk = 512 - within;
 		const uint8_t *input;
+		enum boot98_fs_result result;
 
-		if (cluster - 2 >
-		    (0xffffffffU - fat->data_start) / fat->sectors_per_cluster)
-			return BOOT98_FS_CORRUPT;
-		cluster_lba = fat->data_start +
-			      (cluster - 2) * fat->sectors_per_cluster;
-		if (skip > 0xffffffffU - cluster_lba)
-			return BOOT98_FS_CORRUPT;
-		lba = cluster_lba + skip;
-		input = boot98_fat_read_sector(filesystem, lba);
-
-		if (!input)
-			return BOOT98_FS_IO_ERROR;
+		result = boot98_fat_cluster_lba(filesystem, cluster, skip, &lba);
+		if (result != BOOT98_FS_OK)
+			return result;
+		result = boot98_fat_read_sector_result(filesystem, lba, &input);
+		if (result != BOOT98_FS_OK)
+			return result;
 		if (chunk > length)
 			chunk = length;
 		copy_bytes(output, input + within, chunk);
@@ -309,11 +426,9 @@ enum boot98_fs_result boot98_fat_contiguous_lba(
 		cluster = next;
 		left -= (uint32_t)fat->sectors_per_cluster * 512;
 	}
-	if (fat_file->first_cluster - 2 >
-	    (0xffffffffU - fat->data_start) / fat->sectors_per_cluster)
+	if (boot98_fat_cluster_lba(filesystem, fat_file->first_cluster, 0,
+				   &cluster_lba) != BOOT98_FS_OK)
 		return BOOT98_FS_CORRUPT;
-	cluster_lba = fat->data_start +
-		      (fat_file->first_cluster - 2) * fat->sectors_per_cluster;
 	if (cluster_lba > 0xffffffffU - filesystem->volume.start_lba)
 		return BOOT98_FS_CORRUPT;
 	*absolute_lba = filesystem->volume.start_lba + cluster_lba;

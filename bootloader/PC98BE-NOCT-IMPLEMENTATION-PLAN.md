@@ -1118,7 +1118,7 @@ return, special keys are stable in QEMU, and Directory lists the BOOT root.
 
 ### M9 — BIOS and generic filesystem writes
 
-Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+Status: **COMPLETE — REVIEWED AND COMMITTED 2026-08-08**. See
 `PC98BE-NOCT-M9-WRITES.md` for the service-11 contract, low-memory bounce
 path, stable filesystem results, isolated test image method, size delta, and
 IDE/SCSI QEMU evidence.
@@ -1131,6 +1131,11 @@ Acceptance: a temporary sector can be written/read/restored through the BIOS
 gateway; all preexisting read and boot tests still pass.
 
 ### M10 — FAT16 writer and stdio/File API
+
+Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+`PC98BE-NOCT-M10-FILE-API.md` for the cache and metadata-ordering rules,
+stdio/File ownership contract, limitations, size delta, host tests, upstream
+Noct tests, and independent QEMU marker-file evidence.
 
 Implement Section 11.3, BE stdio, upstream-corrected `api-file.c`, and host
 filesystem tests.

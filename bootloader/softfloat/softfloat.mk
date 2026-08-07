@@ -126,11 +126,13 @@ boot98-softfloat-opcode-check: boot98-softfloat-objects
 	@echo "BOOT98 soft-float i386 opcode check: PASS"
 
 $(BOOT98_SOFTFLOAT_TEST): tests/boot98-softfloat-host-test.c \
-	$(BOOT98_LIBC_OBJECTS) $(BOOT98_SOFTFLOAT_OBJECTS)
+	$(BOOT98_LIBC_OBJECTS) $(BOOT98_SOFTFLOAT_OBJECTS) boot98-fs.c \
+	boot98-fs.h
 	@mkdir -p $(dir $@)
 	$(HOSTCC) $(BOOT98_LIBC_CPPFLAGS) $(BOOT98_SOFTFLOAT_CFLAGS) \
 		-no-pie \
-		tests/boot98-softfloat-host-test.c $(BOOT98_LIBC_OBJECTS) \
+		tests/boot98-softfloat-host-test.c boot98-fs.c \
+		$(BOOT98_LIBC_OBJECTS) \
 		$(BOOT98_SOFTFLOAT_OBJECTS) -o $@
 
 boot98-softfloat-host-test: $(BOOT98_SOFTFLOAT_TEST)

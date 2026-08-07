@@ -10,6 +10,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct boot98_filesystem;
+
 #define BOOT98_NOCT_NO_FAILURE ((size_t)-1)
 #ifndef BOOT98_NOCT_JIT_CODE_MAX
 #define BOOT98_NOCT_JIT_CODE_MAX (192U * 1024U)
@@ -43,6 +45,7 @@ struct boot98_noct_options {
 	boot98_noct_jit_code_fn observe_jit_code;
 	void *jit_context;
 	const struct boot98_noct_services *services;
+	struct boot98_filesystem *filesystem;
 };
 
 struct boot98_noct_result {

@@ -25,6 +25,7 @@ struct boot98_fat_state {
 	uint32_t total_sectors;
 	uint32_t cluster_count;
 	uint32_t fat_sectors;
+	uint32_t allocation_hint;
 	uint16_t bytes_per_sector;
 	uint16_t root_entries;
 	uint16_t sectors_per_cluster;
@@ -36,6 +37,10 @@ struct boot98_fat_state {
 
 struct boot98_fat_file_state {
 	uint32_t first_cluster;
+	uint32_t directory_lba;
+	uint16_t directory_offset;
+	uint8_t directory_dirty;
+	uint8_t reserved;
 };
 
 typedef enum boot98_fs_result (*boot98_fat_next_cluster_t)(
@@ -56,6 +61,19 @@ enum boot98_fs_result boot98_fat_mount(
 
 const uint8_t *boot98_fat_read_sector(struct boot98_filesystem *filesystem,
 				      uint32_t lba);
+enum boot98_fs_result boot98_fat_read_sector_result(
+	struct boot98_filesystem *filesystem, uint32_t lba,
+	const uint8_t **sector);
+enum boot98_fs_result boot98_fat_write_sector_result(
+	struct boot98_filesystem *filesystem, uint32_t lba, uint8_t **sector);
+enum boot98_fs_result boot98_fat_mark_sector_dirty(
+	struct boot98_filesystem *filesystem);
+enum boot98_fs_result boot98_fat_flush(
+	struct boot98_filesystem *filesystem);
+void boot98_fat_invalidate(struct boot98_filesystem *filesystem);
+enum boot98_fs_result boot98_fat_cluster_lba(
+	struct boot98_filesystem *filesystem, uint32_t cluster,
+	uint32_t sector_in_cluster, uint32_t *lba);
 uint16_t boot98_fat_get16(const uint8_t *bytes);
 uint32_t boot98_fat_get32(const uint8_t *bytes);
 

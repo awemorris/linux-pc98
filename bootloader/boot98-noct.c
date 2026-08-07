@@ -7,6 +7,7 @@
 #include "boot98-noct.h"
 #include "boot98-noct-napi.h"
 #include "libc/boot98-heap.h"
+#include "libc/boot98-stdio-fs.h"
 
 #include <noct/noct.h>
 #include <stdbool.h>
@@ -127,6 +128,7 @@ boot98_noct_run_args(const char *source_name, const char *source,
 	active_console.write = options->write;
 	active_console.context = options->write_context;
 	boot98_heap_init(options->arena, options->arena_size);
+	boot98_stdio_set_filesystem(options->filesystem);
 	boot98_heap_set_observer(observe_heap, &jit);
 	if (options->fail_after != BOOT98_NOCT_NO_FAILURE)
 		boot98_heap_set_failure_after(options->fail_after);
@@ -143,6 +145,11 @@ boot98_noct_run_args(const char *source_name, const char *source,
 	if (!boot98_noct_napi_register(env, options)) {
 		status = BOOT98_NOCT_API_ERROR;
 		emit_noct_error(env, "Noct API error");
+		goto cleanup;
+	}
+	if (!noct_register_api_file(env)) {
+		status = BOOT98_NOCT_API_ERROR;
+		emit_noct_error(env, "Noct File API error");
 		goto cleanup;
 	}
 	if (!noct_register_source(env, source_name, source)) {
@@ -215,6 +222,9 @@ cleanup:
 					  jit.size);
 	if (vm_created && !noct_destroy_vm(vm) && status == BOOT98_NOCT_OK)
 		status = BOOT98_NOCT_CLEANUP_ERROR;
+	if (boot98_stdio_close_all() != 0 && status == BOOT98_NOCT_OK)
+		status = BOOT98_NOCT_CLEANUP_ERROR;
+	boot98_stdio_set_filesystem(NULL);
 	boot98_noct_napi_cleanup();
 	peak = boot98_heap_peak();
 	before_reset = boot98_heap_current();

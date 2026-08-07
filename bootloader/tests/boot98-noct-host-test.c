@@ -7,6 +7,7 @@
 #include "boot98-noct.h"
 #include "boot98-noct-napi.h"
 #include "boot98-noct-m6-script.h"
+#include "boot98-fs.h"
 #include "boot98-heap.h"
 
 #include <stddef.h>
@@ -27,6 +28,184 @@ static unsigned char jit_capture[BOOT98_NOCT_JIT_CODE_MAX];
 static size_t jit_capture_length;
 static char output[OUTPUT_SIZE];
 static size_t output_length;
+static struct boot98_filesystem *test_filesystem;
+
+struct memory_record {
+	char name[16];
+	unsigned char data[256];
+	uint64_t size;
+	unsigned flushes;
+	int exists;
+};
+
+static struct memory_record records[2];
+
+static struct memory_record *find_record(const char *path, int create)
+{
+	unsigned index;
+
+	if (*path == '/')
+		path++;
+	for (index = 0; index < 2; index++)
+		if (records[index].exists && !strcmp(records[index].name, path))
+			return &records[index];
+	if (!create)
+		return NULL;
+	for (index = 0; index < 2; index++)
+		if (!records[index].exists) {
+			if (strlen(path) >= sizeof(records[index].name))
+				return NULL;
+			strcpy(records[index].name, path);
+			records[index].exists = 1;
+			records[index].size = 0;
+			return &records[index];
+		}
+	return NULL;
+}
+
+static enum boot98_fs_result memory_probe(const struct boot98_volume *volume)
+{
+	(void)volume;
+	return BOOT98_FS_OK;
+}
+
+static enum boot98_fs_result memory_mount(struct boot98_filesystem *filesystem)
+{
+	(void)filesystem;
+	return BOOT98_FS_OK;
+}
+
+static enum boot98_fs_result memory_create(
+	struct boot98_filesystem *filesystem, const char *path,
+	struct boot98_file *file)
+{
+	struct memory_record *record = find_record(path, 1);
+
+	(void)filesystem;
+	if (record == NULL)
+		return BOOT98_FS_NO_SPACE;
+	record->size = 0;
+	file->private_data[0] = (uint32_t)(record - records);
+	file->size = 0;
+	return BOOT98_FS_OK;
+}
+
+static enum boot98_fs_result memory_open(
+	struct boot98_filesystem *filesystem, const char *path,
+	struct boot98_file *file)
+{
+	struct memory_record *record = find_record(path, 0);
+
+	(void)filesystem;
+	if (record == NULL)
+		return BOOT98_FS_NOT_FOUND;
+	file->private_data[0] = (uint32_t)(record - records);
+	file->size = record->size;
+	return BOOT98_FS_OK;
+}
+
+static enum boot98_fs_result memory_read(
+	struct boot98_file *file, uint64_t offset, void *buffer, uint32_t length,
+	boot98_read_progress_t progress, void *progress_context)
+{
+	struct memory_record *record = &records[file->private_data[0]];
+
+	(void)progress;
+	(void)progress_context;
+	memcpy(buffer, record->data + offset, length);
+	return BOOT98_FS_OK;
+}
+
+static enum boot98_fs_result memory_write(
+	struct boot98_file *file, uint64_t offset, const void *buffer,
+	uint32_t length)
+{
+	struct memory_record *record = &records[file->private_data[0]];
+	uint64_t end = offset + length;
+
+	if (end > sizeof(record->data))
+		return BOOT98_FS_NO_SPACE;
+	if (offset > record->size)
+		memset(record->data + record->size, 0,
+		       (size_t)(offset - record->size));
+	memcpy(record->data + offset, buffer, length);
+	if (end > record->size)
+		record->size = end;
+	file->size = record->size;
+	return BOOT98_FS_OK;
+}
+
+static enum boot98_fs_result memory_truncate(struct boot98_file *file,
+					     uint64_t size)
+{
+	struct memory_record *record = &records[file->private_data[0]];
+
+	if (size > sizeof(record->data))
+		return BOOT98_FS_NO_SPACE;
+	record->size = size;
+	file->size = size;
+	return BOOT98_FS_OK;
+}
+
+static enum boot98_fs_result memory_flush(struct boot98_file *file)
+{
+	records[file->private_data[0]].flushes++;
+	return BOOT98_FS_OK;
+}
+
+static enum boot98_fs_result memory_readdir(
+	struct boot98_filesystem *filesystem, const char *path, unsigned index,
+	struct boot98_dirent *entry)
+{
+	unsigned visible = 0;
+
+	(void)filesystem;
+	if (*path && strcmp(path, "/"))
+		return BOOT98_FS_INVALID_PATH;
+	for (unsigned record = 0; record < 2; record++)
+		if (records[record].exists && visible++ == index) {
+			strcpy(entry->name, records[record].name);
+			entry->size = records[record].size;
+			return BOOT98_FS_OK;
+		}
+	return BOOT98_FS_NOT_FOUND;
+}
+
+static enum boot98_fs_result memory_stat(
+	struct boot98_filesystem *filesystem, const char *path,
+	struct boot98_dirent *entry)
+{
+	struct memory_record *record = find_record(path, 0);
+
+	(void)filesystem;
+	if (record == NULL)
+		return BOOT98_FS_NOT_FOUND;
+	strcpy(entry->name, record->name);
+	entry->size = record->size;
+	return BOOT98_FS_OK;
+}
+
+static const struct boot98_filesystem_driver memory_driver = {
+	.name = "memory",
+	.probe = memory_probe,
+	.mount = memory_mount,
+	.create = memory_create,
+	.open = memory_open,
+	.read = memory_read,
+	.write = memory_write,
+	.truncate = memory_truncate,
+	.flush = memory_flush,
+	.readdir = memory_readdir,
+	.stat = memory_stat,
+};
+
+static int volume_read(const void *context, uint32_t lba, void *buffer)
+{
+	(void)context;
+	(void)lba;
+	memset(buffer, 0, 512);
+	return 1;
+}
 
 struct mock_platform {
 	int clear_count;
@@ -235,6 +414,7 @@ run_case_args(const char *source, int argc, char *const argv[], int jit_enable,
 	options.observe_jit_code = capture_jit;
 	options.jit_context = NULL;
 	options.services = &mock_services;
+	options.filesystem = test_filesystem;
 	success = boot98_noct_run_args("noct-test.nct", source, argc, argv,
 				       &options, &result);
 	if (success != (expected == BOOT98_NOCT_OK) ||
@@ -319,9 +499,23 @@ main(int argc, char **argv)
 		"func main() { Directory.list(\"/SUB\"); }";
 	static const char missing_import[] =
 		"func main() { System.import(\"MISSING.NCT\"); }";
+	static const char file_script[] =
+		"func main() { FileUtil.writeText(\"/M10.TXT\", \"alpha\"); "
+		"var f = File.open(\"/M10.TXT\", \"r\"); File.seek(f, 2); "
+		"var p = File.tell(f); File.close(f); "
+		"Console.write(FileUtil.readText(\"/M10.TXT\")); return p; }";
+	static const char finalizer_script[] =
+		"func main() { var f = File.open(\"/FINAL.TXT\", \"w\"); "
+		"return 0; }";
 	char *script_arguments[] = { "alpha", "beta" };
 	static char interpreter_output[OUTPUT_SIZE];
 	struct boot98_noct_result result;
+	const struct boot98_filesystem_driver *drivers[] = { &memory_driver };
+	struct boot98_volume volume = {
+		.sector_size = 512,
+		.read = volume_read,
+	};
+	struct boot98_filesystem filesystem;
 	unsigned iteration;
 	int status;
 
@@ -391,7 +585,20 @@ main(int argc, char **argv)
 			  &result);
 	if (status != 0)
 		return 255 + status;
+	memset(records, 0, sizeof(records));
+	if (!boot98_fs_mount(&filesystem, &volume, drivers, 1))
+		return 258;
+	test_filesystem = &filesystem;
+	status = run_case_args(file_script, 0, NULL, 0, BOOT98_NOCT_OK, 2,
+			       "alpha", &result);
+	if (status != 0 || !records[0].exists || records[0].size != 5 ||
+	    memcmp(records[0].data, "alpha", 5) != 0 || records[0].flushes == 0)
+		return 260 + status;
+	status = run_case(finalizer_script, 0, BOOT98_NOCT_OK, "", &result);
+	if (status != 0 || !records[1].exists || records[1].flushes == 0)
+		return 300 + status;
+	test_filesystem = NULL;
 	if (!write_capture_file(argv[1]))
-		return 260;
+		return 340;
 	return 0;
 }

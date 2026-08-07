@@ -12,5 +12,8 @@ extern int boot98_errno;
 #define EIO 5
 #define ENOENT 6
 #define EINTR 7
+#define ENOSPC 8
+#define EROFS 9
+#define EOVERFLOW 10
 
 #endif

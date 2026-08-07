@@ -65,7 +65,7 @@ puts(const char *string)
 	return 0;
 }
 
-int
+__attribute__((weak)) int
 getc(FILE *stream)
 {
 	if (stream != NULL) {
@@ -76,7 +76,7 @@ getc(FILE *stream)
 	return EOF;
 }
 
-size_t
+__attribute__((weak)) size_t
 fread(void *buffer, size_t size, size_t count, FILE *stream)
 {
 	(void)buffer;
@@ -90,7 +90,7 @@ fread(void *buffer, size_t size, size_t count, FILE *stream)
 	return 0;
 }
 
-size_t
+__attribute__((weak)) size_t
 fwrite(const void *buffer, size_t size, size_t count, FILE *stream)
 {
 	size_t total;
@@ -115,6 +115,36 @@ clearerr(FILE *stream)
 		stream->error = 0;
 		stream->eof = 0;
 	}
+}
+
+int
+fprintf(FILE *stream, const char *format, ...)
+{
+	char stack_buffer[256];
+	char *buffer = stack_buffer;
+	va_list arguments;
+	int length;
+	size_t written;
+
+	va_start(arguments, format);
+	length = vsnprintf(stack_buffer, sizeof(stack_buffer), format, arguments);
+	va_end(arguments);
+	if (length < 0)
+		return EOF;
+	if ((size_t)length >= sizeof(stack_buffer)) {
+		buffer = malloc((size_t)length + 1U);
+		if (buffer == NULL) {
+			errno = ENOMEM;
+			return EOF;
+		}
+		va_start(arguments, format);
+		(void)vsnprintf(buffer, (size_t)length + 1U, format, arguments);
+		va_end(arguments);
+	}
+	written = fwrite(buffer, 1, (size_t)length, stream);
+	if (buffer != stack_buffer)
+		free(buffer);
+	return written == (size_t)length ? length : EOF;
 }
 
 int
@@ -156,7 +186,7 @@ sscanf(const char *string, const char *format, ...)
 	return result;
 }
 
-int
+__attribute__((weak)) int
 access(const char *path, int mode)
 {
 	(void)path;

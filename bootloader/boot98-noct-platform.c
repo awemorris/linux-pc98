@@ -273,6 +273,7 @@ boot98_noct_run_embedded(unsigned repeat_count)
 	options.observe_jit_code = NULL;
 	options.jit_context = NULL;
 	options.services = &services;
+	options.filesystem = NULL;
 	boot98_console_save_state(&console_state);
 	for (iteration = 0; iteration < repeat_count; iteration++) {
 		if (!boot98_noct_run("<embedded>", embedded_source, &options,
@@ -370,6 +371,7 @@ boot98_noct_run_file(struct boot98_filesystem *filesystem, const char *path,
 	options.observe_jit_code = NULL;
 	options.jit_context = NULL;
 	options.services = &services;
+	options.filesystem = filesystem;
 	boot98_console_save_state(&console_state);
 	ok = boot98_noct_run_args(path, source, argc, argv, &options, &result);
 	if (!ok) {

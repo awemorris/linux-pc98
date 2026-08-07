@@ -121,7 +121,9 @@ static void test_fat16(uint16_t logical_sector_size)
 	volume.start_lba = TEST_BASE_LBA;
 	volume.sector_size = 512;
 	volume.read = test_read;
-	volume.write = test_write;
+	/* Keep this regression focused on the legacy read-only contract.  The
+	 * writable FAT16 path has its own destructive host-side test image. */
+	volume.write = 0;
 	assert(boot98_fs_mount(&filesystem, &volume, drivers, 1));
 	assert(!strcmp(filesystem.driver->name, "fat16"));
 	assert(boot98_fs_open_result(&filesystem, "/missing.bin", &file) ==
@@ -145,7 +147,8 @@ static void test_fat16(uint16_t logical_sector_size)
 	assert(boot98_file_truncate_result(&file, 0) == BOOT98_FS_READ_ONLY);
 	assert(boot98_file_flush_result(&file) == BOOT98_FS_READ_ONLY);
 	assert(boot98_fs_stat_result(&filesystem, "/kernel.bin", &entry) ==
-	       BOOT98_FS_UNSUPPORTED);
+	       BOOT98_FS_OK);
+	assert(!strcmp(entry.name, "KERNEL.BIN") && entry.size == 5);
 	assert(boot98_file_contiguous_lba(&file, &lba));
 	assert(lba == TEST_BASE_LBA + disk.data_lba);
 }

@@ -5,28 +5,14 @@
  * Copyright (c) 2025, 2026, Awe Morris
  */
 
-/*
- * API: File.*
- */
+/* API: File.* */
 
 #include <noct/noct.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
-#include <assert.h>
-
-#if defined(NOCT_TARGET_WINDOWS)
-#include <fcntl.h>
-#elif defined(NOCT_TARGET_DOS4G)
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
-#define NEVER_COME_HERE		(0)
-
-/* Forward declaration. */
 static bool cfunc_File_open(NoctEnv *env);
 static bool cfunc_File_close(NoctEnv *env);
 static bool cfunc_File_tell(NoctEnv *env);
@@ -34,7 +20,6 @@ static bool cfunc_File_seek(NoctEnv *env);
 static bool cfunc_File_read(NoctEnv *env);
 static bool cfunc_File_write(NoctEnv *env);
 static void file_finalizer(void *native_pointer);
-
 static bool cfunc_FileUtil_checkFileExists(NoctEnv *env);
 static bool cfunc_FileUtil_getFileSize(NoctEnv *env);
 static bool cfunc_FileUtil_readText(NoctEnv *env);
@@ -42,7 +27,6 @@ static bool cfunc_FileUtil_writeText(NoctEnv *env);
 static bool cfunc_FileUtil_readForEachLine(NoctEnv *env);
 static bool cfunc_FileUtil_writeForEachLine(NoctEnv *env);
 
-/* FFI table. */
 struct ffi_item {
 	const char *global_name;
 	const char *package_name;
@@ -51,114 +35,70 @@ struct ffi_item {
 	const char *param[NOCT_ARG_MAX];
 	bool (*cfunc)(NoctEnv *env);
 };
-static struct ffi_item ffi_items[] = {
-	/* File */
-	{"File.open",			"File",		"open",			2,	{"path", "mode"},	cfunc_File_open},
-	{"File.close",			"File",		"close",		1,	{"file"},		cfunc_File_close},
-	{"File.tell",			"File",		"tell",			1,	{"file"},		cfunc_File_tell},
-	{"File.seek",			"File",		"seek",			2,	{"file", "offset"},	cfunc_File_seek},
-	{"File.read",			"File",		"read",			2,	{"file", "len"},	cfunc_File_read},
-	{"File.write",			"File",		"write",		4,	{"file", "data", "offset", "size"},	cfunc_File_write},
 
-	/* FileUtil */
-	{"FileUtil.checkFileExists",	"FileUtil",	"checkFileExists",	1,	{"path"},		cfunc_FileUtil_checkFileExists},
-	{"FileUtil.getFileSize",	"FileUtil",	"getFileSize",		1,	{"path"},		cfunc_FileUtil_getFileSize},
-	{"FileUtil.readText",		"FileUtil",	"readText",		1,	{"path"},		cfunc_FileUtil_readText},
-	{"FileUtil.writeText",		"FileUtil",	"writeText",		2,	{"path", "text"},	cfunc_FileUtil_writeText},
-	{"FileUtil.readForEachLine",	"FileUtil",	"readForEachLine",	2,	{"path", "func"},	cfunc_FileUtil_readForEachLine},
-	{"FileUtil.writeForEachLine",	"FileUtil",	"writeForEachLine",	2,	{"path", "lines"},	cfunc_FileUtil_writeForEachLine},
+static struct ffi_item ffi_items[] = {
+	{"File.open", "File", "open", 2, {"path", "mode"}, cfunc_File_open},
+	{"File.close", "File", "close", 1, {"file"}, cfunc_File_close},
+	{"File.tell", "File", "tell", 1, {"file"}, cfunc_File_tell},
+	{"File.seek", "File", "seek", 2, {"file", "offset"}, cfunc_File_seek},
+	{"File.read", "File", "read", 2, {"file", "len"}, cfunc_File_read},
+	{"File.write", "File", "write", 4,
+	 {"file", "data", "offset", "size"}, cfunc_File_write},
+	{"FileUtil.checkFileExists", "FileUtil", "checkFileExists", 1,
+	 {"path"}, cfunc_FileUtil_checkFileExists},
+	{"FileUtil.getFileSize", "FileUtil", "getFileSize", 1,
+	 {"path"}, cfunc_FileUtil_getFileSize},
+	{"FileUtil.readText", "FileUtil", "readText", 1,
+	 {"path"}, cfunc_FileUtil_readText},
+	{"FileUtil.writeText", "FileUtil", "writeText", 2,
+	 {"path", "text"}, cfunc_FileUtil_writeText},
+	{"FileUtil.readForEachLine", "FileUtil", "readForEachLine", 2,
+	 {"path", "func"}, cfunc_FileUtil_readForEachLine},
+	{"FileUtil.writeForEachLine", "FileUtil", "writeForEachLine", 2,
+	 {"path", "lines"}, cfunc_FileUtil_writeForEachLine},
 };
 
-/*
- * Register "File.*" functions.
- */
-NOCT_DLL
-bool
-noct_register_api_file(
-	NoctEnv *env)
+NOCT_DLL bool
+noct_register_api_file(NoctEnv *env)
 {
 	NoctValue file_dict;
 	NoctValue fileutil_dict;
 	size_t i;
 
-	/* Make global variables "File" and "FileUtil". */
-	if (!noct_make_empty_dict(env, &file_dict))
+	if (!noct_make_empty_dict(env, &file_dict) ||
+	    !noct_make_empty_dict(env, &fileutil_dict) ||
+	    !noct_set_global(env, "File", &file_dict) ||
+	    !noct_set_global(env, "FileUtil", &fileutil_dict))
 		return false;
-	if (!noct_make_empty_dict(env, &fileutil_dict))
-		return false;
-	if (!noct_set_global(env, "File", &file_dict))
-		return false;
-	if (!noct_set_global(env, "FileUtil", &fileutil_dict))
-		return false;
-
-	/* Register functions. */
-	for (i = 0; i < sizeof(ffi_items) / sizeof(struct ffi_item); i++) {
+	for (i = 0; i < sizeof(ffi_items) / sizeof(ffi_items[0]); i++) {
 		NoctValue funcval;
+		NoctValue *package = !strcmp(ffi_items[i].package_name, "File") ?
+			&file_dict : &fileutil_dict;
 
-		/* Register a cfunc. */
-		if (!noct_register_cfunc(
-			    env,
-			    ffi_items[i].global_name,
-			    ffi_items[i].param_count,
-			    ffi_items[i].param,
-			    ffi_items[i].cfunc,
-			    NULL))
+		if (!noct_register_cfunc(env, ffi_items[i].global_name,
+					 ffi_items[i].param_count,
+					 ffi_items[i].param,
+					 ffi_items[i].cfunc, NULL) ||
+		    !noct_get_global(env, ffi_items[i].global_name, &funcval) ||
+		    !noct_set_dict_elem_cstr(env, package,
+					     ffi_items[i].field_name, &funcval))
 			return false;
-
-		/* Get a function value. */
-		if (!noct_get_global(env, ffi_items[i].global_name, &funcval))
-			return false;
-
-		/* Make a dictionary element. */
-		if (strcmp(ffi_items[i].package_name, "File") == 0) {
-			if (!noct_set_dict_elem_cstr(env, &file_dict, ffi_items[i].field_name, &funcval))
-				return false;
-		} else {
-			if (!noct_set_dict_elem_cstr(env, &fileutil_dict, ffi_items[i].field_name, &funcval))
-				return false;
-		}
 	}
-
 	return true;
 }
 
-/* Implementation of File.open() */
 static bool
-cfunc_File_open(
-	NoctEnv *env)
+get_file(NoctEnv *env, NoctValue *value, FILE **file)
 {
-	NoctValue path, mode, ret;
-	const char *path_s, *mode_s;
-	FILE *fp;
+	void (*finalizer)(void *);
 
-	noct_pin_local(env, 3, &path, &mode, &ret);
-
-	/* Get parameters. */
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+	if (!noct_get_dict_native_pointer(env, value, (void **)file,
+					  &finalizer))
 		return false;
-	if (!noct_get_arg_check_string(env, 1, &mode, &mode_s))
-		return false;
-	
-	/*  */
-	if (strcmp(mode_s, "w") == 0)
-		fp = fopen(path_s, "wb");
-	else
-		fp = fopen(path_s, "rb");
-
-	/* Make a return value. */
-	if (!noct_make_empty_dict(env, &ret)) {
-		fclose(fp);
+	if (*file == NULL) {
+		noct_error(env, N_TR("File is closed."));
 		return false;
 	}
-	if (!noct_set_dict_native_pointer(env, &ret, fp, file_finalizer)) {
-		fclose(fp);
-		return false;
-	}
-	if (!noct_set_return(env, &ret))
-		return false;
-
-	noct_unpin_local(env, 3, &path, &mode, &ret);
-
 	return true;
 }
 
@@ -166,495 +106,433 @@ static void
 file_finalizer(void *native_pointer)
 {
 	if (native_pointer != NULL)
-		fclose((FILE *)native_pointer);
+		(void)fclose((FILE *)native_pointer);
 }
 
-/* Implementation of File.close() */
 static bool
-cfunc_File_close(
-	NoctEnv *env)
+cfunc_File_open(NoctEnv *env)
 {
-	NoctValue file, ret;
-	FILE *fp;
-	void (*native_finalizer)(void *);
+	NoctValue path, mode, ret;
+	const char *path_s, *mode_s;
+	FILE *file = NULL;
+	bool installed = false;
+	bool ok = false;
 
-	noct_pin_local(env, 2, &file, &ret);
-
-	/* Get parameters. */
-	if (!noct_get_arg_check_dict(env, 0, &file))
+	if (!noct_pin_local(env, 3, &path, &mode, &ret))
 		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
+	    !noct_get_arg_check_string(env, 1, &mode, &mode_s))
+		goto cleanup;
+	if (strcmp(mode_s, "r") && strcmp(mode_s, "rb") &&
+	    strcmp(mode_s, "w") && strcmp(mode_s, "wb")) {
+		noct_error(env, N_TR("Unsupported file mode."));
+		goto cleanup;
+	}
+	file = fopen(path_s, mode_s);
+	if (file == NULL) {
+		noct_error(env, N_TR("Cannot open file %s."), path_s);
+		goto cleanup;
+	}
+	if (!noct_make_empty_dict(env, &ret) ||
+	    !noct_set_dict_native_pointer(env, &ret, file, file_finalizer))
+		goto cleanup;
+	installed = true;
+	if (!noct_set_return(env, &ret))
+		goto cleanup;
+	ok = true;
+cleanup:
+	if (!ok && file != NULL) {
+		/*
+		 * Once installed, the dictionary finalizer owns the stream.  Clear
+		 * that ownership before closing it ourselves.  If clearing fails,
+		 * leave the stream to the finalizer instead of risking a double
+		 * fclose on a native pointer that is still reachable by the VM.
+		 */
+		if (!installed ||
+		    noct_set_dict_native_pointer(env, &ret, NULL, NULL))
+			(void)fclose(file);
+	}
+	(void)noct_unpin_local(env, 3, &path, &mode, &ret);
+	return ok;
+}
 
-	/* Get the fp from the file arg. */
-	if (!noct_get_dict_native_pointer(env, &file, (void *)&fp, &native_finalizer))
+static bool
+cfunc_File_close(NoctEnv *env)
+{
+	NoctValue file_value, ret;
+	FILE *file;
+	bool ok = false;
+
+	if (!noct_pin_local(env, 2, &file_value, &ret))
 		return false;
-
-	/* Close the fp. */
-	fclose(fp);
-
-	/* Clear the native pointer of the dict. */
-	fp = NULL;
-	native_finalizer = NULL;
-	if (!noct_set_dict_native_pointer(env, &file, fp, native_finalizer))
-		return false;
-
-	/* Make a return value. */
+	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
+	    !get_file(env, &file_value, &file))
+		goto cleanup;
+	/* Clear the finalizer before fclose frees the native stream. */
+	if (!noct_set_dict_native_pointer(env, &file_value, NULL, NULL))
+		goto cleanup;
+	if (fclose(file) != 0) {
+		noct_error(env, N_TR("File close error."));
+		goto cleanup;
+	}
 	if (!noct_set_return_make_int(env, &ret, 0))
-		return false;
-
-	noct_unpin_local(env, 2, &file, &ret);
-
-	return true;
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 2, &file_value, &ret);
+	return ok;
 }
 
-/* Implementation of File.tell() */
 static bool
-cfunc_File_tell(
-	NoctEnv *env)
+cfunc_File_tell(NoctEnv *env)
 {
-	NoctValue file, ret;
-	FILE *fp;
-	size_t ofs;
-	void (*native_finalizer)(void *);
+	NoctValue file_value, ret;
+	FILE *file;
+	long offset;
+	bool ok = false;
 
-	noct_pin_local(env, 2, &file, &ret);
-
-	/* Get parameters. */
-	if (!noct_get_arg_check_dict(env, 0, &file))
+	if (!noct_pin_local(env, 2, &file_value, &ret))
 		return false;
-
-	/* Get the fp from the file arg. */
-	if (!noct_get_dict_native_pointer(env, &file, (void *)&fp, &native_finalizer))
-		return false;
-
-	/* Get the offset. */
-	ofs = (size_t)ftell(fp);
-
-	/* Make a return value. */
-	if (!noct_set_return_make_int_long(env, &ret, ofs))
-		return false;
-
-	noct_unpin_local(env, 2, &file, &ret);
-
-	return true;
+	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
+	    !get_file(env, &file_value, &file))
+		goto cleanup;
+	offset = ftell(file);
+	if (offset < 0) {
+		noct_error(env, N_TR("File tell error."));
+		goto cleanup;
+	}
+	if (!noct_set_return_make_int_long(env, &ret, (size_t)offset))
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 2, &file_value, &ret);
+	return ok;
 }
 
-/* Implementation of File.seek() */
 static bool
-cfunc_File_seek(
-	NoctEnv *env)
+cfunc_File_seek(NoctEnv *env)
 {
-	NoctValue file, offset, ret;
-	size_t ofs;
-	FILE *fp;
-	void (*native_finalizer)(void *);
+	NoctValue file_value, offset_value, ret;
+	FILE *file;
+	size_t offset;
+	bool ok = false;
 
-	noct_pin_local(env, 2, &file, &ret);
-
-	/* Get parameters. */
-	if (!noct_get_arg_check_dict(env, 0, &file))
+	if (!noct_pin_local(env, 3, &file_value, &offset_value, &ret))
 		return false;
-	if (!noct_get_arg_check_int_long(env, 1, &offset, &ofs))
-		return false;
-
-	/* Get the fp from the file arg. */
-	if (!noct_get_dict_native_pointer(env, &file, (void *)&fp, &native_finalizer))
-		return false;
-
-	/* Get the offset. */
-	fseek(fp, (long)ofs, SEEK_SET);
-
-	/* Make a return value. */
+	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
+	    !noct_get_arg_check_int_long(env, 1, &offset_value, &offset) ||
+	    !get_file(env, &file_value, &file))
+		goto cleanup;
+	if (offset > 0x7fffffffU || fseek(file, (long)offset, SEEK_SET) != 0) {
+		noct_error(env, N_TR("File seek error."));
+		goto cleanup;
+	}
 	if (!noct_set_return_make_int(env, &ret, 1))
-		return false;
-
-	noct_unpin_local(env, 2, &file, &ret);
-
-	return true;
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 3, &file_value, &offset_value, &ret);
+	return ok;
 }
 
-/* Implementation of File.read() */
 static bool
-cfunc_File_read(
-	NoctEnv *env)
+cfunc_File_read(NoctEnv *env)
 {
-	NoctValue file, len, ret;
-	size_t len_n;
-	FILE *fp;
-	void *buf;
-	void (*native_finalizer)(void *);
+	NoctValue file_value, length_value, ret;
+	FILE *file;
+	size_t length, actual;
+	void *buffer = NULL;
+	bool transferred = false;
+	bool ok = false;
 
-	noct_pin_local(env, 3, &file, &len, &ret);
-
-	/* Get parameters. */
-	if (!noct_get_arg_check_dict(env, 0, &file))
+	if (!noct_pin_local(env, 3, &file_value, &length_value, &ret))
 		return false;
-	if (!noct_get_arg_check_int_long(env, 1, &len, &len_n))
-		return false;
-
-	/* Get the fp from the file arg. */
-	if (!noct_get_dict_native_pointer(env, &file, (void *)&fp, &native_finalizer))
-		return false;
-
-	/* Read. */
-	buf = noct_malloc(len_n);
-	if (buf == NULL) {
+	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
+	    !noct_get_arg_check_int_long(env, 1, &length_value, &length) ||
+	    !get_file(env, &file_value, &file))
+		goto cleanup;
+	/* Noct's packed representation currently requires at least one byte. */
+	if (length == 0) {
+		noct_error(env, N_TR("Read length must be greater than zero."));
+		goto cleanup;
+	}
+	buffer = noct_malloc(length);
+	if (buffer == NULL) {
 		noct_error(env, N_TR("Out of memory."));
-		return false;
+		goto cleanup;
 	}
-	if (fread(buf, len_n, 1, fp) != 1) {
-		noct_free(buf);
+	actual = fread(buffer, 1, length, file);
+	if (actual == 0 || (actual < length && ferror(file))) {
 		noct_error(env, N_TR("File read error."));
-		return false;
+		goto cleanup;
 	}
-
-	/* Make a return value. */
-	if (!noct_make_packed(env, &ret, NOCT_PACKED_UINT8, len_n, len_n, buf)) {
-		noct_free(buf);
-		return false;
-	}
-	if (!noct_set_return(env, &ret)) {
-		noct_free(buf);
-		return false;
-	}
-
-	noct_unpin_local(env, 3, &file, &len, &ret);
-
-	return true;
+	if (!noct_make_packed(env, &ret, NOCT_PACKED_UINT8, actual, actual,
+			      buffer))
+		goto cleanup;
+	transferred = true;
+	if (!noct_set_return(env, &ret))
+		goto cleanup;
+	ok = true;
+cleanup:
+	if (!transferred && buffer != NULL)
+		noct_free(buffer);
+	(void)noct_unpin_local(env, 3, &file_value, &length_value, &ret);
+	return ok;
 }
 
-/* Implementation of File.write() */
 static bool
-cfunc_File_write(
-	NoctEnv *env)
+cfunc_File_write(NoctEnv *env)
 {
-	NoctValue file, data, offset, len, ret;
-	size_t offset_n, len_n, packed_size;
-	FILE *fp;
-	void *buf;
-	void (*native_finalizer)(void *);
+	NoctValue file_value, data, offset_value, length_value, ret;
+	FILE *file;
+	size_t offset, length, packed_size;
+	void *buffer;
+	bool ok = false;
 
-	noct_pin_local(env, 5, &file, &data, &offset, &len, &ret);
-
-	/* Get parameters. */
-	if (!noct_get_arg_check_dict(env, 0, &file))
+	if (!noct_pin_local(env, 5, &file_value, &data, &offset_value,
+			    &length_value, &ret))
 		return false;
-	if (!noct_get_arg_check_packed(env, 1, &data, NOCT_PACKED_UINT8))
-		return false;
-	if (!noct_get_arg_check_int_long(env, 2, &offset, &offset_n))
-		return false;
-	if (!noct_get_arg_check_int_long(env, 3, &len, &len_n))
-		return false;
-
-	/* Get the fp from the file arg. */
-	if (!noct_get_dict_native_pointer(env, &file, (void *)&fp, &native_finalizer))
-		return false;
-
-	/* Check the packed size. */
-	if (!noct_get_packed_size(env, &data, &packed_size))
-		return false;
-	if (offset_n + len_n > packed_size) {
+	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
+	    !noct_get_arg_check_packed(env, 1, &data, NOCT_PACKED_UINT8) ||
+	    !noct_get_arg_check_int_long(env, 2, &offset_value, &offset) ||
+	    !noct_get_arg_check_int_long(env, 3, &length_value, &length) ||
+	    !get_file(env, &file_value, &file) ||
+	    !noct_get_packed_size(env, &data, &packed_size))
+		goto cleanup;
+	if (offset > packed_size || length > packed_size - offset) {
 		noct_error(env, N_TR("Offset is out-of-range."));
-		return false;
+		goto cleanup;
 	}
-
-	/* Write. */
-	if (!noct_get_packed_pointer(env, &data, &buf))
-		return false;
-	if (fwrite((char *)buf + offset_n, len_n, 1, fp) != 1) {
+	if (!noct_get_packed_pointer(env, &data, &buffer))
+		goto cleanup;
+	if (length != 0 && fwrite((char *)buffer + offset, 1, length, file) !=
+			   length) {
 		noct_error(env, N_TR("File write error."));
-		return false;
+		goto cleanup;
 	}
-
-	/* Make a return value. */
 	if (!noct_set_return_make_int(env, &ret, 1))
-		return false;
-
-	noct_unpin_local(env, 5, &file, &data, &offset, &len, &ret);
-
-	return true;
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 5, &file_value, &data, &offset_value,
+			     &length_value, &ret);
+	return ok;
 }
 
-/* Implementation of FileUtil.checkFileExists() */
 static bool
-cfunc_FileUtil_checkFileExists(
-	NoctEnv *env)
+cfunc_FileUtil_checkFileExists(NoctEnv *env)
 {
 	NoctValue path, ret;
 	const char *path_s;
-	int ret_i;
+	bool ok = false;
 
-	noct_pin_local(env, 2, &path, &ret);
-
-	/* Get parameters. */
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+	if (!noct_pin_local(env, 2, &path, &ret))
 		return false;
-
-	/* Check the file. */
-	ret_i = 0;
-	if (access(path_s, 0) == 0)
-		ret_i = 1;
-
-	/* Make a return value. */
-	if (!noct_set_return_make_int(env, &ret, ret_i))
-		return false;
-
-	noct_unpin_local(env, 2, &path, &ret);
-
-	return true;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
+	    !noct_set_return_make_int(env, &ret,
+				      access(path_s, F_OK) == 0 ? 1 : 0))
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 2, &path, &ret);
+	return ok;
 }
 
-/* Implementation of FileUtil.getFileSize() */
 static bool
-cfunc_FileUtil_getFileSize(
-	NoctEnv *env)
+cfunc_FileUtil_getFileSize(NoctEnv *env)
 {
 	NoctValue path, ret;
-	FILE *fp;
 	const char *path_s;
-	size_t size;
+	FILE *file = NULL;
+	long size;
+	bool ok = false;
 
-	noct_pin_local(env, 2, &path, &ret);
-
-	/* Get the "file" parameer. */
+	if (!noct_pin_local(env, 2, &path, &ret))
+		return false;
 	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		return false;
-
-	/* Check the file. */
-	fp = fopen(path_s, "rb");
-	if (fp == NULL) {
-		/* Make a return value. */
-		if (!noct_set_return_make_int(env, &ret, 0))
-			return false;
-
-		noct_unpin_local(env, 2, &path, &ret);
-		return true;
+		goto cleanup;
+	file = fopen(path_s, "rb");
+	if (file == NULL) {
+		ok = noct_set_return_make_int(env, &ret, 0);
+		goto cleanup;
 	}
-	fseek(fp, 0, SEEK_END);
-	size = (size_t)ftell(fp);
-	fclose(fp);
-	
-	/* Make a return value. */
-	if (!noct_set_return_make_int_long(env, &ret, size))
-		return false;
-
-	noct_unpin_local(env, 2, &path, &ret);
-
-	return true;
+	if (fseek(file, 0, SEEK_END) != 0 || (size = ftell(file)) < 0) {
+		noct_error(env, N_TR("Cannot determine file size."));
+		goto cleanup;
+	}
+	if (!noct_set_return_make_int_long(env, &ret, (size_t)size))
+		goto cleanup;
+	ok = true;
+cleanup:
+	if (file != NULL)
+		(void)fclose(file);
+	(void)noct_unpin_local(env, 2, &path, &ret);
+	return ok;
 }
 
-/* Implementation of FileUtil.readText() */
 static bool
-cfunc_FileUtil_readText(
-	NoctEnv *env)
+cfunc_FileUtil_readText(NoctEnv *env)
 {
-	NoctValue file, ret;
-	const char *fname;
-	FILE *fp;
-	size_t size;
-	char *data;
+	NoctValue path, ret;
+	const char *path_s;
+	FILE *file = NULL;
+	char *data = NULL;
+	long length;
+	bool ok = false;
 
-	if (!noct_pin_local(env, 2, &file, &ret))
+	if (!noct_pin_local(env, 2, &path, &ret))
 		return false;
-
-	if (!noct_get_arg_check_string(env, 0, &file, &fname))
-		return false;
-
-	/* Open the file. */
-	fp = fopen(fname, "rb");
-	if (fp == NULL) {
-		noct_error(env, N_TR("Cannot open file %s.\n"), fname);
-		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+		goto cleanup;
+	file = fopen(path_s, "rb");
+	if (file == NULL) {
+		noct_error(env, N_TR("Cannot open file %s."), path_s);
+		goto cleanup;
 	}
-
-	/* Get the file size. */
-	fseek(fp, 0, SEEK_END);
-	size = (size_t)ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-
-	/* Allocate a buffer. */
-	data = noct_malloc(size + 1);
+	if (fseek(file, 0, SEEK_END) != 0 || (length = ftell(file)) < 0 ||
+	    fseek(file, 0, SEEK_SET) != 0) {
+		noct_error(env, N_TR("Cannot determine file size."));
+		goto cleanup;
+	}
+	data = noct_malloc((size_t)length + 1U);
 	if (data == NULL) {
-		noct_error(env, N_TR("Out of memory.\n"));
-		return false;
+		noct_error(env, N_TR("Out of memory."));
+		goto cleanup;
 	}
-
-	/* Read the data. */
-	if (fread(data, 1, size, fp) != size) {
-		noct_error(env, N_TR("Cannot read file %s.\n"), fname);
-		return false;
+	if (fread(data, 1, (size_t)length, file) != (size_t)length) {
+		noct_error(env, N_TR("Cannot read file %s."), path_s);
+		goto cleanup;
 	}
-
-	/* Terminate the string. */
-	data[size] = '\0';
-
-	fclose(fp);
-	
-	/* Make a return value. */
-	if (!noct_set_return_make_string(env, &ret, data)) {
+	data[length] = '\0';
+	if (!noct_set_return_make_string(env, &ret, data))
+		goto cleanup;
+	ok = true;
+cleanup:
+	if (file != NULL)
+		(void)fclose(file);
+	if (data != NULL)
 		noct_free(data);
-		return false;
-	}
-	noct_free(data);
-
-	noct_unpin_local(env, 2, &file, &ret);
-
-	return true;
+	(void)noct_unpin_local(env, 2, &path, &ret);
+	return ok;
 }
 
-/* Implementation of FileUtil.writeText() */
 static bool
-cfunc_FileUtil_writeText(
-	NoctEnv *env)
+cfunc_FileUtil_writeText(NoctEnv *env)
 {
 	NoctValue path, text, ret;
 	const char *path_s, *text_s;
-	FILE *fp;
-	size_t len;
+	FILE *file = NULL;
+	size_t length;
+	bool ok = false;
 
 	if (!noct_pin_local(env, 3, &path, &text, &ret))
 		return false;
-
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		return false;
-
-	if (!noct_get_arg_check_string(env, 1, &text, &text_s))
-		return false;
-
-	/* Open the file. */
-	fp = fopen(path_s, "wb");
-	if (fp == NULL) {
-		noct_error(env, N_TR("Cannot open file %s.\n"), path_s);
-		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
+	    !noct_get_arg_check_string(env, 1, &text, &text_s))
+		goto cleanup;
+	file = fopen(path_s, "wb");
+	if (file == NULL) {
+		noct_error(env, N_TR("Cannot open file %s."), path_s);
+		goto cleanup;
 	}
-
-	/* Write the data. */
-	len = strlen(text_s);
-	if (fwrite(text_s, 1, len, fp) != len) {
-		noct_error(env, N_TR("Cannot write file %s.\n"), path_s);
-		return false;
+	length = strlen(text_s);
+	if (fwrite(text_s, 1, length, file) != length || fflush(file) != 0) {
+		noct_error(env, N_TR("Cannot write file %s."), path_s);
+		goto cleanup;
 	}
-
-	fclose(fp);
-	
-	/* Make a return value. */
-	if (!noct_set_return_make_int(env, &ret, 1)) {
-		return false;
+	if (!noct_set_return_make_int(env, &ret, 1))
+		goto cleanup;
+	ok = true;
+cleanup:
+	if (file != NULL && fclose(file) != 0 && ok) {
+		noct_error(env, N_TR("Cannot close file %s."), path_s);
+		ok = false;
 	}
-
-	noct_unpin_local(env, 3, &path, &text, &ret);
-
-	return true;
+	(void)noct_unpin_local(env, 3, &path, &text, &ret);
+	return ok;
 }
 
-/* Implementation of FileUtil.readForEachLine() */
 static bool
-cfunc_FileUtil_readForEachLine(
-	NoctEnv *env)
+cfunc_FileUtil_readForEachLine(NoctEnv *env)
 {
-	char buf[8192];
-	NoctValue file, func, line, ret;
-	NoctFunc *f;
-	const char *fname;
-	FILE *fp;
+	char buffer[8192];
+	NoctValue path, function_value, line, ret;
+	NoctFunc *function;
+	const char *path_s;
+	FILE *file = NULL;
+	bool ok = false;
 
-	if (!noct_pin_local(env, 4, &file, &func, &line, &ret))
+	if (!noct_pin_local(env, 4, &path, &function_value, &line, &ret))
 		return false;
-
-	if (!noct_get_arg_check_string(env, 0, &file, &fname))
-		return false;
-
-	if (!noct_get_arg_check_func(env, 1, &func, &f))
-		return false;
-
-	/* Open the file. */
-	fp = fopen(fname, "rb");
-	if (fp == NULL) {
-		noct_error(env, N_TR("Cannot open file %s.\n"), fname);
-		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
+	    !noct_get_arg_check_func(env, 1, &function_value, &function))
+		goto cleanup;
+	file = fopen(path_s, "rb");
+	if (file == NULL) {
+		noct_error(env, N_TR("Cannot open file %s."), path_s);
+		goto cleanup;
 	}
+	while (fgets(buffer, sizeof(buffer), file) != NULL) {
+		size_t length = strlen(buffer);
 
-	while (fgets(buf, sizeof(buf) - 2, fp) != NULL) {
-		size_t len;
-
-		len = strlen(buf);
-		if (len == 0)
-			break;
-
-		if (buf[len - 1] == '\n')
-			buf[len - 1] = '\0';
-
-		if (!noct_make_string(env, &line, buf)) {
-			fclose(fp);
-			return false;
-		}
-
-		if (!noct_call(env, f, 1, &line, &ret)) {
-			fclose(fp);
-			return false;
-		}
+		if (length != 0 && buffer[length - 1] == '\n')
+			buffer[length - 1] = '\0';
+		if (!noct_make_string(env, &line, buffer) ||
+		    !noct_call(env, function, 1, &line, &ret))
+			goto cleanup;
 	}
-
-	fclose(fp);
-
-	/* Make a return value. */
+	if (ferror(file)) {
+		noct_error(env, N_TR("Cannot read file %s."), path_s);
+		goto cleanup;
+	}
 	if (!noct_set_return_make_int(env, &ret, 1))
-		return false;
-
-	noct_unpin_local(env, 4, &file, &func, &line, &ret);
-
-	return true;
+		goto cleanup;
+	ok = true;
+cleanup:
+	if (file != NULL)
+		(void)fclose(file);
+	(void)noct_unpin_local(env, 4, &path, &function_value, &line, &ret);
+	return ok;
 }
 
-/* Implementation of FileUtil.writeForEachLine() */
 static bool
-cfunc_FileUtil_writeForEachLine(
-	NoctEnv *env)
+cfunc_FileUtil_writeForEachLine(NoctEnv *env)
 {
-	const char *fname;
-	NoctValue file, lines, line, ret;
-	FILE *fp;
-	const char *data;
-	size_t line_count;
-	size_t i;
+	NoctValue path, lines, line, ret;
+	const char *path_s, *text;
+	FILE *file = NULL;
+	size_t count, index;
+	bool ok = false;
 
-	if (!noct_pin_local(env, 4, &file, &lines, &line, &ret))
+	if (!noct_pin_local(env, 4, &path, &lines, &line, &ret))
 		return false;
-
-	if (!noct_get_arg_check_string(env, 0, &file, &fname))
-		return false;
-
-	if (!noct_get_arg_check_array(env, 1, &lines))
-		return false;
-
-	if (!noct_get_array_size(env, &lines, &line_count))
-		return false;
-
-	/* Open the file. */
-	fp = fopen(fname, "wb");
-	if (fp == NULL) {
-		noct_error(env, N_TR("Cannot open file %s.\n"), fname);
-		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
+	    !noct_get_arg_check_array(env, 1, &lines) ||
+	    !noct_get_array_size(env, &lines, &count))
+		goto cleanup;
+	file = fopen(path_s, "wb");
+	if (file == NULL) {
+		noct_error(env, N_TR("Cannot open file %s."), path_s);
+		goto cleanup;
 	}
-
-	for (i = 0; i < line_count; i++) {
-		if (!noct_get_array_elem(env, &lines, i, &line)) {
-			fclose(fp);
-			return false;
-		}
-		if (!noct_get_string(env, &line, &data)) {
-			fclose(fp);
-			return false;
-		}
-		fprintf(fp, "%s\n", data);
+	for (index = 0; index < count; index++) {
+		if (!noct_get_array_elem(env, &lines, index, &line) ||
+		    !noct_get_string(env, &line, &text) ||
+		    fprintf(file, "%s\n", text) < 0)
+			goto cleanup;
 	}
-	
-	fclose(fp);
-
-	/* Make a return value. */
+	if (fflush(file) != 0) {
+		noct_error(env, N_TR("Cannot write file %s."), path_s);
+		goto cleanup;
+	}
 	if (!noct_set_return_make_int(env, &ret, 1))
-		return false;
-
-	noct_unpin_local(env, 4, &file, &lines, &line, &ret);
-
-	return true;
+		goto cleanup;
+	ok = true;
+cleanup:
+	if (file != NULL && fclose(file) != 0 && ok) {
+		noct_error(env, N_TR("Cannot close file %s."), path_s);
+		ok = false;
+	}
+	(void)noct_unpin_local(env, 4, &path, &lines, &line, &ret);
+	return ok;
 }

@@ -30,10 +30,15 @@ NOCT_SOURCE_REL := \
 	src/core/execution.c \
 	src/core/gc.c \
 	src/core/intrinsics.c \
-	src/core/objectmodel-st.c
+	src/core/objectmodel-st.c \
+	src/api/api-file.c
 
 NOCT_SOURCES := $(addprefix $(NOCT_ROOT)/,$(NOCT_SOURCE_REL))
-NOCT_OBJECTS := $(patsubst $(NOCT_ROOT)/src/core/%.c,$(NOCT_BUILD_DIR)/%.o,$(NOCT_SOURCES))
+NOCT_CORE_SOURCES := $(filter $(NOCT_ROOT)/src/core/%,$(NOCT_SOURCES))
+NOCT_API_SOURCES := $(filter $(NOCT_ROOT)/src/api/%,$(NOCT_SOURCES))
+NOCT_OBJECTS := \
+	$(patsubst $(NOCT_ROOT)/src/core/%.c,$(NOCT_BUILD_DIR)/%.o,$(NOCT_CORE_SOURCES)) \
+	$(patsubst $(NOCT_ROOT)/src/api/%.c,$(NOCT_BUILD_DIR)/%.o,$(NOCT_API_SOURCES))
 NOCT_UPSTREAM_COMMIT := $(shell sed -n 's/^Commit: `\([^`]*\)`.*/\1/p' $(NOCT_ROOT)/UPSTREAM.md)
 
 NOCT_CPPFLAGS := \
@@ -84,6 +89,11 @@ $(NOCT_BUILD_DIR)/%.o: $(NOCT_ROOT)/src/core/%.c
 	$(NOCT_CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) \
 		$(NOCT_WARNING_EXCEPTIONS) -c $< -o $@
 
+$(NOCT_BUILD_DIR)/api-%.o: $(NOCT_ROOT)/src/api/api-%.c
+	@mkdir -p $(NOCT_BUILD_DIR)
+	$(NOCT_CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) \
+		$(NOCT_WARNING_EXCEPTIONS) -c $< -o $@
+
 noct-objects: $(NOCT_OBJECTS)
 	@echo "Noct upstream: $(NOCT_UPSTREAM_COMMIT)"
 	@echo "Noct profile: $(NOCT_PROFILE), JIT code arena: $(NOCT_JIT_CODE_MAX) bytes"
@@ -100,9 +110,10 @@ noct-opcode-check: noct-objects
 NOCT_M3_RELOC := ../build/bootloader/noct-libc-m3.o
 NOCT_M3_UNDEFINED := ../build/bootloader/noct-libc-m3.undefined
 
-noct-link-audit: noct-objects boot98-libc-objects
+noct-link-audit: noct-objects boot98-libc-objects boot98-fs.o
 	@mkdir -p $(dir $(NOCT_M3_RELOC))
 	$(NOCT_LD) -m elf_i386 -r $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
+		boot98-fs.o \
 		-o $(NOCT_M3_RELOC)
 	@$(NOCT_NM) -u $(NOCT_M3_RELOC) | awk '{print $$NF}' | sort -u > \
 		$(NOCT_M3_UNDEFINED)

@@ -1013,6 +1013,9 @@ recorded. Stop if the baseline itself is broken.
 
 ### M1 — Upstream Noct PC98BE portability
 
+Status: **IMPLEMENTED — AWAITING USER REVIEW**.  See
+`PC98BE-NOCT-M1-UPSTREAM.md` for the exact source and verification record.
+
 Repository: NoctLang only.
 
 Implement Sections 8.1, 8.2, and 8.5. Keep host targets passing. Do not add BE

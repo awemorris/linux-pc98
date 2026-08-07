@@ -11,6 +11,8 @@ Noct-powered PC-98 Bootstrap Environment is in
 It is intentionally prescriptive so implementation can be delegated one
 reviewable milestone at a time.  The baseline recorded before source changes
 is in [`PC98BE-NOCT-M0-BASELINE.md`](PC98BE-NOCT-M0-BASELINE.md).
+The review record for the upstream Noct PC98BE portability milestone is in
+[`PC98BE-NOCT-M1-UPSTREAM.md`](PC98BE-NOCT-M1-UPSTREAM.md).
 
 ## Disk layout
 

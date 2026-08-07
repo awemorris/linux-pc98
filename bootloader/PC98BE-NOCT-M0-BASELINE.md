@@ -1,6 +1,6 @@
 # PC-98 Bootstrap Environment: M0 Baseline
 
-Status: **M0 COMPLETE — READY FOR REVIEW**
+Status: **M0 COMPLETE — REVIEWED 2026-08-07**
 
 Recorded on 2026-08-07 before any Noct integration source change.  This is
 the comparison point required by M0 of

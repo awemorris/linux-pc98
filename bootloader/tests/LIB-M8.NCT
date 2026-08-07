@@ -1,0 +1,3 @@
+func m8Imported() {
+    return "System.import PASS";
+}

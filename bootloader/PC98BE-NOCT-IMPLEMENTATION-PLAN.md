@@ -1106,6 +1106,10 @@ behave as specified and return to the shell.
 
 ### M8 — Safe console/screen/keyboard/directory NAPI
 
+Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+`PC98BE-NOCT-M8-NAPI.md` for the service-table boundary, API contract, key
+namespace, ownership rules, size, host tests, and 6 MiB i386 QEMU evidence.
+
 Implement Sections 13.1–13.5 except file writes. Add host-injected tests and a
 read-only screen/key demo.
 

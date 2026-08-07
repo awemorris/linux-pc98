@@ -5,6 +5,7 @@
  */
 
 #include "boot98-noct.h"
+#include "boot98-noct-napi.h"
 #include "libc/boot98-heap.h"
 
 #include <noct/noct.h>
@@ -78,44 +79,6 @@ emit_noct_error(NoctEnv *env, const char *kind)
 	emit_string("\n");
 }
 
-static bool
-cfunc_console_write(NoctEnv *env)
-{
-	NoctValue value;
-	const char *text;
-
-	memset(&value, 0, sizeof(value));
-	if (!noct_pin_local(env, 1, &value))
-		return false;
-	if (!noct_get_arg(env, 0, &value) ||
-	    !noct_get_string(env, &value, &text)) {
-		(void)noct_unpin_local(env, 1, &value);
-		return false;
-	}
-	emit_bytes(text, strlen(text));
-	(void)noct_unpin_local(env, 1, &value);
-	return true;
-}
-
-static bool
-register_console(NoctEnv *env)
-{
-	static const char *parameters[] = { "text" };
-	NoctValue dictionary;
-	NoctValue function;
-
-	memset(&dictionary, 0, sizeof(dictionary));
-	memset(&function, 0, sizeof(function));
-	if (!noct_make_empty_dict(env, &dictionary) ||
-	    !noct_set_global(env, "Console", &dictionary) ||
-	    !noct_register_cfunc(env, "Console.write", 1, parameters,
-				 cfunc_console_write, NULL) ||
-	    !noct_get_global(env, "Console.write", &function) ||
-	    !noct_set_dict_elem_cstr(env, &dictionary, "write", &function))
-		return false;
-	return true;
-}
-
 int
 boot98_noct_run_args(const char *source_name, const char *source,
 		    int argc, char *const argv[],
@@ -177,7 +140,7 @@ boot98_noct_run_args(const char *source_name, const char *source,
 		goto cleanup;
 	}
 	vm_created = 1;
-	if (!register_console(env)) {
+	if (!boot98_noct_napi_register(env, options)) {
 		status = BOOT98_NOCT_API_ERROR;
 		emit_noct_error(env, "Noct API error");
 		goto cleanup;
@@ -252,6 +215,7 @@ cleanup:
 					  jit.size);
 	if (vm_created && !noct_destroy_vm(vm) && status == BOOT98_NOCT_OK)
 		status = BOOT98_NOCT_CLEANUP_ERROR;
+	boot98_noct_napi_cleanup();
 	peak = boot98_heap_peak();
 	before_reset = boot98_heap_current();
 	errors = boot98_heap_error_count();

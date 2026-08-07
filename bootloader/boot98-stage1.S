@@ -709,7 +709,14 @@ gateway_clock_second:
 gateway_key_read:
 	xorb	%ah, %ah
 	int	$0x18
+	testb	%al, %al
+	jnz	1f
+	movzbl	%ah, %eax
+	orl	$0x100, %eax
+	jmp	2f
+1:
 	movzbl	%al, %eax
+2:
 	movl	%eax, %cs:gateway_result
 	jmp	gateway_real_return
 
@@ -717,11 +724,18 @@ gateway_key_poll:
 	movb	$0x01, %ah
 	int	$0x18
 	testb	%bh, %bh
-	jz	1f
+	jz	3f
+	testb	%al, %al
+	jnz	1f
+	movzbl	%ah, %eax
+	orl	$0x100, %eax
+	jmp	2f
+1:
 	movzbl	%al, %eax
+2:
 	movl	%eax, %cs:gateway_result
 	jmp	gateway_real_return
-1:
+3:
 	movl	$0xffffffff, %cs:gateway_result
 	jmp	gateway_real_return
 

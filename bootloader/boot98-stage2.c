@@ -311,6 +311,18 @@ static int poll(void)
 	return (int)call(BOOT98_BIOS_KEY_POLL);
 }
 
+static int noct_key_read(void *context)
+{
+	(void)context;
+	return key();
+}
+
+static int noct_key_poll(void *context)
+{
+	(void)context;
+	return poll();
+}
+
 /* Return seconds since the start of the current minute, or -1 for an
  * invalid BIOS result.  Stage 1 converts the BIOS BCD byte to binary before
  * returning it through the gateway.  INT 1Ch/AH=00h is available on the
@@ -989,7 +1001,9 @@ static int command(char *s)
 		return n >= 2 && run_applet(v[1], n - 2, &v[2]);
 	if (streq(v[0], "noct"))
 		return n >= 2 && boot98_noct_run_file(&mounted_fs, v[1],
-						      n - 2, &v[2]);
+						     n - 2, &v[2],
+						     noct_key_read,
+						     noct_key_poll, 0);
 	if (streq(v[0], "noct-test")) {
 		int repeat;
 
@@ -1026,7 +1040,8 @@ static int command(char *s)
 		script_name[length++] = 'T';
 		script_name[length] = '\0';
 		return boot98_noct_run_file(&mounted_fs, script_name,
-						 n - 1, &v[1]);
+					    n - 1, &v[1], noct_key_read,
+					    noct_key_poll, 0);
 	}
 	return 0;
 }

@@ -7,10 +7,7 @@
 
 #include "boot98-console.h"
 
-#define CONSOLE_COLUMNS 80U
-#define CONSOLE_ROWS 25U
 #define TERMINAL_FIRST_ROW 18U
-#define NORMAL_ATTRIBUTE 0xe1U
 
 static volatile uint16_t *const text_vram =
 	(volatile uint16_t *)0x000a0000;
@@ -19,6 +16,7 @@ static volatile uint8_t *const attribute_vram =
 static enum boot98_console_mode console_mode;
 static unsigned cursor_row;
 static unsigned cursor_column;
+static int cursor_visible;
 
 static uint8_t port_in8(uint16_t port)
 {
@@ -47,62 +45,71 @@ static int gdc_write(uint16_t port, uint8_t value)
 	return 1;
 }
 
-static void write_cell(unsigned row, unsigned column, uint16_t code)
+static void write_cell(unsigned row, unsigned column, uint16_t code,
+		       uint8_t attribute)
 {
-	unsigned offset = row * CONSOLE_COLUMNS + column;
+	unsigned offset = row * BOOT98_CONSOLE_COLUMNS + column;
 
 	text_vram[offset] = code;
-	attribute_vram[offset * 2] = NORMAL_ATTRIBUTE;
+	attribute_vram[offset * 2] = attribute;
 }
 
 void boot98_console_clear_row(unsigned row)
 {
-	if (row >= CONSOLE_ROWS)
+	if (row >= BOOT98_CONSOLE_ROWS)
 		return;
-	for (unsigned column = 0; column < CONSOLE_COLUMNS; column++)
-		write_cell(row, column, ' ');
+	for (unsigned column = 0; column < BOOT98_CONSOLE_COLUMNS; column++)
+		write_cell(row, column, ' ', BOOT98_CONSOLE_NORMAL_ATTRIBUTE);
+}
+
+void boot98_console_clear(void)
+{
+	for (unsigned row = 0; row < BOOT98_CONSOLE_ROWS; row++)
+		boot98_console_clear_row(row);
 }
 
 void boot98_console_reset(void)
 {
-	for (unsigned row = 0; row < CONSOLE_ROWS; row++)
-		boot98_console_clear_row(row);
+	boot98_console_clear();
 	console_mode = BOOT98_CONSOLE_FIXED_MENU;
 	cursor_row = 0;
 	cursor_column = 0;
+	cursor_visible = 1;
 }
 
 static void scroll(void)
 {
-	for (unsigned row = 0; row + 1 < CONSOLE_ROWS; row++)
-		for (unsigned column = 0; column < CONSOLE_COLUMNS; column++) {
-			unsigned destination = row * CONSOLE_COLUMNS + column;
-			unsigned source = destination + CONSOLE_COLUMNS;
+	for (unsigned row = 0; row + 1 < BOOT98_CONSOLE_ROWS; row++)
+		for (unsigned column = 0; column < BOOT98_CONSOLE_COLUMNS;
+		     column++) {
+			unsigned destination = row * BOOT98_CONSOLE_COLUMNS + column;
+			unsigned source = destination + BOOT98_CONSOLE_COLUMNS;
 
 			text_vram[destination] = text_vram[source];
 			attribute_vram[destination * 2] =
 				attribute_vram[source * 2];
 		}
-	boot98_console_clear_row(CONSOLE_ROWS - 1);
-	cursor_row = CONSOLE_ROWS - 1;
+	boot98_console_clear_row(BOOT98_CONSOLE_ROWS - 1);
+	cursor_row = BOOT98_CONSOLE_ROWS - 1;
 }
 
 static void newline(void)
 {
 	cursor_column = 0;
-	if (++cursor_row < CONSOLE_ROWS)
+	if (++cursor_row < BOOT98_CONSOLE_ROWS)
 		return;
 	if (console_mode == BOOT98_CONSOLE_TERMINAL)
 		scroll();
 	else
-		cursor_row = CONSOLE_ROWS - 1;
+		cursor_row = BOOT98_CONSOLE_ROWS - 1;
 }
 
 static void put_single_cell(uint16_t code)
 {
-	if (cursor_column >= CONSOLE_COLUMNS)
+	if (cursor_column >= BOOT98_CONSOLE_COLUMNS)
 		newline();
-	write_cell(cursor_row, cursor_column, code);
+	write_cell(cursor_row, cursor_column, code,
+		   BOOT98_CONSOLE_NORMAL_ATTRIBUTE);
 	cursor_column++;
 }
 
@@ -119,7 +126,8 @@ void boot98_console_putc(uint8_t byte)
 	if (byte == '\b') {
 		if (cursor_column) {
 			cursor_column--;
-			write_cell(cursor_row, cursor_column, ' ');
+			write_cell(cursor_row, cursor_column, ' ',
+				   BOOT98_CONSOLE_NORMAL_ATTRIBUTE);
 		}
 		return;
 	}
@@ -169,11 +177,13 @@ void boot98_console_puts_sjis(const uint8_t *string)
 			boot98_console_putc('?');
 			continue;
 		}
-		if (cursor_column + 1 >= CONSOLE_COLUMNS)
+		if (cursor_column + 1 >= BOOT98_CONSOLE_COLUMNS)
 			newline();
 		uint16_t code = sjis_to_pc98(lead, *string++);
-		write_cell(cursor_row, cursor_column++, code);
-		write_cell(cursor_row, cursor_column++, code | 0x8000);
+		write_cell(cursor_row, cursor_column++, code,
+			   BOOT98_CONSOLE_NORMAL_ATTRIBUTE);
+		write_cell(cursor_row, cursor_column++, code | 0x8000,
+			   BOOT98_CONSOLE_NORMAL_ATTRIBUTE);
 	}
 }
 
@@ -181,7 +191,8 @@ void boot98_console_puts_sjis(const uint8_t *string)
 void boot98_console_write_at(unsigned row, unsigned column,
 			     const uint8_t *string)
 {
-	if (row >= CONSOLE_ROWS || column >= CONSOLE_COLUMNS)
+	if (row >= BOOT98_CONSOLE_ROWS ||
+	    column >= BOOT98_CONSOLE_COLUMNS)
 		return;
 	cursor_row = row;
 	cursor_column = column;
@@ -190,8 +201,100 @@ void boot98_console_write_at(unsigned row, unsigned column,
 
 void boot98_console_clear_to_eol(void)
 {
-	for (unsigned column = cursor_column; column < CONSOLE_COLUMNS; column++)
-		write_cell(cursor_row, column, ' ');
+	for (unsigned column = cursor_column;
+	     column < BOOT98_CONSOLE_COLUMNS; column++)
+		write_cell(cursor_row, column, ' ',
+			   BOOT98_CONSOLE_NORMAL_ATTRIBUTE);
+}
+
+/*
+ * Write one row without scrolling.  The return value is the number of text
+ * cells changed; a double-byte character is never split at the right edge.
+ */
+int boot98_console_put_sjis_at(unsigned row, unsigned column,
+			       const uint8_t *string, uint8_t attribute)
+{
+	unsigned start = column;
+
+	if (row >= BOOT98_CONSOLE_ROWS ||
+	    column >= BOOT98_CONSOLE_COLUMNS || string == 0)
+		return -1;
+	while (*string != 0 && column < BOOT98_CONSOLE_COLUMNS) {
+		uint8_t lead = *string++;
+
+		if (!is_sjis_lead(lead)) {
+			if (lead >= 0x80 && !(lead >= 0xa1 && lead <= 0xdf))
+				lead = '?';
+			write_cell(row, column++, lead, attribute);
+			continue;
+		}
+		if (*string == 0 || !is_sjis_trail(*string)) {
+			write_cell(row, column++, '?', attribute);
+			continue;
+		}
+		if (column + 1U >= BOOT98_CONSOLE_COLUMNS)
+			break;
+		uint16_t code = sjis_to_pc98(lead, *string++);
+		write_cell(row, column++, code, attribute);
+		write_cell(row, column++, code | 0x8000U, attribute);
+	}
+	cursor_row = row;
+	cursor_column = column < BOOT98_CONSOLE_COLUMNS ? column :
+		BOOT98_CONSOLE_COLUMNS - 1U;
+	return (int)(column - start);
+}
+
+int boot98_console_set_cursor(unsigned row, unsigned column)
+{
+	if (row >= BOOT98_CONSOLE_ROWS ||
+	    column >= BOOT98_CONSOLE_COLUMNS)
+		return 0;
+	cursor_row = row;
+	cursor_column = column;
+	boot98_console_update_cursor();
+	return 1;
+}
+
+void boot98_console_show_cursor(int visible)
+{
+	cursor_visible = visible != 0;
+	boot98_console_update_cursor();
+}
+
+void boot98_console_save_state(struct boot98_console_state *state)
+{
+	if (state == 0)
+		return;
+	state->mode = console_mode;
+	state->row = cursor_row;
+	state->column = cursor_column;
+	state->cursor_visible = cursor_visible;
+}
+
+void boot98_console_restore_terminal(const struct boot98_console_state *state)
+{
+	unsigned output_row = cursor_row;
+	unsigned output_column = cursor_column;
+
+	console_mode = BOOT98_CONSOLE_TERMINAL;
+	if (output_row >= BOOT98_CONSOLE_ROWS) {
+		output_row = TERMINAL_FIRST_ROW;
+		output_column = 0;
+	}
+	if (state != 0 && state->mode == BOOT98_CONSOLE_TERMINAL &&
+	    state->row < BOOT98_CONSOLE_ROWS &&
+	    state->column < BOOT98_CONSOLE_COLUMNS &&
+	    state->row > output_row) {
+		cursor_row = state->row;
+		cursor_column = state->column;
+	} else {
+		cursor_row = output_row;
+		cursor_column = output_column;
+	}
+	if (cursor_column != 0)
+		newline();
+	cursor_visible = 1;
+	boot98_console_update_cursor();
 }
 
 void boot98_console_set_mode(enum boot98_console_mode mode)
@@ -206,10 +309,10 @@ void boot98_console_set_mode(enum boot98_console_mode mode)
 /* Program CSRFORM as well as CSRW so firmware cannot leave the cursor hidden. */
 void boot98_console_update_cursor(void)
 {
-	unsigned address = cursor_row * CONSOLE_COLUMNS + cursor_column;
+	unsigned address = cursor_row * BOOT98_CONSOLE_COLUMNS + cursor_column;
 
 	if (!gdc_write(0x62, 0x4b) ||
-	    !gdc_write(0x60, 0x8f) ||
+	    !gdc_write(0x60, cursor_visible ? 0x8f : 0x0f) ||
 	    !gdc_write(0x60, 0x20) ||
 	    !gdc_write(0x60, 0x7b) ||
 	    !gdc_write(0x62, 0x49) ||

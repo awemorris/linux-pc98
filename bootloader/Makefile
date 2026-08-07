@@ -15,7 +15,7 @@ include noct.mk
 STAGE2_OBJS := boot98-stage2-entry.o boot98-stage2.o boot98-console.o \
 	boot98-fs.o \
 	boot98-fat.o boot98-fat16.o boot98-image.o \
-	boot98-noct.o boot98-noct-platform.o \
+	boot98-noct.o boot98-noct-napi.o boot98-noct-platform.o \
 	$(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) $(BOOT98_SOFTFLOAT_OBJECTS)
 
 all: boot2.bin ipl-lba0.bin ipl-lba2.bin ipl-lba0.img ipl-lba2.img \
@@ -147,11 +147,17 @@ boot98-fat16.o: boot98-fat16.c boot98-fat16.h boot98-fat.h boot98-fs.h
 boot98-image.o: boot98-image.c boot98-image.h boot98-fs.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
-boot98-noct.o: boot98-noct.c boot98-noct.h libc/boot98-heap.h
+boot98-noct.o: boot98-noct.c boot98-noct.h boot98-noct-napi.h \
+	libc/boot98-heap.h
+	$(CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) -c $< -o $@
+
+boot98-noct-napi.o: boot98-noct-napi.c boot98-noct-napi.h boot98-noct.h \
+	libc/boot98-heap.h
 	$(CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) -c $< -o $@
 
 boot98-noct-platform.o: boot98-noct-platform.c boot98-noct-platform.h \
-	boot98-noct.h boot98-noct-m6-script.h boot98-console.h boot98-fs.h
+	boot98-noct.h boot98-noct-napi.h boot98-noct-m6-script.h \
+	boot98-console.h boot98-fs.h
 	$(CC) $(BOOT98_LIBC_CPPFLAGS) -I. $(BOOT98_LIBC_CFLAGS) -c $< -o $@
 
 boot98-stage2.elf: $(STAGE2_OBJS) boot98-stage2.ld
@@ -197,12 +203,12 @@ tests/boot98-fat-host-test: tests/boot98-fat-host-test.c boot98-fs.c \
 BOOT98_NOCT_TEST := ../build/bootloader/tests/boot98-noct-host-test
 
 $(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c \
-	boot98-noct-m6-script.h boot98-noct.o \
+	boot98-noct-m6-script.h boot98-noct.o boot98-noct-napi.o \
 	$(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) $(BOOT98_SOFTFLOAT_OBJECTS)
 	@mkdir -p $(dir $@)
 	$(HOSTCC) -m32 -no-pie -fno-builtin -fno-stack-protector -Wall -Wextra \
-		-Werror -I. -Ilibc/include -Ilibc \
-		tests/boot98-noct-host-test.c boot98-noct.o \
+		-Werror -I. -Ilibc/include -Ilibc -I$(NOCT_ROOT)/include \
+		tests/boot98-noct-host-test.c boot98-noct.o boot98-noct-napi.o \
 		$(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
 		$(BOOT98_SOFTFLOAT_OBJECTS) -o $@
 
@@ -266,6 +272,10 @@ noct-m6-verify: noct-m5-verify noct-m6-generated-opcode-check BOOT.SYS
 noct-m7-verify: noct-m6-verify boot98-noct-host-test BOOT.SYS
 	@echo "PC98BE M7 host/build verification: PASS (arguments and main signature)"
 
+noct-m8-verify: noct-m7-verify boot98-noct-host-test BOOT.SYS \
+	noct-m5-final-opcode-check
+	@echo "PC98BE M8 host/build verification: PASS (safe native APIs)"
+
 check: tests/boot98-fat-host-test boot98-libc-host-test \
 	boot98-softfloat-host-test boot98-noct-host-test
 	./tests/boot98-fat-host-test
@@ -279,4 +289,5 @@ clean: noct-clean boot98-libc-clean boot98-softfloat-clean
 .PHONY: all check clean boot98-noct-host-test noct-m4-opcode-check \
 	noct-m4-verify noct-m5-final-opcode-check noct-m5-verify
 
-.PHONY: noct-m6-generated-opcode-check noct-m6-verify noct-m7-verify
+.PHONY: noct-m6-generated-opcode-check noct-m6-verify noct-m7-verify \
+	noct-m8-verify

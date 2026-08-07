@@ -1,10 +1,11 @@
 /*
- * PC-98 Bootstrap Environment Noct M6 JIT lifecycle test
+ * PC-98 Bootstrap Environment Noct lifecycle and M8 NAPI test
  * Copyright (C) 2026 Awe Morris
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #include "boot98-noct.h"
+#include "boot98-noct-napi.h"
 #include "boot98-noct-m6-script.h"
 #include "boot98-heap.h"
 
@@ -26,6 +27,130 @@ static unsigned char jit_capture[BOOT98_NOCT_JIT_CODE_MAX];
 static size_t jit_capture_length;
 static char output[OUTPUT_SIZE];
 static size_t output_length;
+
+struct mock_platform {
+	int clear_count;
+	int clear_row;
+	int put_row;
+	int put_column;
+	int put_attribute;
+	char put_text[32];
+	int cursor_row;
+	int cursor_column;
+	int cursor_visible;
+};
+
+static struct mock_platform mock;
+static const char imported_source[] =
+	"func imported() { return \"imported\"; }";
+
+static int mock_screen_clear(void *context)
+{
+	struct mock_platform *platform = context;
+	platform->clear_count++;
+	return 1;
+}
+
+static int mock_screen_clear_row(void *context, unsigned row)
+{
+	struct mock_platform *platform = context;
+	platform->clear_row = (int)row;
+	return 1;
+}
+
+static int mock_screen_put(void *context, unsigned row, unsigned column,
+			   const char *text, uint8_t attribute)
+{
+	struct mock_platform *platform = context;
+	size_t length = strlen(text);
+	if (length >= sizeof(platform->put_text))
+		return -1;
+	platform->put_row = (int)row;
+	platform->put_column = (int)column;
+	platform->put_attribute = attribute;
+	memcpy(platform->put_text, text, length + 1U);
+	return (int)length;
+}
+
+static int mock_screen_set_cursor(void *context, unsigned row,
+				  unsigned column)
+{
+	struct mock_platform *platform = context;
+	platform->cursor_row = (int)row;
+	platform->cursor_column = (int)column;
+	return 1;
+}
+
+static int mock_screen_show_cursor(void *context, int visible)
+{
+	struct mock_platform *platform = context;
+	platform->cursor_visible = visible;
+	return 1;
+}
+
+static int mock_keyboard_poll(void *context)
+{
+	(void)context;
+	return BOOT98_KEY_LEFT;
+}
+
+static int mock_keyboard_read(void *context)
+{
+	(void)context;
+	return 'A';
+}
+
+static int mock_file_size(void *context, const char *path, uint32_t *size)
+{
+	(void)context;
+	if (strcmp(path, "LIB.NCT") != 0)
+		return 0;
+	*size = (uint32_t)strlen(imported_source);
+	return 1;
+}
+
+static int mock_file_read(void *context, const char *path, uint32_t offset,
+			  void *buffer, uint32_t length)
+{
+	(void)context;
+	if (strcmp(path, "LIB.NCT") != 0 ||
+	    offset > strlen(imported_source) ||
+	    length > strlen(imported_source) - offset)
+		return 0;
+	memcpy(buffer, imported_source + offset, length);
+	return 1;
+}
+
+static int mock_directory_read(void *context, const char *path, unsigned index,
+			       struct boot98_noct_dirent *entry)
+{
+	static const struct boot98_noct_dirent entries[] = {
+		{ "BOOT.CFG", 7, 0x20 },
+		{ "SCRIPTS", 0, 0x10 },
+		{ "LIB.NCT", sizeof(imported_source) - 1U, 0x20 },
+	};
+	(void)context;
+	if (strcmp(path, "") != 0 && strcmp(path, "/") != 0)
+		return -1;
+	if (index >= sizeof(entries) / sizeof(entries[0]))
+		return 0;
+	*entry = entries[index];
+	return 1;
+}
+
+static const struct boot98_noct_services mock_services = {
+	&mock,
+	mock_screen_clear,
+	mock_screen_clear_row,
+	mock_screen_put,
+	mock_screen_set_cursor,
+	mock_screen_show_cursor,
+	mock_keyboard_poll,
+	mock_keyboard_read,
+	mock_file_size,
+	mock_file_read,
+	mock_directory_read,
+};
 
 static long
 host_syscall3(long number, long argument1, long argument2, long argument3)
@@ -109,6 +234,7 @@ run_case_args(const char *source, int argc, char *const argv[], int jit_enable,
 	options.write_context = NULL;
 	options.observe_jit_code = capture_jit;
 	options.jit_context = NULL;
+	options.services = &mock_services;
 	success = boot98_noct_run_args("noct-test.nct", source, argc, argv,
 				       &options, &result);
 	if (success != (expected == BOOT98_NOCT_OK) ||
@@ -118,8 +244,11 @@ run_case_args(const char *source, int argc, char *const argv[], int jit_enable,
 	if (result.current_after_reset != 0 || boot98_heap_current() != 0 ||
 	    result.heap_errors != 0 || !boot98_heap_validate())
 		return 20;
-	if (expected_output != NULL && strcmp(output, expected_output) != 0)
+	if (expected_output != NULL && strcmp(output, expected_output) != 0) {
+		(void)host_syscall3(SYS_WRITE, 2, (long)(uintptr_t)output,
+				    (long)output_length);
 		return 30;
+	}
 	if (expected_output == NULL && output_length == 0)
 		return 31;
 	if (jit_enable) {
@@ -161,6 +290,35 @@ main(int argc, char **argv)
 		"func main() { Console.write(\"long\"); return 9L; }";
 	static const char bad_signature[] =
 		"func main(first, second) { return 0; }";
+	static const char napi_script[] =
+		"func main() { "
+		"Console.print({answer: 42, items: [\"x\", 2]}); "
+		"Console.write(\"raw\"); Console.print(\"\"); "
+		"Screen.clear(); Screen.clearRow(7); "
+		"Console.print(Screen.put(2, 3, \"AB\", 225)); "
+		"Screen.setCursor(4, 5); Screen.showCursor(0); "
+		"Console.print(Keyboard.poll()); "
+		"Console.print(Keyboard.read()); "
+		"Console.print(Keyboard.isPrintable(65)); "
+		"Console.print(Key.Left); "
+		"var entries = Directory.list(\"/\"); "
+		"Console.print(entries[0].name); "
+		"var stat = Directory.stat(\"/BOOT.CFG\"); "
+		"Console.print(stat.size); "
+		"Console.print(System.getOSName()); "
+		"System.import(\"LIB.NCT\"); Console.print(imported()); "
+		"var usage = System.memoryUsage(); "
+		"Console.print(usage.arenaSize); return 0; }";
+	static const char napi_output[] =
+		"{answer: 42, items: [\"x\", 2]}\n"
+		"raw\n2\n315\n65\n1\n315\nBOOT.CFG\n7\nPC98BE\n"
+		"imported\n6291456\n";
+	static const char invalid_screen[] =
+		"func main() { Screen.put(25, 0, \"bad\", 225); }";
+	static const char invalid_directory[] =
+		"func main() { Directory.list(\"/SUB\"); }";
+	static const char missing_import[] =
+		"func main() { System.import(\"MISSING.NCT\"); }";
 	char *script_arguments[] = { "alpha", "beta" };
 	static char interpreter_output[OUTPUT_SIZE];
 	struct boot98_noct_result result;
@@ -206,7 +364,34 @@ main(int argc, char **argv)
 			  NULL, &result);
 	if (status != 0)
 		return 180 + status;
+	if (boot98_key_normalize_bios_ax(0x1c0d) != BOOT98_KEY_ENTER ||
+	    boot98_key_normalize_bios_ax(0x3b00) != BOOT98_KEY_LEFT ||
+	    boot98_key_normalize_bios_ax(0x3900) != BOOT98_KEY_DELETE ||
+	    boot98_key_normalize_bios_ax(0xff00) != 0x1ff)
+		return 190;
+	memset(&mock, 0, sizeof(mock));
+	status = run_case(napi_script, 0, BOOT98_NOCT_OK, napi_output, &result);
+	if (status != 0)
+		return 200 + status;
+	if (mock.clear_count != 1 || mock.clear_row != 7 ||
+	    mock.put_row != 2 || mock.put_column != 3 ||
+	    mock.put_attribute != 225 || strcmp(mock.put_text, "AB") != 0 ||
+	    mock.cursor_row != 4 || mock.cursor_column != 5 ||
+	    mock.cursor_visible != 0)
+		return 240;
+	status = run_case(invalid_screen, 0, BOOT98_NOCT_RUNTIME_ERROR, NULL,
+			  &result);
+	if (status != 0)
+		return 245 + status;
+	status = run_case(invalid_directory, 0, BOOT98_NOCT_RUNTIME_ERROR, NULL,
+			  &result);
+	if (status != 0)
+		return 250 + status;
+	status = run_case(missing_import, 0, BOOT98_NOCT_RUNTIME_ERROR, NULL,
+			  &result);
+	if (status != 0)
+		return 255 + status;
 	if (!write_capture_file(argv[1]))
-		return 200;
+		return 260;
 	return 0;
 }

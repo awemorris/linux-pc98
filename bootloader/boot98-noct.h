@@ -42,6 +42,7 @@ struct boot98_noct_options {
 	void *write_context;
 	boot98_noct_jit_code_fn observe_jit_code;
 	void *jit_context;
+	const struct boot98_noct_services *services;
 };
 
 struct boot98_noct_result {

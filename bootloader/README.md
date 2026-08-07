@@ -26,6 +26,9 @@ execution test is in [`PC98BE-NOCT-M6-JIT.md`](PC98BE-NOCT-M6-JIT.md).
 The review record for FAT16 `.NCT` loading, shell arguments, and command
 resolution is in
 [`PC98BE-NOCT-M7-FILES.md`](PC98BE-NOCT-M7-FILES.md).
+The review record for the safe console, screen, keyboard, directory, and
+minimal system native APIs is in
+[`PC98BE-NOCT-M8-NAPI.md`](PC98BE-NOCT-M8-NAPI.md).
 
 `noct-test [1..100]` runs a built-in constant Noct program from the BOOT.SYS
 shell. It verifies VM creation, forced i386 JIT execution, integer/container
@@ -38,6 +41,11 @@ BOOT filesystem.  An unknown unqualified shell command is also resolved as
 an uppercased `.NCT` filename after all C built-ins, so `hello a b` invokes
 `HELLO.NCT` with `main(args)`.  Sources are limited to 256 KiB, and `main`
 may accept either zero arguments or one argument array.
+
+M8 scripts can use bounded `Console` serialization, the 80 by 25 positional
+`Screen` API, normalized `Keyboard` and `Key` values, read-only root
+`Directory` inspection, and `System.import`/memory reporting.  File and raw
+block writes are intentionally unavailable until the M9 and M10 review gates.
 
 ## Disk layout
 

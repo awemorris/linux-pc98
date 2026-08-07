@@ -1,0 +1,25 @@
+func main() {
+    Console.print("PC98BE M8 NAPI test");
+    Console.print(System.getOSName());
+
+    Screen.clearRow(10);
+    var cells = Screen.put(10, 0, "M8 SCREEN", 225);
+    Screen.setCursor(11, 0);
+    Screen.showCursor(1);
+    Console.print("screen cells=" + cells);
+
+    Console.print("key poll=" + Keyboard.poll());
+    Console.print("A printable=" + Keyboard.isPrintable(65));
+
+    var entries = Directory.list("/");
+    Console.print("root entries=" + Array.size(entries));
+    var info = Directory.stat("/BOOT.SYS");
+    Console.print("BOOT.SYS size=" + info.size);
+
+    System.import("LIB-M8.NCT");
+    Console.print(m8Imported());
+    var memory = System.memoryUsage();
+    Console.print("arena=" + memory.arenaSize);
+    Console.print("PC98BE-M8-QEMU-PASS");
+    return 0;
+}

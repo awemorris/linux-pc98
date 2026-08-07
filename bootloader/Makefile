@@ -3,12 +3,19 @@ LD := ld
 OBJCOPY := objcopy
 CC := gcc
 HOSTCC ?= cc
+.DEFAULT_GOAL := all
 ASFLAGS := --32
 STAGE2_CFLAGS := -m32 -march=i386 -Os -ffreestanding -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -Wall -Wextra -Werror
 SCRIPTS_DIR := ../scripts
+
+include libc/libc.mk
+include noct.mk
+
 STAGE2_OBJS := boot98-stage2-entry.o boot98-stage2.o boot98-console.o \
 	boot98-fs.o \
-	boot98-fat.o boot98-fat16.o boot98-image.o
+	boot98-fat.o boot98-fat16.o boot98-image.o \
+	boot98-noct.o boot98-noct-platform.o boot98-noct-softfloat-stubs.o \
+	$(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS)
 
 all: boot2.bin ipl-lba0.bin ipl-lba2.bin ipl-lba0.img ipl-lba2.img \
 	ipl-part.img IO.SYS BOOT.SYS \
@@ -139,6 +146,16 @@ boot98-fat16.o: boot98-fat16.c boot98-fat16.h boot98-fat.h boot98-fs.h
 boot98-image.o: boot98-image.c boot98-image.h boot98-fs.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
+boot98-noct.o: boot98-noct.c boot98-noct.h libc/boot98-heap.h
+	$(CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) -c $< -o $@
+
+boot98-noct-platform.o: boot98-noct-platform.c boot98-noct-platform.h \
+	boot98-noct.h boot98-console.h
+	$(CC) $(BOOT98_LIBC_CPPFLAGS) -I. $(BOOT98_LIBC_CFLAGS) -c $< -o $@
+
+boot98-noct-softfloat-stubs.o: boot98-noct-softfloat-stubs.S
+	$(AS) $(ASFLAGS) $< -o $@
+
 boot98-stage2.elf: $(STAGE2_OBJS) boot98-stage2.ld
 	$(LD) -m elf_i386 -T boot98-stage2.ld -nostdlib $(STAGE2_OBJS) -o $@
 
@@ -179,13 +196,41 @@ tests/boot98-fat-host-test: tests/boot98-fat-host-test.c boot98-fs.c \
 	$(HOSTCC) -std=c11 -O2 -Wall -Wextra -Werror -I. \
 		boot98-fs.c boot98-fat.c boot98-fat16.c $< -o $@
 
-check: tests/boot98-fat-host-test boot98-libc-host-test
+BOOT98_NOCT_TEST := ../build/bootloader/tests/boot98-noct-host-test
+
+$(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c boot98-noct.o \
+	boot98-noct-softfloat-stubs.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS)
+	@mkdir -p $(dir $@)
+	$(HOSTCC) -m32 -no-pie -fno-builtin -fno-stack-protector -Wall -Wextra \
+		-Werror -I. -Ilibc/include -Ilibc \
+		tests/boot98-noct-host-test.c boot98-noct.o \
+		boot98-noct-softfloat-stubs.o $(NOCT_OBJECTS) \
+		$(BOOT98_LIBC_OBJECTS) -o $@
+
+boot98-noct-host-test: $(BOOT98_NOCT_TEST)
+	$(BOOT98_NOCT_TEST)
+	@echo "BOOT98 Noct lifecycle host tests: PASS"
+
+noct-m4-opcode-check: boot98-noct.o boot98-noct-platform.o \
+	boot98-noct-softfloat-stubs.o
+	@if $(NOCT_OBJDUMP) -d --no-show-raw-insn $^ | \
+		grep -E '(^[[:space:]]*[0-9a-f]+:[[:space:]]+f[a-z0-9]+[[:space:]])|\b(bswap|cmpxchg|xadd|cmov[a-z]*|rdtsc|ud2|cpuid|fx[a-z]+|movaps|movups|xmm[0-9]|ymm[0-9]|zmm[0-9])\b'; then \
+		echo "ERROR: M4 glue contains a post-i386 opcode" >&2; \
+		exit 1; \
+	fi
+	@echo "BOOT98 Noct M4 glue i386 opcode check: PASS"
+
+noct-m4-verify: noct-m3-verify boot98-noct-host-test \
+	noct-m4-opcode-check BOOT.SYS
+	@echo "PC98BE M4 verification: PASS (Noct JIT disabled)"
+
+check: tests/boot98-fat-host-test boot98-libc-host-test \
+	boot98-noct-host-test
 	./tests/boot98-fat-host-test
 
-include libc/libc.mk
-include noct.mk
-
 clean: noct-clean boot98-libc-clean
-	rm -f *.o *.elf *.bin *.com *.BIN *.SYS tests/boot98-fat-host-test
+	rm -f *.o *.elf *.bin *.com *.BIN *.SYS tests/boot98-fat-host-test \
+		$(BOOT98_NOCT_TEST)
 
-.PHONY: all check clean
+.PHONY: all check clean boot98-noct-host-test noct-m4-opcode-check \
+	noct-m4-verify

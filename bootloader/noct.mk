@@ -1,8 +1,8 @@
 # Selected Noct core for the PC-98 Bootstrap Environment.
 #
 # M2 deliberately compiled these objects without linking them into BOOT.SYS.
-# M3 keeps that boundary, disables the JIT temporarily, and performs a
-# relocatable link audit against the freestanding libc foundation.
+# M3 kept that boundary and performed a relocatable link audit.  M4 links the
+# same JIT-disabled core into BOOT.SYS and exercises its lifecycle.
 # Generated lexer/parser C sources are imported and used directly, so flex and
 # bison are not build dependencies.
 
@@ -64,8 +64,7 @@ NOCT_CFLAGS := \
 # The approved upstream snapshot predates a warning-clean release build.
 # Keep -Werror for every other diagnostic, but leave these exact warnings
 # visible in the named translation units so the vendored snapshot can remain
-# byte-for-byte identical to upstream.  M3 does not make them product code:
-# the output is still excluded from BOOT.SYS.
+# byte-for-byte identical to upstream.
 $(NOCT_BUILD_DIR)/noct.o: NOCT_WARNING_EXCEPTIONS := \
 	-Wno-error=unused-parameter
 $(NOCT_BUILD_DIR)/runtime.o: NOCT_WARNING_EXCEPTIONS := \

@@ -11,6 +11,7 @@
 #include "boot98-fs.h"
 #include "boot98-image.h"
 #include "boot98-messages.h"
+#include "boot98-noct-platform.h"
 
 #define MAX_PARTS 16
 #define CFG_MAX 8192
@@ -828,7 +829,7 @@ static int command(char *s)
 	if (streq(v[0], "help")) {
 		puts("help echo pause wait devalias probe-ide probe-scsi "
 		     "disk part ls cat source kernel arg boot linux "
-		     "run iplware reboot halt\n");
+		     "run iplware noct-test reboot halt\n");
 		return 1;
 	}
 	if (streq(v[0], "echo")) {
@@ -986,6 +987,16 @@ static int command(char *s)
 		return n == 2 && run_iplware(v[1]);
 	if (streq(v[0], "run"))
 		return n >= 2 && run_applet(v[1], n - 2, &v[2]);
+	if (streq(v[0], "noct-test")) {
+		int repeat;
+
+		if (n > 2)
+			return 0;
+		repeat = n == 2 ? number(v[1]) : 1;
+		if (repeat < 1 || repeat > 100)
+			return 0;
+		return boot98_noct_run_embedded((unsigned)repeat);
+	}
 	return 0;
 }
 

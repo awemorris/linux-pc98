@@ -1,6 +1,6 @@
 # PC-98 Bootstrap Environment: M3 Heap and Freestanding Libc
 
-Status: **M3 IMPLEMENTED — AWAITING USER REVIEW**
+Status: **M3 COMPLETE — REVIEWED AND COMMITTED 2026-08-07**
 
 Recorded on 2026-08-07 for M3 of
 `PC98BE-NOCT-IMPLEMENTATION-PLAN.md`.  This milestone establishes the bounded

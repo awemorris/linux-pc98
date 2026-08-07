@@ -1041,7 +1041,7 @@ objects appear under `third_party/noct`.
 
 ### M3 — Heap and integer-only libc foundation
 
-Status: **IMPLEMENTED — AWAITING USER REVIEW**.  See
+Status: **COMPLETE — REVIEWED AND COMMITTED 2026-08-07**.  See
 `PC98BE-NOCT-M3-LIBC.md` for the implementation boundary, measurements, and
 verification record.
 
@@ -1053,6 +1053,9 @@ objects have no host libc references except the explicitly deferred
 soft-float/math symbols.
 
 ### M4 — Minimal interpreter lifecycle
+
+Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+`PC98BE-NOCT-M4-LIFECYCLE.md` for lifecycle, size, and QEMU evidence.
 
 1. Link Noct core without standard APIs and with JIT disabled.
 2. Add `boot98_noct_run` cleanup structure.

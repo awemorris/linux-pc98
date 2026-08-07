@@ -29,6 +29,9 @@ resolution is in
 The review record for the safe console, screen, keyboard, directory, and
 minimal system native APIs is in
 [`PC98BE-NOCT-M8-NAPI.md`](PC98BE-NOCT-M8-NAPI.md).
+The review record for the protected/real-mode BIOS write gateway and generic
+filesystem write contract is in
+[`PC98BE-NOCT-M9-WRITES.md`](PC98BE-NOCT-M9-WRITES.md).
 
 `noct-test [1..100]` runs a built-in constant Noct program from the BOOT.SYS
 shell. It verifies VM creation, forced i386 JIT execution, integer/container
@@ -44,8 +47,10 @@ may accept either zero arguments or one argument array.
 
 M8 scripts can use bounded `Console` serialization, the 80 by 25 positional
 `Screen` API, normalized `Keyboard` and `Key` values, read-only root
-`Directory` inspection, and `System.import`/memory reporting.  File and raw
-block writes are intentionally unavailable until the M9 and M10 review gates.
+`Directory` inspection, and `System.import`/memory reporting. M9 adds an
+internal one-sector BIOS write gateway and a result-bearing generic filesystem
+write contract. FAT16, Noct `File`, and raw Block NAPI remain read-only until
+their M10 and M11 review gates.
 
 ## Disk layout
 

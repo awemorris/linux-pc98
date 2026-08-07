@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 bootloader="$repo/bootloader"
+stage2_image="${BOOT98_STAGE2_IMAGE:-$bootloader/BOOT.SYS}"
 partition="${BOOT_PARTITION:-0}"
 install_disk_stubs="${INSTALL_DISK_STUBS:-0}"
 while test "$#" -gt 0; do
@@ -47,6 +48,10 @@ done
 
 make -C "$bootloader" ipl-lba0.bin ipl-lba2.bin \
 	ipl-lba0.img ipl-lba2.img ipl-part.img IO.SYS BOOT.SYS
+test -f "$stage2_image" || {
+	echo "BOOT.SYS image not found: $stage2_image" >&2
+	exit 1
+}
 io_sys_size="$(stat -c %s "$bootloader/IO.SYS")"
 
 # Recreate the first FAT16 partition as the BOOT environment.  The volume has
@@ -163,7 +168,7 @@ with open(image, "r+b") as stream:
 PY
 mcopy -o -i "$image@@$offset" "$bootloader/IO.SYS" ::IO.SYS
 mattrib -i "$image@@$offset" +r +h +s ::IO.SYS
-mcopy -o -i "$image@@$offset" "$bootloader/BOOT.SYS" ::BOOT.SYS
+mcopy -o -i "$image@@$offset" "$stage2_image" ::BOOT.SYS
 mattrib -i "$image@@$offset" +r +h +s ::BOOT.SYS
 if test -f "$bootloader/HELLO.NCT"; then
 	mcopy -o -i "$image@@$offset" "$bootloader/HELLO.NCT" ::HELLO.NCT

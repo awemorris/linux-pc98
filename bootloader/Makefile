@@ -17,6 +17,8 @@ STAGE2_OBJS := boot98-stage2-entry.o boot98-stage2.o boot98-console.o \
 	boot98-fat.o boot98-fat16.o boot98-image.o \
 	boot98-noct.o boot98-noct-napi.o boot98-noct-platform.o \
 	$(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) $(BOOT98_SOFTFLOAT_OBJECTS)
+M9_STAGE2_OBJS := $(filter-out boot98-stage2.o,$(STAGE2_OBJS)) \
+	boot98-stage2-m9-test.o
 
 all: boot2.bin ipl-lba0.bin ipl-lba2.bin ipl-lba0.img ipl-lba2.img \
 	ipl-part.img IO.SYS BOOT.SYS \
@@ -132,6 +134,10 @@ boot98-stage2.o: boot98-stage2.c boot98-abi.h boot98-console.h \
 	boot98-messages.h boot98-fat16.h boot98-fs.h boot98-image.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
+boot98-stage2-m9-test.o: boot98-stage2.c boot98-abi.h boot98-console.h \
+	boot98-messages.h boot98-fat16.h boot98-fs.h boot98-image.h
+	$(CC) $(STAGE2_CFLAGS) -DBOOT98_M9_WRITE_TEST -c $< -o $@
+
 boot98-console.o: boot98-console.c boot98-console.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
@@ -164,6 +170,13 @@ boot98-stage2.elf: $(STAGE2_OBJS) boot98-stage2.ld
 	$(LD) -m elf_i386 -T boot98-stage2.ld -nostdlib $(STAGE2_OBJS) -o $@
 
 BOOT.SYS: boot98-stage2.elf $(SCRIPTS_DIR)/patch-boot98-bin.py
+	$(OBJCOPY) -O binary $< $@
+	python3 $(SCRIPTS_DIR)/patch-boot98-bin.py $@
+
+boot98-stage2-m9-test.elf: $(M9_STAGE2_OBJS) boot98-stage2.ld
+	$(LD) -m elf_i386 -T boot98-stage2.ld -nostdlib $(M9_STAGE2_OBJS) -o $@
+
+BOOT-M9.SYS: boot98-stage2-m9-test.elf $(SCRIPTS_DIR)/patch-boot98-bin.py
 	$(OBJCOPY) -O binary $< $@
 	python3 $(SCRIPTS_DIR)/patch-boot98-bin.py $@
 
@@ -276,6 +289,13 @@ noct-m8-verify: noct-m7-verify boot98-noct-host-test BOOT.SYS \
 	noct-m5-final-opcode-check
 	@echo "PC98BE M8 host/build verification: PASS (safe native APIs)"
 
+boot98-bios-write-qemu-test: BOOT-M9.SYS
+	$(SCRIPTS_DIR)/test-boot98-bios-write.sh all
+
+noct-m9-verify: noct-m8-verify check BOOT.SYS BOOT-M9.SYS \
+	boot98-bios-write-qemu-test
+	@echo "PC98BE M9 verification: PASS (IDE/SCSI BIOS write/read/restore)"
+
 check: tests/boot98-fat-host-test boot98-libc-host-test \
 	boot98-softfloat-host-test boot98-noct-host-test
 	./tests/boot98-fat-host-test
@@ -290,4 +310,4 @@ clean: noct-clean boot98-libc-clean boot98-softfloat-clean
 	noct-m4-verify noct-m5-final-opcode-check noct-m5-verify
 
 .PHONY: noct-m6-generated-opcode-check noct-m6-verify noct-m7-verify \
-	noct-m8-verify
+	noct-m8-verify boot98-bios-write-qemu-test noct-m9-verify

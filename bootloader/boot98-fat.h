@@ -38,18 +38,21 @@ struct boot98_fat_file_state {
 	uint32_t first_cluster;
 };
 
-typedef uint32_t (*boot98_fat_next_cluster_t)(
-	struct boot98_filesystem *filesystem, uint32_t cluster);
+typedef enum boot98_fs_result (*boot98_fat_next_cluster_t)(
+	struct boot98_filesystem *filesystem, uint32_t cluster,
+	uint32_t *next_cluster);
 
 struct boot98_fat_state *boot98_fat_state(
 	struct boot98_filesystem *filesystem);
 struct boot98_fat_file_state *boot98_fat_file_state(
 	struct boot98_file *file);
 
-int boot98_fat_probe(const struct boot98_volume *volume,
-		    enum boot98_fat_type required_type);
-int boot98_fat_mount(struct boot98_filesystem *filesystem,
-		    enum boot98_fat_type required_type);
+enum boot98_fs_result boot98_fat_probe(
+	const struct boot98_volume *volume,
+	enum boot98_fat_type required_type);
+enum boot98_fs_result boot98_fat_mount(
+	struct boot98_filesystem *filesystem,
+	enum boot98_fat_type required_type);
 
 const uint8_t *boot98_fat_read_sector(struct boot98_filesystem *filesystem,
 				      uint32_t lba);
@@ -61,14 +64,12 @@ int boot98_fat_name_matches(const uint8_t entry[32], const char name[11]);
 void boot98_fat_decode_dirent(const uint8_t raw[32],
 			      struct boot98_dirent *entry);
 
-int boot98_fat_read_chain(struct boot98_file *file, uint64_t offset,
-			  void *buffer, uint32_t length,
-			  boot98_read_progress_t progress,
-			  void *progress_context,
-			  boot98_fat_next_cluster_t next_cluster,
-			  uint32_t end_of_chain);
-int boot98_fat_contiguous_lba(struct boot98_file *file,
-			      uint32_t *absolute_lba,
-			      boot98_fat_next_cluster_t next_cluster);
+enum boot98_fs_result boot98_fat_read_chain(
+	struct boot98_file *file, uint64_t offset, void *buffer, uint32_t length,
+	boot98_read_progress_t progress, void *progress_context,
+	boot98_fat_next_cluster_t next_cluster, uint32_t end_of_chain);
+enum boot98_fs_result boot98_fat_contiguous_lba(
+	struct boot98_file *file, uint32_t *absolute_lba,
+	boot98_fat_next_cluster_t next_cluster);
 
 #endif

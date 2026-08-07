@@ -490,6 +490,62 @@ read_fixed_lba_done:
 	popfw
 	ret
 
+/* Fixed-disk one-sector write. EAX=LBA, ES:BP=source. */
+write_fixed_lba:
+	pushl	%eax
+	pushw	%bx
+	pushw	%cx
+	pushw	%dx
+	pushw	%si
+	pushw	%di
+	pushw	%ds
+	pushw	%es
+	pushw	%bp
+	xorl	%edx, %edx
+	movw	%cs:chain_entry, %si
+	movzbl	%cs:MENU_HEADS(%si), %edi
+	movzbl	%cs:MENU_SECTORS(%si), %ecx
+	imull	%ecx, %edi
+	testl	%edi, %edi
+	jz	write_fixed_lba_invalid
+	divl	%edi
+	cmpl	$0xffff, %eax
+	ja	write_fixed_lba_invalid
+	movw	%ax, %cx
+	movl	%edx, %eax
+	xorl	%edx, %edx
+	movzbl	%cs:MENU_SECTORS(%si), %edi
+	divl	%edi
+	movb	%al, %dh
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	movw	%cs:chain_entry, %si
+	movb	%cs:MENU_BIOS_ID(%si), %al
+	movb	$0x05, %ah
+	movw	$512, %bx
+	movw	HANDOFF+HO_SAVED_SI, %si
+	movw	HANDOFF+HO_SAVED_DI, %di
+	int	$0x1b
+	pushfw
+	popw	%ax
+	movw	%ax, %cs:disk_flags
+	jmp	write_fixed_lba_done
+write_fixed_lba_invalid:
+	movw	$1, %cs:disk_flags
+write_fixed_lba_done:
+	popw	%bp
+	popw	%es
+	popw	%ds
+	popw	%di
+	popw	%si
+	popw	%dx
+	popw	%cx
+	popw	%bx
+	popl	%eax
+	pushw	%cs:disk_flags
+	popfw
+	ret
+
 /*
  * Invoke one fixed-disk INT 1Bh/AH=84h SENSE operation. The PC-98 firmware
  * is not assumed to preserve general registers; only the documented result
@@ -623,11 +679,60 @@ bios_gateway32:
 	pushl	%esi
 	pushl	%ebx
 	movl	20(%esp), %eax
+	testl	%eax, %eax
+	jz	gateway32_invalid
+	cmpl	$0x000ffff0, %eax
+	ja	gateway32_invalid
 	movl	%eax, (0x10000 + gateway_request)
 	movb	$0, (0x10000 + gateway_active_service)
+	cmpw	$11, (%eax)
+	jne	gateway32_enter_real
+
+	/* Validate a one-sector fixed-disk write before copying caller memory. */
+	movzbl	4(%eax), %edx
+	movl	%edx, %ecx
+	andb	$0xfc, %cl
+	cmpb	$0x80, %cl
+	je	1f
+	andb	$0xf8, %dl
+	cmpb	$0xa0, %dl
+	jne	gateway32_invalid
+1:
+	movzbl	5(%eax), %ecx
+	testl	%ecx, %ecx
+	jz	gateway32_invalid
+	movzbl	6(%eax), %edx
+	testl	%edx, %edx
+	jz	gateway32_invalid
+	imull	%edx, %ecx
+	movl	8(%eax), %eax
+	xorl	%edx, %edx
+	divl	%ecx
+	cmpl	$0xffff, %eax
+	ja	gateway32_invalid
+	movl	(0x10000 + gateway_request), %eax
+	movl	12(%eax), %esi
+	testl	%esi, %esi
+	jz	gateway32_invalid
+	cmpl	$0xfffffe00, %esi
+	ja	gateway32_invalid
+	movl	$0x00008000, %edi
+	movl	$128, %ecx
+	cld
+	rep movsl
+
+gateway32_enter_real:
 	movl	%esp, (0x10000 + gateway_saved_esp)
 	cli
 	ljmp	$0x18, $gateway16_pm
+
+gateway32_invalid:
+	movl	$0xffffffff, %eax
+	popl	%ebx
+	popl	%esi
+	popl	%edi
+	popl	%ebp
+	ret
 
 gateway32_return:
 	movw	$0x10, %ax
@@ -677,6 +782,8 @@ gateway_real:
 	shrl	$4, %eax
 	movw	%ax, %es
 	movw	%es:(%bx), %ax
+	cmpw	$11, %ax
+	je	gateway_disk_write
 	cmpw	$10, %ax
 	je	gateway_probe_fixed
 	cmpw	$9, %ax
@@ -1011,6 +1118,35 @@ gateway_disk_error:
 	pushw	%cs
 	popw	%ds
 	movl	$0x0001ffff, gateway_result
+	jmp	gateway_real_return
+
+gateway_disk_write:
+	movb	$2, gateway_active_service
+	movb	%es:4(%bx), %al
+	movb	%al, gateway_menu+MENU_BIOS_ID
+	movb	%es:5(%bx), %al
+	movb	%al, gateway_menu+MENU_HEADS
+	movb	%es:6(%bx), %al
+	movb	%al, gateway_menu+MENU_SECTORS
+	movl	%es:8(%bx), %eax
+	movl	%eax, gateway_lba
+	movl	%es:12(%bx), %eax
+	movl	%eax, gateway_buffer
+	xorw	%bp, %bp
+	movw	$TABLE_SEG, %ax
+	movw	%ax, %es
+	movw	$gateway_menu, chain_entry
+	movl	gateway_lba, %eax
+	call	write_fixed_lba
+	jc	gateway_disk_write_error
+	pushw	%cs
+	popw	%ds
+	movl	$0, gateway_result
+	jmp	gateway_real_return
+gateway_disk_write_error:
+	pushw	%cs
+	popw	%ds
+	movl	$0x000bffff, gateway_result
 
 gateway_real_return:
 	cli

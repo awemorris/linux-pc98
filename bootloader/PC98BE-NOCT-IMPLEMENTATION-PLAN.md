@@ -1093,7 +1093,7 @@ is observed. JIT is mandatory for completion, not an optional optimization.
 
 ### M7 — NCT file loading and shell resolution
 
-Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+Status: **COMPLETE — REVIEWED AND COMMITTED 2026-08-08**. See
 `PC98BE-NOCT-M7-FILES.md` for command resolution, memory ownership, error
 paths, size, host tests, and 6 MiB i386 QEMU evidence.
 
@@ -1106,7 +1106,7 @@ behave as specified and return to the shell.
 
 ### M8 — Safe console/screen/keyboard/directory NAPI
 
-Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+Status: **COMPLETE — REVIEWED AND COMMITTED 2026-08-08**. See
 `PC98BE-NOCT-M8-NAPI.md` for the service-table boundary, API contract, key
 namespace, ownership rules, size, host tests, and 6 MiB i386 QEMU evidence.
 
@@ -1117,6 +1117,11 @@ Acceptance: positional Shift-JIS output is bounded, cursor is restored after
 return, special keys are stable in QEMU, and Directory lists the BOOT root.
 
 ### M9 — BIOS and generic filesystem writes
+
+Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+`PC98BE-NOCT-M9-WRITES.md` for the service-11 contract, low-memory bounce
+path, stable filesystem results, isolated test image method, size delta, and
+IDE/SCSI QEMU evidence.
 
 Implement Sections 11.1 and 11.2, then test raw sector writes only on temporary
 images. Do not begin FAT metadata writes until read-back validation passes on

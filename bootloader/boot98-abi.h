@@ -71,6 +71,8 @@ enum boot98_bios_service {
 	BOOT98_BIOS_CLOCK_SECOND = 9,
 	/* Probe exactly request.bios_id; request.status is a device-class hint. */
 	BOOT98_BIOS_PROBE_FIXED = 10,
+	/* One 512-byte fixed-disk write through the low-memory BIOS bounce area. */
+	BOOT98_BIOS_DISK_WRITE = 11,
 };
 
 struct boot98_bios_request {

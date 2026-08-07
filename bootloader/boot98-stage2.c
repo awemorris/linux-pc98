@@ -35,6 +35,9 @@ static struct boot98_device discovered_devices[MAX_FIXED_DEVICES];
 static unsigned device_count;
 static struct boot98_bios_request rq;
 static uint8_t sec[512], cfg[CFG_MAX];
+#ifdef BOOT98_M9_WRITE_TEST
+static uint8_t m9_original[512], m9_pattern[512], m9_observed[512];
+#endif
 static uint32_t load_text_done, load_text_total;
 static uint32_t load_data_done, load_data_total;
 static int load_progress_class = -1;
@@ -207,6 +210,16 @@ static int readsec(const struct boot98_device *d, uint32_t lba, void *buf)
 	rq.buffer = (uint32_t)buf;
 	return call(BOOT98_BIOS_DISK_READ) != 0;
 }
+static int writesec(const struct boot98_device *d, uint32_t lba,
+		    const void *buf)
+{
+	rq.bios_id = d->bios_id;
+	rq.heads = d->heads;
+	rq.sectors = d->sectors;
+	rq.lba = lba;
+	rq.buffer = (uint32_t)buf;
+	return call(BOOT98_BIOS_DISK_WRITE) != 0;
+}
 static uint16_t w16(const uint8_t *p)
 {
 	return p[0] | ((uint16_t)p[1] << 8);
@@ -264,6 +277,11 @@ static int disk_volume_read(const void *context, uint32_t lba, void *buffer)
 {
 	return !readsec(context, lba, buffer);
 }
+static int disk_volume_write(void *context, uint32_t lba,
+			     const void *buffer)
+{
+	return !writesec(context, lba, buffer);
+}
 
 static int mountpart(int device_index, int partition_index)
 {
@@ -274,10 +292,13 @@ static int mountpart(int device_index, int partition_index)
 
 	if (!parts[partition_index].valid)
 		return 0;
-	volume.context = &devs[device_index];
+	/* The shared volume ABI uses mutable context for write callbacks.  The
+	 * device descriptor itself remains logically read-only. */
+	volume.context = (void *)&devs[device_index];
 	volume.start_lba = parts[partition_index].data;
 	volume.sector_size = 512;
 	volume.read = disk_volume_read;
+	volume.write = disk_volume_write;
 	return boot98_fs_mount(&mounted_fs, &volume, drivers,
 			       sizeof(drivers) / sizeof(drivers[0]));
 }
@@ -831,6 +852,71 @@ static int linuxboot(void)
 				 kernel_arg);
 }
 
+#ifdef BOOT98_M9_WRITE_TEST
+static void m9_debug_puts(const char *text)
+{
+	while (*text) {
+		uint8_t character = (uint8_t)*text++;
+
+		asm volatile("outb %0,$0xe9" : : "a"(character));
+	}
+}
+
+static void m9_report(const char *text)
+{
+	puts(text);
+	m9_debug_puts(text);
+}
+
+static int m9_same_sector(const uint8_t *left, const uint8_t *right)
+{
+	for (unsigned i = 0; i < 512; i++)
+		if (left[i] != right[i])
+			return 0;
+	return 1;
+}
+
+/* Destructive raw-sector test, compiled only into BOOT-M9.SYS.  The caller
+ * must select an expendable sector in a temporary image.  Once the first
+ * write succeeds, every exit path attempts to restore the original sector. */
+static int m9_write_test(uint32_t lba)
+{
+	int result = 1;
+
+	if (curdev < 0) {
+		m9_report("M9 BIOS write test: no selected disk\n");
+		return 0;
+	}
+	if (readsec(&devs[curdev], lba, m9_original)) {
+		m9_report("M9 BIOS write test: initial read failed\n");
+		return 0;
+	}
+	for (unsigned i = 0; i < sizeof(m9_pattern); i++)
+		m9_pattern[i] = (uint8_t)(0xa5U ^ i ^ lba ^ (lba >> 8));
+	if (writesec(&devs[curdev], lba, m9_pattern)) {
+		m9_report("M9 BIOS write test: pattern write failed\n");
+		return 0;
+	}
+	if (readsec(&devs[curdev], lba, m9_observed) ||
+	    !m9_same_sector(m9_observed, m9_pattern)) {
+		m9_report("M9 BIOS write test: pattern read-back failed\n");
+		result = 0;
+	}
+	if (writesec(&devs[curdev], lba, m9_original)) {
+		m9_report("M9 BIOS write test: RESTORE FAILED\n");
+		return 0;
+	}
+	if (readsec(&devs[curdev], lba, m9_observed) ||
+	    !m9_same_sector(m9_observed, m9_original)) {
+		m9_report("M9 BIOS write test: restore read-back failed\n");
+		return 0;
+	}
+	if (result)
+		m9_report("M9 BIOS write/read/restore: PASS\n");
+	return result;
+}
+#endif
+
 /* Execute one already-tokenized shell command against the current state. */
 static int command(char *s)
 {
@@ -838,6 +924,13 @@ static int command(char *s)
 	int n = split(s, v, 20);
 	if (!n)
 		return 1;
+#ifdef BOOT98_M9_WRITE_TEST
+	if (streq(v[0], "m9-write-test")) {
+		int lba = n == 2 ? number(v[1]) : -1;
+
+		return lba >= 0 && m9_write_test((uint32_t)lba);
+	}
+#endif
 	if (streq(v[0], "help")) {
 		puts("help echo pause wait devalias probe-ide probe-scsi "
 		     "disk part ls cat source kernel arg boot linux "

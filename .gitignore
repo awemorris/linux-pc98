@@ -6,6 +6,7 @@
 /bootloader/*.o
 /bootloader/*.BIN
 /bootloader/BOOT.SYS
+/bootloader/BOOT-M9.SYS
 /bootloader/*.com
 *~
 __pycache__/

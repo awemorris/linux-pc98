@@ -6,6 +6,7 @@
 
 #include "boot98-console.h"
 #include "boot98-noct.h"
+#include "boot98-noct-m6-script.h"
 #include "boot98-noct-platform.h"
 
 #include <stddef.h>
@@ -15,14 +16,7 @@
 #define SCRIPT_ARENA_LIMIT 0x00f00000U
 #define SCRIPT_ARENA_GUARD 0x00010000U
 
-static const char embedded_source[] =
-	"func main() { "
-	"Console.write(\"Noct M5 float: \" + (123.0f / 321.0f)); "
-	"Console.write(\" double: \" + (123.0lf / 321.0lf)); "
-	"Console.write(\" sqrt: \" + Math.sqrt(9.0f)); "
-	"Console.write(\" sin: \" + Math.sin(0.5f)); "
-	"Console.write(\" cos: \" + Math.cos(0.5f)); "
-	"Console.write(\" tan: \" + Math.tan(0.5f)); }";
+static const char embedded_source[] = BOOT98_NOCT_M6_SOURCE;
 
 static void
 console_string(const char *string)
@@ -130,25 +124,31 @@ boot98_noct_run_embedded(unsigned repeat_count)
 	options.arena = (void *)SCRIPT_ARENA_BASE;
 	options.arena_size = arena_size;
 	options.fail_after = BOOT98_NOCT_NO_FAILURE;
+	options.jit_enable = 1;
+	options.jit_threshold = 1;
 	options.write = console_writer;
 	options.write_context = NULL;
+	options.observe_jit_code = NULL;
+	options.jit_context = NULL;
 	for (iteration = 0; iteration < repeat_count; iteration++) {
 		if (!boot98_noct_run("<embedded>", embedded_source, &options,
 				     &result)) {
-			console_string("Noct M5 failed: ");
+			console_string("Noct M6 failed: ");
 			console_string(boot98_noct_status_string(result.status));
 			console_string("\n");
 			boot98_console_update_cursor();
 			return 0;
 		}
-		if (result.current_after_reset != 0) {
-			console_string("Noct M5 cleanup failed\n");
+		if (result.current_after_reset != 0 ||
+		    result.jit_code_size != BOOT98_NOCT_JIT_CODE_MAX ||
+		    !result.jit_region_released) {
+			console_string("Noct M6 cleanup/JIT check failed\n");
 			boot98_console_update_cursor();
 			return 0;
 		}
 		console_string("\n");
 	}
-	console_string("Noct M5 PASS: runs=");
+	console_string("Noct M6 JIT PASS: runs=");
 	console_decimal(repeat_count);
 	console_string(" peak=");
 	console_decimal(result.heap_peak);

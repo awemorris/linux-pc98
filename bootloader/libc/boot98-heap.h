@@ -9,9 +9,20 @@
 
 #include <stddef.h>
 
+enum boot98_heap_event {
+	BOOT98_HEAP_ALLOCATED = 0,
+	BOOT98_HEAP_FREED,
+};
+
+typedef void (*boot98_heap_observer_fn)(void *context, void *pointer,
+					size_t size,
+					enum boot98_heap_event event);
+
 void boot98_heap_init(void *base, size_t size);
 void boot98_heap_reset(void);
 void boot98_heap_set_failure_after(size_t successful_allocations);
+void boot98_heap_set_observer(boot98_heap_observer_fn observer,
+			      void *context);
 void *boot98_malloc(size_t size);
 void *boot98_calloc(size_t count, size_t size);
 void *boot98_realloc(void *pointer, size_t size);

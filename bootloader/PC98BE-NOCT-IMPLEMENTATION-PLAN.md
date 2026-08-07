@@ -1068,7 +1068,7 @@ usable shell; memory current count returns to baseline after every run.
 
 ### M5 — Soft-float completeness
 
-Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+Status: **COMPLETE — REVIEWED AND COMMITTED 2026-08-07**. See
 `PC98BE-NOCT-M5-SOFTFLOAT.md` for source provenance, numerical vectors,
 opcode audit, size, and 6 MiB QEMU evidence.
 
@@ -1079,6 +1079,10 @@ Acceptance: known vectors and Noct float scripts pass; no x87/i486+ opcode;
 6 MiB SMALL QEMU still returns to shell cleanly.
 
 ### M6 — i386 JIT
+
+Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+`PC98BE-NOCT-M6-JIT.md` for runtime policy, generated-code audit, lifecycle,
+size, and 6 MiB i386 QEMU evidence.
 
 Import the approved Noct JIT platform hook, enable x86 JIT, add configurable
 code maximum, and force JIT execution with the corpus.

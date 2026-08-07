@@ -1,6 +1,6 @@
 # PC-98 Bootstrap Environment: M5 Software Floating Point
 
-Status: **M5 IMPLEMENTED — AWAITING USER REVIEW**
+Status: **M5 COMPLETE — REVIEWED AND COMMITTED 2026-08-07**
 
 Recorded on 2026-08-07 for M5 of
 `PC98BE-NOCT-IMPLEMENTATION-PLAN.md`. This milestone replaces M4's deliberate

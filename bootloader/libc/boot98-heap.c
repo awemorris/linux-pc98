@@ -37,6 +37,8 @@ static size_t heap_peak_bytes;
 static size_t heap_errors;
 static size_t heap_fail_after = SIZE_MAX;
 static size_t heap_successful_allocations;
+static boot98_heap_observer_fn heap_observer;
+static void *heap_observer_context;
 
 static size_t
 aligned_size(size_t size)
@@ -162,6 +164,8 @@ boot98_heap_init(void *base, size_t size)
 	heap_errors = 0;
 	heap_successful_allocations = 0;
 	heap_fail_after = SIZE_MAX;
+	heap_observer = NULL;
+	heap_observer_context = NULL;
 	if (base == NULL || raw > UINTPTR_MAX - (HEAP_ALIGNMENT - 1U))
 		return;
 	aligned = (raw + HEAP_ALIGNMENT - 1U) &
@@ -202,6 +206,13 @@ boot98_heap_set_failure_after(size_t successful_allocations)
 	heap_successful_allocations = 0;
 }
 
+void
+boot98_heap_set_observer(boot98_heap_observer_fn observer, void *context)
+{
+	heap_observer = observer;
+	heap_observer_context = context;
+}
+
 void *
 boot98_malloc(size_t size)
 {
@@ -228,6 +239,9 @@ boot98_malloc(size_t size)
 	if (heap_current_bytes > heap_peak_bytes)
 		heap_peak_bytes = heap_current_bytes;
 	heap_successful_allocations++;
+	if (heap_observer != NULL)
+		heap_observer(heap_observer_context, block_payload(block), requested,
+			      BOOT98_HEAP_ALLOCATED);
 	return block_payload(block);
 }
 
@@ -259,6 +273,9 @@ boot98_free(void *pointer)
 		heap_errors++;
 		return;
 	}
+	if (heap_observer != NULL)
+		heap_observer(heap_observer_context, pointer, block->used,
+			      BOOT98_HEAP_FREED);
 	heap_current_bytes -= block->used;
 	block->used = 0;
 	block->state = HEAP_FREE;

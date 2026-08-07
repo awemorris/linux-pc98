@@ -21,11 +21,14 @@ The review record for the linked, JIT-disabled interpreter lifecycle is in
 [`PC98BE-NOCT-M4-LIFECYCLE.md`](PC98BE-NOCT-M4-LIFECYCLE.md).
 The review record for the GCC/musl software floating-point runtime is in
 [`PC98BE-NOCT-M5-SOFTFLOAT.md`](PC98BE-NOCT-M5-SOFTFLOAT.md).
+The review record for the forced i386 JIT, generated-code audit, and 6 MiB
+execution test is in [`PC98BE-NOCT-M6-JIT.md`](PC98BE-NOCT-M6-JIT.md).
 
 `noct-test [1..100]` runs a built-in constant Noct program from the BOOT.SYS
-shell. It verifies VM creation, software float/double arithmetic and Math
-intrinsics, the minimal `Console.write` Native API, normal return, and complete
-arena reset before file-backed `.NCT` execution is introduced in M7.
+shell. It verifies VM creation, forced i386 JIT execution, integer/container
+operations, software Float/Double arithmetic, the minimal `Console.write`
+Native API, JIT-region release, and complete arena reset before file-backed
+`.NCT` execution is introduced in M7.
 
 ## Disk layout
 

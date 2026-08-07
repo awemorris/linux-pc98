@@ -1,14 +1,15 @@
 # Selected Noct core for the PC-98 Bootstrap Environment.
 #
 # M2 deliberately compiled these objects without linking them into BOOT.SYS.
-# M3 kept that boundary and performed a relocatable link audit.  M4 links the
-# same JIT-disabled core into BOOT.SYS and exercises its lifecycle.
+# M3 kept that boundary and performed a relocatable link audit.  M4 linked the
+# interpreter into BOOT.SYS, M5 added soft-float, and M6 enables the i386 JIT.
 # Generated lexer/parser C sources are imported and used directly, so flex and
 # bison are not build dependencies.
 
 NOCT_ROOT ?= ../third_party/noct
-NOCT_ENABLE_JIT ?= 0
-NOCT_PROFILE := $(if $(filter 1,$(NOCT_ENABLE_JIT)),jit,nojit)
+NOCT_ENABLE_JIT ?= 1
+NOCT_JIT_CODE_MAX ?= 196608
+NOCT_PROFILE := $(if $(filter 1,$(NOCT_ENABLE_JIT)),jit-$(NOCT_JIT_CODE_MAX),nojit)
 NOCT_BUILD_DIR ?= ../build/bootloader/noct-$(NOCT_PROFILE)
 NOCT_CC ?= $(CC)
 NOCT_OBJDUMP ?= objdump
@@ -43,6 +44,8 @@ NOCT_CPPFLAGS := \
 	-I$(NOCT_ROOT)/src/core \
 	-DNOCT_TARGET_PC98BE \
 	-DNOCT_MEMORY_SMALL \
+	-DNOCT_JIT_CODE_MAX=$(NOCT_JIT_CODE_MAX) \
+	-DBOOT98_NOCT_JIT_CODE_MAX=$(NOCT_JIT_CODE_MAX) \
 	-DHAVE_STDINT_H=1 \
 	-DHAVE_INTTYPES_H=1 \
 	-DHAVE_SYS_TYPES_H=1 \
@@ -83,6 +86,7 @@ $(NOCT_BUILD_DIR)/%.o: $(NOCT_ROOT)/src/core/%.c
 
 noct-objects: $(NOCT_OBJECTS)
 	@echo "Noct upstream: $(NOCT_UPSTREAM_COMMIT)"
+	@echo "Noct profile: $(NOCT_PROFILE), JIT code arena: $(NOCT_JIT_CODE_MAX) bytes"
 	@$(NOCT_SIZE) --totals $(NOCT_OBJECTS) | tail -1
 
 noct-opcode-check: noct-objects
@@ -118,7 +122,7 @@ noct-link-audit: noct-objects boot98-libc-objects
 
 noct-m3-verify: boot98-libc-host-test boot98-libc-opcode-check \
 	noct-opcode-check noct-link-audit
-	@echo "PC98BE M3 verification: PASS (Noct JIT disabled)"
+	@echo "PC98BE M3 historical boundary checks: PASS"
 
 noct-clean:
 	rm -f $(NOCT_OBJECTS) $(NOCT_M3_RELOC) $(NOCT_M3_UNDEFINED)

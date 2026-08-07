@@ -10,6 +10,9 @@
 #include <stddef.h>
 
 #define BOOT98_NOCT_NO_FAILURE ((size_t)-1)
+#ifndef BOOT98_NOCT_JIT_CODE_MAX
+#define BOOT98_NOCT_JIT_CODE_MAX (192U * 1024U)
+#endif
 
 enum boot98_noct_status {
 	BOOT98_NOCT_OK = 0,
@@ -24,13 +27,19 @@ enum boot98_noct_status {
 
 typedef size_t (*boot98_noct_write_fn)(void *context, const char *bytes,
 				       size_t length);
+typedef void (*boot98_noct_jit_code_fn)(void *context, const void *code,
+					size_t length);
 
 struct boot98_noct_options {
 	void *arena;
 	size_t arena_size;
 	size_t fail_after;
+	int jit_enable;
+	int jit_threshold;
 	boot98_noct_write_fn write;
 	void *write_context;
+	boot98_noct_jit_code_fn observe_jit_code;
+	void *jit_context;
 };
 
 struct boot98_noct_result {
@@ -39,6 +48,8 @@ struct boot98_noct_result {
 	size_t bytes_before_reset;
 	size_t current_after_reset;
 	size_t heap_errors;
+	size_t jit_code_size;
+	int jit_region_released;
 };
 
 int boot98_noct_run(const char *source_name, const char *source,

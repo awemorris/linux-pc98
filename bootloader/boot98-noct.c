@@ -18,8 +18,29 @@ struct active_console {
 	void *context;
 };
 
+struct jit_observation {
+	void *region;
+	size_t size;
+	int released;
+};
+
 static struct active_console active_console;
 static int lifecycle_active;
+
+static void
+observe_heap(void *context, void *pointer, size_t size,
+	     enum boot98_heap_event event)
+{
+	struct jit_observation *jit = context;
+
+	if (event == BOOT98_HEAP_ALLOCATED &&
+	    size == BOOT98_NOCT_JIT_CODE_MAX && jit->region == NULL) {
+		jit->region = pointer;
+		jit->size = size;
+	} else if (event == BOOT98_HEAP_FREED && pointer == jit->region) {
+		jit->released = 1;
+	}
+}
 
 static void
 emit_bytes(const char *bytes, size_t length)
@@ -104,6 +125,7 @@ boot98_noct_run(const char *source_name, const char *source,
 	NoctVM *vm = NULL;
 	NoctEnv *env = NULL;
 	NoctValue return_value;
+	struct jit_observation jit;
 	enum boot98_noct_status status = BOOT98_NOCT_INVALID_ARGUMENT;
 	int vm_created = 0;
 	size_t peak = 0;
@@ -112,11 +134,12 @@ boot98_noct_run(const char *source_name, const char *source,
 	size_t errors = 0;
 
 	memset(&return_value, 0, sizeof(return_value));
+	memset(&jit, 0, sizeof(jit));
 	if (result != NULL)
 		memset(result, 0, sizeof(*result));
 	if (source_name == NULL || source == NULL || options == NULL ||
 	    options->arena == NULL || options->arena_size < 4096U ||
-	    options->write == NULL)
+	    options->write == NULL || options->jit_threshold < 0)
 		goto finish_without_heap;
 	if (lifecycle_active) {
 		status = BOOT98_NOCT_BUSY;
@@ -127,11 +150,13 @@ boot98_noct_run(const char *source_name, const char *source,
 	active_console.write = options->write;
 	active_console.context = options->write_context;
 	boot98_heap_init(options->arena, options->arena_size);
+	boot98_heap_set_observer(observe_heap, &jit);
 	if (options->fail_after != BOOT98_NOCT_NO_FAILURE)
 		boot98_heap_set_failure_after(options->fail_after);
 
 	noct_set_default_config(&config);
-	config.jit_enable = false;
+	config.jit_enable = options->jit_enable != 0;
+	config.jit_threshold = options->jit_threshold;
 	if (!noct_create_vm(&vm, &env, &config)) {
 		status = BOOT98_NOCT_VM_ERROR;
 		emit_string("Noct: unable to create VM\n");
@@ -156,11 +181,15 @@ boot98_noct_run(const char *source_name, const char *source,
 	status = BOOT98_NOCT_OK;
 
 cleanup:
+	if (jit.region != NULL && options->observe_jit_code != NULL)
+		options->observe_jit_code(options->jit_context, jit.region,
+					  jit.size);
 	if (vm_created && !noct_destroy_vm(vm) && status == BOOT98_NOCT_OK)
 		status = BOOT98_NOCT_CLEANUP_ERROR;
 	peak = boot98_heap_peak();
 	before_reset = boot98_heap_current();
 	errors = boot98_heap_error_count();
+	boot98_heap_set_observer(NULL, NULL);
 	boot98_heap_reset();
 	after_reset = boot98_heap_current();
 	if ((after_reset != 0 || errors != 0) && status == BOOT98_NOCT_OK)
@@ -176,6 +205,8 @@ finish_without_heap:
 		result->bytes_before_reset = before_reset;
 		result->current_after_reset = after_reset;
 		result->heap_errors = errors;
+		result->jit_code_size = jit.size;
+		result->jit_region_released = jit.released;
 	}
 	return status == BOOT98_NOCT_OK;
 }

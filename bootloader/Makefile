@@ -151,7 +151,7 @@ boot98-noct.o: boot98-noct.c boot98-noct.h libc/boot98-heap.h
 	$(CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) -c $< -o $@
 
 boot98-noct-platform.o: boot98-noct-platform.c boot98-noct-platform.h \
-	boot98-noct.h boot98-console.h
+	boot98-noct.h boot98-noct-m6-script.h boot98-console.h
 	$(CC) $(BOOT98_LIBC_CPPFLAGS) -I. $(BOOT98_LIBC_CFLAGS) -c $< -o $@
 
 boot98-stage2.elf: $(STAGE2_OBJS) boot98-stage2.ld
@@ -196,7 +196,8 @@ tests/boot98-fat-host-test: tests/boot98-fat-host-test.c boot98-fs.c \
 
 BOOT98_NOCT_TEST := ../build/bootloader/tests/boot98-noct-host-test
 
-$(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c boot98-noct.o \
+$(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c \
+	boot98-noct-m6-script.h boot98-noct.o \
 	$(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) $(BOOT98_SOFTFLOAT_OBJECTS)
 	@mkdir -p $(dir $@)
 	$(HOSTCC) -m32 -no-pie -fno-builtin -fno-stack-protector -Wall -Wextra \
@@ -205,9 +206,15 @@ $(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c boot98-noct.o \
 		$(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
 		$(BOOT98_SOFTFLOAT_OBJECTS) -o $@
 
+NOCT_M6_JIT_CODE := ../build/logs/boot98-m6-jit-code.bin
+NOCT_M6_JIT_DISASSEMBLY := ../build/logs/boot98-m6-jit-code.disassembly
+NOCT_M6_JIT_REJECTED := ../build/logs/boot98-m6-jit-rejected.txt
+
 boot98-noct-host-test: $(BOOT98_NOCT_TEST)
-	$(BOOT98_NOCT_TEST)
-	@echo "BOOT98 Noct lifecycle host tests: PASS"
+	@mkdir -p $(dir $(NOCT_M6_JIT_CODE))
+	$(BOOT98_NOCT_TEST) $(NOCT_M6_JIT_CODE)
+	@test $$(stat -c%s $(NOCT_M6_JIT_CODE)) -eq $(NOCT_JIT_CODE_MAX)
+	@echo "BOOT98 Noct interpreter/JIT lifecycle host tests: PASS"
 
 noct-m4-opcode-check: boot98-noct.o boot98-noct-platform.o
 	@if $(NOCT_OBJDUMP) -d --no-show-raw-insn $^ | \
@@ -219,7 +226,7 @@ noct-m4-opcode-check: boot98-noct.o boot98-noct-platform.o
 
 noct-m4-verify: noct-m3-verify boot98-noct-host-test \
 	noct-m4-opcode-check BOOT.SYS
-	@echo "PC98BE M4 verification: PASS (Noct JIT disabled)"
+	@echo "PC98BE M4 historical lifecycle checks: PASS"
 
 NOCT_M5_DISASSEMBLY := ../build/logs/boot98-m5.disassembly
 NOCT_M5_REJECTED := ../build/logs/boot98-m5-rejected.txt
@@ -239,7 +246,22 @@ noct-m5-final-opcode-check: boot98-stage2.elf boot98-softfloat-opcode-check
 
 noct-m5-verify: noct-m4-verify boot98-softfloat-host-test \
 	noct-m5-final-opcode-check
-	@echo "PC98BE M5 verification: PASS (soft-float, Noct JIT disabled)"
+	@echo "PC98BE M5 historical soft-float checks: PASS"
+
+noct-m6-generated-opcode-check: boot98-noct-host-test
+	@$(NOCT_OBJDUMP) -D -b binary -m i386 --no-show-raw-insn \
+		$(NOCT_M6_JIT_CODE) > $(NOCT_M6_JIT_DISASSEMBLY)
+	@grep -E '(^[[:space:]]*[0-9a-f]+:[[:space:]]+f[a-z0-9]+[[:space:]])|\b(bswap|cmpxchg|xadd|cmov[a-z]*|rdtsc|ud2|cpuid|fx[a-z]+|movaps|movups|xmm[0-9]|ymm[0-9]|zmm[0-9])\b' \
+		$(NOCT_M6_JIT_DISASSEMBLY) > $(NOCT_M6_JIT_REJECTED) || true
+	@if test -s $(NOCT_M6_JIT_REJECTED); then \
+		echo "ERROR: generated Noct JIT code contains a forbidden opcode" >&2; \
+		cat $(NOCT_M6_JIT_REJECTED) >&2; \
+		exit 1; \
+	fi
+	@echo "BOOT98 M6 generated JIT i386 opcode check: PASS"
+
+noct-m6-verify: noct-m5-verify noct-m6-generated-opcode-check BOOT.SYS
+	@echo "PC98BE M6 verification: PASS (forced i386 JIT)"
 
 check: tests/boot98-fat-host-test boot98-libc-host-test \
 	boot98-softfloat-host-test boot98-noct-host-test
@@ -247,7 +269,11 @@ check: tests/boot98-fat-host-test boot98-libc-host-test \
 
 clean: noct-clean boot98-libc-clean boot98-softfloat-clean
 	rm -f *.o *.elf *.bin *.com *.BIN *.SYS tests/boot98-fat-host-test \
-		$(BOOT98_NOCT_TEST) $(NOCT_M5_DISASSEMBLY) $(NOCT_M5_REJECTED)
+		$(BOOT98_NOCT_TEST) $(NOCT_M5_DISASSEMBLY) $(NOCT_M5_REJECTED) \
+		$(NOCT_M6_JIT_CODE) $(NOCT_M6_JIT_DISASSEMBLY) \
+		$(NOCT_M6_JIT_REJECTED)
 
 .PHONY: all check clean boot98-noct-host-test noct-m4-opcode-check \
 	noct-m4-verify noct-m5-final-opcode-check noct-m5-verify
+
+.PHONY: noct-m6-generated-opcode-check noct-m6-verify

@@ -1026,7 +1026,7 @@ selected core with custom allocator declarations and no POSIX/DOS4G branch.
 
 ### M2 — Import Noct and establish reproducible build
 
-Status: **IMPLEMENTED — AWAITING USER REVIEW**.  See
+Status: **IMPLEMENTED — REVIEWED AND COMMITTED**.  See
 `PC98BE-NOCT-M2-IMPORT.md` for the imported revision, build boundary, and
 verification record.
 
@@ -1040,6 +1040,10 @@ Acceptance: offline rebuild works; imported tree is unmodified; no generated
 objects appear under `third_party/noct`.
 
 ### M3 — Heap and integer-only libc foundation
+
+Status: **IMPLEMENTED — AWAITING USER REVIEW**.  See
+`PC98BE-NOCT-M3-LIBC.md` for the implementation boundary, measurements, and
+verification record.
 
 Implement heap, headers, memory/string/integer formatting, and host tests.
 Temporarily compile Noct with JIT disabled and do not execute it in BOOT.SYS.

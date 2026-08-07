@@ -15,6 +15,8 @@ The review record for the upstream Noct PC98BE portability milestone is in
 [`PC98BE-NOCT-M1-UPSTREAM.md`](PC98BE-NOCT-M1-UPSTREAM.md).
 The review record for the vendored Noct snapshot and offline object build is
 in [`PC98BE-NOCT-M2-IMPORT.md`](PC98BE-NOCT-M2-IMPORT.md).
+The review record for the bounded heap and integer-only freestanding libc is
+in [`PC98BE-NOCT-M3-LIBC.md`](PC98BE-NOCT-M3-LIBC.md).
 
 ## Disk layout
 

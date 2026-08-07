@@ -179,12 +179,13 @@ tests/boot98-fat-host-test: tests/boot98-fat-host-test.c boot98-fs.c \
 	$(HOSTCC) -std=c11 -O2 -Wall -Wextra -Werror -I. \
 		boot98-fs.c boot98-fat.c boot98-fat16.c $< -o $@
 
-check: tests/boot98-fat-host-test
+check: tests/boot98-fat-host-test boot98-libc-host-test
 	./tests/boot98-fat-host-test
 
+include libc/libc.mk
 include noct.mk
 
-clean: noct-clean
+clean: noct-clean boot98-libc-clean
 	rm -f *.o *.elf *.bin *.com *.BIN *.SYS tests/boot98-fat-host-test
 
 .PHONY: all check clean

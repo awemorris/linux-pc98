@@ -68,24 +68,32 @@ build_noct()
 		opcode-check)
 			make -C "$repo/bootloader" noct-opcode-check "$@"
 			;;
+		libc-test)
+			make -C "$repo/bootloader" boot98-libc-host-test "$@"
+			;;
+		link-audit)
+			make -C "$repo/bootloader" noct-link-audit "$@"
+			;;
 		verify)
 			"$repo/scripts/update-noct.sh" verify
-			make -C "$repo/bootloader" noct-objects noct-opcode-check "$@"
+			make -C "$repo/bootloader" noct-m3-verify "$@"
 			;;
 		status)
 			"$repo/scripts/update-noct.sh" status
 			;;
 		clean)
-			make -C "$repo/bootloader" noct-clean "$@"
+			make -C "$repo/bootloader" noct-clean boot98-libc-clean "$@"
 			;;
 		-h | --help | help)
 			cat <<'EOF'
 Usage: ./build.sh noct COMMAND
 
 Commands:
-  objects       compile the selected PC98BE Noct core objects
+  objects       compile the selected PC98BE Noct core objects (JIT disabled)
   opcode-check  compile and reject post-i386 instructions
-  verify        verify the vendored snapshot, compile, and opcode-check
+  libc-test     run heap/libc host tests, including allocation failures
+  link-audit    relocatably link Noct/libc and audit undefined symbols
+  verify        verify snapshot, libc, opcodes, and the static link boundary
   status        print the imported origin and revision
   clean         remove only the selected Noct object files
 EOF

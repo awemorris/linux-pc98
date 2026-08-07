@@ -1,19 +1,21 @@
-# Boot Loaders
+# Boots
 
-The release images use a replaceable PC-98 boot chain.  Disk and partition
+**Boots: Boot loader and pre-boot environment** is the replaceable PC-98 boot
+chain used by the release images. Disk and partition
 loaders use PC-98 BIOS disk services; the FAT16-hosted 32-bit program provides
 the menu, interactive shell, and Linux ELF loader.  The PC/AT real-mode setup
 code is not executed.
 
-The approved implementation sequence for extending `BOOT.SYS` into the
-Noct-powered PC-98 Bootstrap Environment is in
+The approved implementation and finishing sequence for extending `BOOT.SYS`
+with Noct, a reusable REPL, environment variables, and Remacs compatibility is in
 [`PC98BE-NOCT-IMPLEMENTATION-PLAN.md`](PC98BE-NOCT-IMPLEMENTATION-PLAN.md).
 It is intentionally prescriptive so implementation can be delegated one
 reviewable milestone at a time.  The baseline recorded before source changes
 is in [`PC98BE-NOCT-M0-BASELINE.md`](PC98BE-NOCT-M0-BASELINE.md).
 The review record for the upstream Noct PC98BE portability milestone is in
 [`PC98BE-NOCT-M1-UPSTREAM.md`](PC98BE-NOCT-M1-UPSTREAM.md).
-The review record for the vendored Noct snapshot and offline object build is
+The historical review record for the original Noct source import and offline
+object build is
 in [`PC98BE-NOCT-M2-IMPORT.md`](PC98BE-NOCT-M2-IMPORT.md).
 The review record for the bounded heap and integer-only freestanding libc is
 in [`PC98BE-NOCT-M3-LIBC.md`](PC98BE-NOCT-M3-LIBC.md).
@@ -37,6 +39,15 @@ File API is in
 [`PC98BE-NOCT-M10-FILE-API.md`](PC98BE-NOCT-M10-FILE-API.md).
 The review record for the first safe Noct utilities is in
 [`PC98BE-NOCT-M11-UTILITIES.md`](PC98BE-NOCT-M11-UTILITIES.md).
+The review record for the current upstream refresh and subtree-to-submodule
+migration is in
+[`BOOTS-M12-NOCT-SUBMODULE.md`](BOOTS-M12-NOCT-SUBMODULE.md).
+Noct is now pinned as the `third_party/noct` submodule; initialization and
+update rules are documented in
+[`../third_party/NOCT-SUBMODULE.md`](../third_party/NOCT-SUBMODULE.md).
+The planned in-tree EDIT.NCT has been removed: the separately maintained Noct
+application Remacs will supply the editor after its source, license, generic
+NAPI requirements, and packaging mode are reviewed.
 
 `noct-test [1..100]` runs a built-in constant Noct program from the BOOT.SYS
 shell. It verifies VM creation, forced i386 JIT execution, integer/container

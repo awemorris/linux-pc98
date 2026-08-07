@@ -39,7 +39,7 @@ NOCT_API_SOURCES := $(filter $(NOCT_ROOT)/src/api/%,$(NOCT_SOURCES))
 NOCT_OBJECTS := \
 	$(patsubst $(NOCT_ROOT)/src/core/%.c,$(NOCT_BUILD_DIR)/%.o,$(NOCT_CORE_SOURCES)) \
 	$(patsubst $(NOCT_ROOT)/src/api/%.c,$(NOCT_BUILD_DIR)/%.o,$(NOCT_API_SOURCES))
-NOCT_UPSTREAM_COMMIT := $(shell sed -n 's/^Commit: `\([^`]*\)`.*/\1/p' $(NOCT_ROOT)/UPSTREAM.md)
+NOCT_UPSTREAM_COMMIT := $(shell git -C $(NOCT_ROOT) rev-parse HEAD 2>/dev/null || echo unknown)
 
 NOCT_CPPFLAGS := \
 	-nostdinc \

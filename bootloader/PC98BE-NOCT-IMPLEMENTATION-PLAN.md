@@ -1,4 +1,4 @@
-# PC-98 Bootstrap Environment: Noct Integration Implementation Plan
+# Boots: Noct Integration and Finishing Plan
 
 Status: **APPROVED — IMPLEMENT ONE REVIEWED MILESTONE AT A TIME**
 
@@ -12,6 +12,16 @@ Prepared against:
 - NoctLang commit `40670781403c760a0793cfb324b2b53a4c2f0228`
 - Date: 2026-08-07
 
+Finishing requirements amended 2026-08-08 against:
+
+- `linux-pc98` commit `d47dc9904`
+- NoctLang commit `765df9ed88439eed91d118ab9bdbc6d442524527`
+
+The amendment replaces the embedded Noct subtree with a pinned submodule,
+adds the reusable REPL and Boots environment-variable work, and removes the
+planned in-tree editor implementation. Remacs is the separately maintained
+Noct editor selected for later Boots compatibility and packaging work.
+
 This document is intentionally prescriptive. It is written so that an
 implementation model can execute one reviewable milestone at a time without
 reopening the architectural decisions. If the source has moved since the
@@ -21,13 +31,17 @@ different tree.
 
 ## 1. Objective
 
-Extend the existing PC-98 `BOOT.SYS` from a UNIX boot loader into a Bootstrap
-Environment (BE) that can execute Noct scripts and return to the BE shell.
+Extend the existing PC-98 `BOOT.SYS` into **Boots**, whose formal expansion is
+**Boot loader and pre-boot environment**. Boots can execute Noct scripts and
+return to its shell. The source directory remains `bootloader/`; established
+disk filenames (`IO.SYS`, `BOOT.SYS`) and internal `boot98_*`/`PC98BE` target
+identifiers remain stable unless a separately reviewed ABI-neutral rename is
+worth the churn.
 
 The completed first release must provide all of the following:
 
-1. Noct source is carried in `linux-pc98`, with its zlib license and upstream
-   revision recorded.
+1. Noct source is pinned as a `third_party/noct` git submodule, with its zlib
+   license and exact upstream revision recorded.
 2. The Noct core executes in 32-bit protected mode on an i386 without an FPU.
 3. The x86 JIT is enabled and executes on QEMU `-cpu 386` without i486, x87,
    MMX, or SSE instructions.
@@ -39,28 +53,38 @@ The completed first release must provide all of the following:
 6. Safe Native APIs cover console output, positional screen output, keyboard
    input, directory enumeration, and ordinary file access.
 7. FAT16 supports the minimum write operations needed by Noct's standard
-   `File` API, `cp`, and the editor demonstration.
-8. `ls.nct`, `cp.nct`, and a simple screen editor are included as examples.
+   `File` API, `cp`, and later Remacs compatibility.
+8. `ls.nct` and `cp.nct` are included as examples; the separately maintained
+   Noct program Remacs supplies the screen editor after compatibility tests.
 9. `dd.nct` is implemented only after a bounded raw-block NAPI exists.
 10. The existing menu, `BOOT.CFG`, Linux boot, chain boot, applets, and
     IPLware behavior continue to pass regression tests.
+11. The shell can start a Noct REPL. One VM is created for the REPL session
+    and destroyed completely when Ctrl-C returns to the Boots shell.
+12. Boots environment variables are available to BOOT.CFG, the shell, normal
+    Noct scripts, and the REPL without retaining pointers into a Noct VM.
+13. Boots-owned source is released under the zlib license after a per-file
+    provenance audit; imported third-party notices and licenses are retained.
 
-The kernel remains a non-returning payload. Noct scripts are returning BE
-programs. No persistent Noct VM is kept between script invocations in the
-first implementation.
+The kernel remains a non-returning payload. Ordinary Noct scripts are
+returning Boots programs and use one VM per invocation. The REPL is the one
+deliberate session-scoped exception: its VM persists only from REPL entry to
+Ctrl-C and never survives the return to the Boots shell.
 
 ## 2. Explicit non-goals for the first integration
 
 - No multithreaded Noct object model.
-- No Noct CLI, REPL, i18n, C/bytecode/Elisp/Scheme backends, process creation,
-  host shell execution, or POSIX emulation.
+- No complete Noct CLI, i18n, C/bytecode/Elisp/Scheme backends, process
+  creation, host shell execution, or POSIX emulation. Only the reusable REPL
+  session engine is integrated.
 - No paging, process isolation, privilege rings, or claim that scripts are a
   security boundary. Scripts on the BOOT partition are trusted code.
 - No FAT32, ext4, or UFS writer in this project phase. The generic interfaces
   must permit them later.
 - No subdirectory creation, long filename creation, journaling, or atomic
   rename in the first FAT16 writer.
-- No persistent VM or module cache across shell commands.
+- No persistent VM or module cache across shell commands. A REPL VM is scoped
+  to that one interactive command and is destroyed on exit.
 - No `Unsafe.Memory`, `Unsafe.IO`, or `Unsafe.BIOS` API in the first safe API
   milestone. Their namespaces are reserved for a separately reviewed phase.
 - No FreeBSD kernel loader in this plan. The image-loader abstraction remains
@@ -115,6 +139,8 @@ Generic Noct improvements belong upstream in `awemorris/NoctLang`:
 - generic freestanding/JIT portability hooks.
 - `NOCT_MEMORY_TINY`, after measurements establish useful defaults.
 - corrections to Noct API documentation and target-independent File API bugs.
+- a reusable REPL session engine and robust multiline-input recognition.
+- Linux CLI signal/input glue needed to exit the REPL cleanly with Ctrl-C.
 
 PC-98 and BE host glue belongs in `linux-pc98`:
 
@@ -132,20 +158,45 @@ Generic changes are committed to NoctLang first and then imported.
 
 ### 3.4 Noct import format
 
-Import Noct into `third_party/noct/` with `git subtree --squash`, not a
-submodule and not an untraceable file copy. Add:
+Noct is pinned as the `third_party/noct/` git submodule. A submodule is chosen
+over the earlier squashed subtree because Noct is receiving rapid fixes and
+features: the gitlink makes the reviewed upstream boundary exact, avoids
+copying upstream commits into an opaque vendor snapshot, and permits one-step
+updates after Noct's own tests pass.
 
 ```text
-third_party/noct/              imported upstream snapshot
-third_party/noct/UPSTREAM.md   origin URL, commit, import/update commands
+.gitmodules                    upstream URL
+third_party/noct               gitlink pinned to an exact Noct commit
+scripts/update-noct.sh         init/status/update/verify maintainer commands
 ```
 
-The product must build offline from the checked-out `linux-pc98` tree. No
-build command may fetch Noct from the network.
+`./build.sh noct init` is the only normal operation that may need the network.
+Once initialized, all product, image, and release builds are offline and must
+never fetch implicitly. `./build.sh noct update [REF]` fetches explicitly,
+checks out a detached upstream revision, and stages only the gitlink. Release
+source archives must either include the initialized submodule content or state
+the required recursive clone command; a bare superproject archive is not a
+complete Boots source distribution.
 
-Preserve Noct's zlib `LICENSE` and source notices. The combined BOOT.SYS is
-distributed under the linux-pc98 project license, while the imported Noct
-source remains under zlib terms. Record both in release license inventory.
+Preserve Noct's zlib `LICENSE` and source notices. Generic Noct changes are
+committed and tested in NoctLang first; linux-pc98 then advances only the
+gitlink. Direct edits inside the submodule are rejected by verification.
+
+### 3.5 Boots naming and license boundary
+
+The public product name is **Boots** and its expansion is **Boot loader and
+pre-boot environment**. User-visible headings, manuals, release notes, and
+new APIs use Boots. The historical `BOOT98` disk labels, executable names,
+`boot98_*` C symbols, and `NOCT_TARGET_PC98BE` may remain as implementation
+identifiers to avoid unnecessary disk-format or source-ABI changes.
+
+Boots-owned code is to be relicensed to zlib in a dedicated mechanical
+milestone. Before changing headers, generate a manifest of every file under
+`bootloader/`, confirm sole Awe Morris authorship or an explicit relicenseable
+origin, then add `SPDX-License-Identifier: Zlib` and the Boots zlib LICENSE.
+Do not rewrite notices in `third_party/noct`, GCC soft-fp sources, musl math
+sources, or any other imported component. Those components retain their own
+licenses and appear separately in the source and binary release inventory.
 
 ## 4. Current constraints that implementation must preserve
 
@@ -295,7 +346,7 @@ Expose GC sizes through `NoctConfig`; make the JIT maximum configurable or
 target-specific rather than duplicating an unrelated DOS4G condition.
 
 TINY is accepted only if the syntax regression corpus, File API smoke test,
-and editor demonstration run repeatedly without corruption. A clean OOM is
+and later Remacs compatibility tests run repeatedly without corruption. A clean OOM is
 acceptable for a script too large for TINY. Silent truncation or reduced
 language semantics is not acceptable.
 
@@ -503,7 +554,7 @@ bootloader/scripts/HELLO.NCT
 bootloader/scripts/LS.NCT
 bootloader/scripts/CP.NCT
 bootloader/scripts/DD.NCT        # after Block API
-bootloader/scripts/EDIT.NCT
+# Remacs is packaged later after separate source/license review.
 ```
 
 `bootloader/noct.mk` contains the exact imported Noct source list. Generated
@@ -698,9 +749,10 @@ Resolution order is fixed:
 4. if found, invoke it with remaining shell arguments;
 5. otherwise report the existing unknown-command error.
 
-Thus `edit VMLINUX` resolves to `EDIT.NCT`; `noct TEST.NCT x` remains
-available for explicit execution. C built-ins keep precedence, so adding an
-NCT file cannot replace `boot`, `disk`, or another recovery command.
+Thus `ls` resolves to `LS.NCT`; `noct TEST.NCT x` remains available for
+explicit execution. Remacs will be resolved by its approved application name
+after it is packaged. C built-ins keep precedence, so adding an NCT file
+cannot replace `boot`, `disk`, or another recovery command.
 
 Maximum source size begins at 256 KiB and must be configurable. Reject larger
 files before allocation. Maximum shell argument count remains bounded by the
@@ -784,10 +836,27 @@ Do not link host `api-system.c`. Provide only:
 System.getOSName()     -> "PC98BE"
 System.import(path)    -> register another source in the current VM
 System.memoryUsage()   -> { current, peak, arenaSize }
+System.getEnv(name)    -> value or null
+System.setEnv(name, value) -> 0
+System.unsetEnv(name)  -> 0
+System.listEnv()       -> dictionary copied into the current VM
 ```
 
 Imported source and functions live only until the current VM is destroyed.
 Resolve imports through the same selected filesystem.
+
+Boots owns the environment-variable store outside every Noct arena. Use a
+bounded packed store rather than one maximum-sized array per slot; start with
+a 4 KiB total budget, names limited to 31 bytes, values limited to 255 bytes,
+and at most 32 entries. Re-measure before increasing it. The NAPI copies names
+and values at the boundary and never retains a Noct string pointer. Variables
+persist across normal script and REPL sessions until Boots transfers control
+to a non-returning payload or the machine resets.
+
+Add shell built-ins `env`, `set NAME VALUE`, and `unset NAME`. BOOT.CFG uses
+the same commands, so configuration and interactive state have identical
+semantics. Invalid names, embedded `=`, overflow, and full-store conditions
+must return an explicit error without modifying the old value.
 
 ## 14. Block API and dangerous APIs
 
@@ -818,7 +887,7 @@ Unsafe.IO.*
 They require a separate design and user review. Do not smuggle raw access into
 the safe `System` or `Block` API.
 
-## 15. Script utilities and editor demonstration
+## 15. Script utilities, REPL, and Remacs integration
 
 ### 15.1 HELLO.NCT
 
@@ -843,43 +912,72 @@ Uses only `Block` API. Require explicit source, destination, block size/count,
 and bounded transfer. Print progress periodically with carriage return. It is
 not part of the first safe NAPI milestone.
 
-### 15.5 EDIT.NCT
+### 15.5 Remacs editor integration
 
-Implement the smallest useful full-screen editor:
+Do not implement `EDIT.NCT`. The separately maintained Noct program Remacs is
+the editor for Boots. Treat it as an external application with its own origin,
+revision, license, and update path. First inventory the generic Screen,
+Keyboard, File, Directory, and environment operations Remacs actually uses.
+Add only generally useful NAPI operations; never add a hidden Remacs-specific
+native helper.
 
-- one root-directory file;
-- ASCII editing while preserving existing Shift-JIS lead/trail byte pairs;
-- arrow movement, Home/End, Backspace/Delete, Enter;
-- Ctrl-S saves; Escape exits;
-- one status row containing file name, modified marker, and cursor position;
-- bounded file and line count with a clear `file too large` error;
-- no search, undo, syntax highlighting, tabs configuration, or IME initially.
+Acceptance covers loading Remacs from the BOOT FAT16 partition, opening,
+editing, saving, reopening, and exiting to a visible Boots cursor. Keep the
+Remacs source out of the Boots repository until its repository URL and license
+are recorded and the user approves either a submodule, release snapshot, or
+packaging-only dependency.
 
-The editor uses only Screen, Keyboard, and File/Directory APIs. It must not
-call a hidden editor-specific NAPI. This is the proof that the public NAPI is
-sufficient for future interactive programs.
+### 15.6 Reusable Noct REPL
+
+Fix the REPL in upstream Noct before integrating it into Boots. Split the
+current `src/cli/cli-repl.c` into a host-independent session engine and thin
+Linux CLI input/signal glue. The engine receives complete lines, owns a
+bounded source accumulator, reports `READY`, `NEED_MORE`, `EXECUTED`, `ERROR`,
+or `EXIT`, and operates on an environment supplied by its host. It must not
+call `fgets`, install signals, print prompts, or create hardware dependencies.
+
+Replace raw brace counting with a lexical completeness scanner that respects
+strings, escapes, line and block comments, and balanced `()`, `[]`, and `{}`.
+Test nested functions/loops/conditionals, braces inside strings and comments,
+blank lines, syntax errors, EOF during a block, and the source-size limit. A
+function defined during a session remains visible to later input in that same
+session.
+
+The Linux CLI creates one VM at REPL entry, registers its normal libraries,
+and destroys it on EOF or Ctrl-C. Its SIGINT handler is scoped to REPL input,
+restores the previous disposition, and converts an interrupted read into an
+orderly REPL exit. Interrupting an already-running infinite Noct function is
+not claimed until the VM has an explicit safepoint/cancellation mechanism.
+
+Boots adds a no-argument `noct` shell form for the REPL; `noct FILE.NCT` keeps
+its existing meaning. Boots creates one VM and high-memory arena at entry,
+registers the safe NAPI plus environment API, displays `> ` or `. `, and
+destroys the VM, closes streams, resets the arena, and restores the cursor on
+Ctrl-C (ASCII 0x03) or fatal session error. Ctrl-C is recognized while reading
+input; script-execution cancellation has the same limitation as Linux.
 
 ## 16. Build and source reproducibility
 
 ### 16.1 No network during product build
 
 `./build.sh bootloader`, image generation, and release generation use the
-checked-in `third_party/noct`. Network access is used only by the explicit
-maintainer update script.
+already-initialized, pinned `third_party/noct` submodule. Network access is
+used only by explicit `noct init` and `noct update` maintainer commands.
 
 ### 16.2 Maintainer update script
 
-Add `scripts/update-noct.sh` with:
+Maintain `scripts/update-noct.sh` with:
 
 ```text
-status                         show imported origin and commit
-import URL REF                 initial subtree import
-update URL REF                 subtree pull --squash
-verify                         license, UPSTREAM.md, clean generated state
+init                           initialize the pinned submodule
+status                         show URL, pinned/current commit, dirty state
+update [REF]                   fetch and stage a new gitlink
+verify                         license, gitlink, clean generated state
 ```
 
-The script refuses a dirty `third_party/noct` path and prints the exact subtree
-command before execution. It never deletes unrelated files.
+The script refuses a dirty submodule, never advances during an ordinary build,
+and never deletes unrelated files. Updating the gitlink follows successful
+upstream Linux host tests and precedes the complete Boots regression matrix.
 
 ### 16.3 Build reports
 
@@ -1030,6 +1128,10 @@ Status: **IMPLEMENTED — REVIEWED AND COMMITTED**.  See
 `PC98BE-NOCT-M2-IMPORT.md` for the imported revision, build boundary, and
 verification record.
 
+Historical note: M2 originally used a squashed subtree. M12 supersedes only
+that transport mechanism with a git submodule; the reviewed source boundary
+and build-object layout established by M2 remain valid.
+
 Repository: linux-pc98.
 
 1. Import approved Noct commit by subtree.
@@ -1148,26 +1250,88 @@ marker file and the host independently reads it.
 
 ### M11 — Noct utilities
 
-Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+Status: **COMPLETE — REVIEWED AND COMMITTED 2026-08-08**. See
 `PC98BE-NOCT-M11-UTILITIES.md` for the public-API boundary, path guard,
 bounded-copy behavior, packaging, and host/QEMU evidence.
 
-Add LS.NCT and CP.NCT first. Add bounded Block NAPI and DD.NCT only after a
-separate review of raw-write guards.
+LS.NCT and CP.NCT use only public NAPI. Bounded Block NAPI and DD.NCT remain a
+separately reviewed post-safe-core feature because they expose destructive raw
+writes; they do not block the first Boots release.
 
-Acceptance: utilities use only public NAPI, report errors, and do not leak
-arena memory over repeated runs.
+### M12 — Noct submodule migration and upstream refresh
 
-### M12 — Editor demonstration
+Status: **IMPLEMENTED — AWAITING USER REVIEW**.
 
-Add EDIT.NCT and any missing general Screen/Keyboard operation. Do not add an
-editor-specific native helper.
+1. Replace the imported Noct subtree with a `third_party/noct` gitlink.
+2. Pin commit `765df9ed88439eed91d118ab9bdbc6d442524527`.
+3. Provide explicit `init`, `status`, `update`, and `verify` maintainer
+   commands; no product build fetches implicitly.
+4. Run the upstream Noct tests, rebuild Boots, and rerun M11 verification.
 
-Acceptance: open, edit, save, reopen, and exit work in QEMU; Escape returns a
-visible BE cursor; Shift-JIS byte pairs already present in a file remain
-well-formed after edits outside them.
+Acceptance: a recursive clone builds offline, an uninitialized or dirty
+submodule fails with an actionable diagnostic, the staged gitlink equals the
+checked-out Noct commit, and the existing Noct/Boots tests still pass.
 
-### M13 — TINY and 5 MiB optimization
+### M13 — Reusable upstream REPL and Linux CLI
+
+Repository: NoctLang first, then advance the linux-pc98 gitlink.
+
+1. Split the existing CLI REPL into a host-independent session engine and a
+   thin Linux input/signal frontend.
+2. Replace brace counting with a bounded lexical scanner that ignores braces
+   inside strings and comments and balances `()`, `[]`, and `{}`.
+3. Give the session engine explicit READY/NEED_MORE/EXECUTED/ERROR/EXIT
+   results and no dependency on stdio, POSIX signals, or terminal control.
+4. On Linux, make Ctrl-C exit the REPL cleanly and restore the prior signal
+   handler. Do not claim that Ctrl-C can interrupt an already-running JIT
+   program until Noct has explicit safepoints.
+
+Acceptance: Linux single- and multiline REPL tests pass, braces in strings or
+comments do not confuse continuation, EOF and Ctrl-C release the VM exactly
+once, and existing CLI behavior outside the REPL is unchanged.
+
+### M14 — Boots environment variables
+
+1. Add a bounded Boots-owned environment store outside the Noct arena.
+2. Add shell/BOOT.CFG commands `env`, `set NAME VALUE`, and `unset NAME`.
+3. Export `System.getEnv`, `System.setEnv`, `System.unsetEnv`, and
+   `System.listEnv` through safe NAPI with copied strings only.
+4. Start with a 4 KiB packed store, at most 32 entries, names up to 31 bytes,
+   and values up to 255 bytes; reject overflow without changing the old value.
+
+Acceptance: variables persist across ordinary scripts and REPL sessions until
+boot/reset, no pointer into a destroyed VM survives, full-store and invalid
+name cases are deterministic, and existing BOOT.CFG files remain compatible.
+
+### M15 — Boots REPL integration
+
+1. Keep `noct FILE.NCT [args...]` unchanged and make argument-free `noct`
+   enter the interactive REPL.
+2. Create one VM on entry, register the same safe NAPI and environment bridge
+   as file scripts, and destroy/reset it on every exit path.
+3. Use the Boots line editor and visible cursor. ASCII Ctrl-C (`0x03`) exits
+   to a usable shell and restores console state.
+4. Preserve declarations and variables between successful REPL submissions;
+   syntax/runtime errors report and continue unless VM integrity is lost.
+
+Acceptance: repeated enter/evaluate/error/Ctrl-C cycles return arena use to
+baseline, multiline input works on QEMU `-cpu 386`, and file-script execution
+still creates a fresh VM per invocation.
+
+### M16 — Remacs compatibility and integration
+
+Do not implement or ship EDIT.NCT. Remacs is an independently maintained Noct
+program and supplies the editor demonstration. Inventory the generic
+Screen/Keyboard/File/Directory/environment services it uses, fill only generic
+NAPI gaps, and keep Remacs-specific policy in the application. Do not vendor
+Remacs until its repository URL, license, pinned revision, and release
+packaging mode are reviewed.
+
+Acceptance, after Remacs is approved for import: it loads from the BOOT FAT16
+partition, opens/edits/saves/reopens a file, exits with a visible Boots cursor,
+and requires no editor-specific native helper.
+
+### M17 — TINY and 5 MiB optimization
 
 Measure SMALL peaks, add upstream `NOCT_MEMORY_TINY`, reduce buffers and JIT
 cap based on data, then run the full TINY corpus.
@@ -1176,15 +1340,31 @@ Acceptance: the required 5 MiB QEMU case passes or the project records a
 measured higher minimum without hiding the failure. SMALL remains available
 for 6 MiB and larger machines.
 
-### M14 — Documentation and release integration
+### M18 — Boots naming and zlib license conversion
 
-Update BOOT98 design/readme, root README, build help, release scripts, license
-inventory, and release notes. Include Noct source commit and memory
-requirements.
+1. Inventory every source, header, assembly, generated, and imported file
+   under `bootloader/` with provenance and current license.
+2. Change only sole-author Boots-owned files to `SPDX-License-Identifier:
+   Zlib`, add the Boots zlib license, and retain all Noct, GCC soft-fp, musl,
+   and other third-party notices and license terms.
+3. Change user-visible product text and documentation to `Boots: Boot loader
+   and pre-boot environment`; retain compatibility filenames and internal
+   `boot98_*`/`PC98BE` identifiers unless separately reviewed.
 
-Acceptance: `./build.sh release` reproduces artifacts offline after setup,
-runs mandatory host/opcode tests, and includes `.NCT` examples in the BOOT
-partition without breaking existing image profiles.
+Acceptance: the license manifest accounts for every distributed source and
+binary input, automated header checks pass, and no third-party file is
+relicensed by inference.
+
+### M19 — Documentation and release integration
+
+Update design/readme, root README, build help, release scripts, license
+inventory, and release notes. Include pinned Noct/Remacs revisions and measured
+memory requirements.
+
+Acceptance: `./build.sh release` reproduces artifacts offline after explicit
+submodule initialization, runs mandatory host/opcode tests, and includes the
+approved `.NCT` applications in the BOOT partition without breaking existing
+image profiles.
 
 ## 19. Review checklist for every milestone
 
@@ -1208,7 +1388,7 @@ Never:
 - modify a user disk image in place;
 - download dependencies during normal product builds;
 - hide a failing test by disabling JIT, floats, warnings, or assertions;
-- place generic Noct fixes only in the vendored copy;
+- place generic Noct fixes only in the checked-out submodule;
 - advance past a review gate merely because the next change appears small.
 
 ## 20. Principal risks and mandatory mitigations
@@ -1224,9 +1404,14 @@ Never:
 | FAT write corrupts both copies | memory image plus independent checker | keep writer unreleased; fix ordering/bounds; test temporary copies only |
 | BIOS write differs by controller/ROM | IDE/SCSI QEMU and hardware | keep writes disabled for unverified paths; read-only Noct remains usable |
 | Standard File API semantics differ on short I/O | upstream unit tests | fix target-independent behavior upstream |
-| Noct upstream changes during integration | recorded commit/subtree | refresh inventory, import one reviewed commit, never mix revisions |
+| Noct submodule is absent, dirty, or at the wrong revision | submodule verifier | fail before compilation with initialization/update instructions; never fetch implicitly |
+| Noct upstream changes during integration | recorded gitlink commit | run upstream tests, advance one reviewed gitlink, never mix revisions |
+| REPL multiline parser misclassifies source | lexical-session tests | recognize strings, escapes, and comments; enforce bounded input and preserve the previous usable session |
+| Ctrl-C leaks a VM or leaves terminal state changed | repeated host/QEMU cycles | funnel EOF, Ctrl-C, errors, and normal exit through one session cleanup path |
+| Environment storage overflows or retains VM pointers | boundary/fault tests | copy across the NAPI boundary; reject atomically; keep storage outside the script arena |
+| Boots zlib conversion drops a third-party notice | complete license manifest/header check | relicense only audited sole-author files and preserve Noct/GCC/musl terms |
 | Unsafe NAPI destroys the VM/BE | separate namespace and review | defer until safe APIs and recovery are stable |
-| Editor drives PC-98 console state inconsistently | QEMU plus hardware | keep Screen primitives centralized in boot98-console and restore state on return |
+| Remacs demands application-specific native helpers | API inventory/review | extend only generic Screen/Keyboard/File services; keep editor policy in Remacs |
 
 ## 21. Definition of done
 
@@ -1239,8 +1424,16 @@ The Noct BE integration is complete only when all statements are true:
 - No per-script heap use remains after arena reset.
 - Standard File reads and writes work on the BOOT FAT16 partition.
 - LS.NCT and CP.NCT work through public APIs.
-- EDIT.NCT edits and saves a file through public APIs.
+- Noct is pinned as a verified submodule and normal builds work offline after
+  explicit initialization.
+- The Linux Noct REPL has robust multiline input and exits cleanly on Ctrl-C.
+- The Boots `noct` command provides a session VM that is fully destroyed on
+  exit and can read/write bounded Boots environment variables.
+- Remacs, after its source and packaging review, edits and saves a file using
+  only public generic APIs; no in-tree EDIT.NCT is implemented.
 - Existing Linux/chain/app/ IPLware boot regressions pass.
+- Boots-owned files are zlib-licensed only after a complete provenance audit;
+  all imported license notices remain intact.
 - SMALL has a documented measured RAM minimum.
 - TINY either boots and executes the required script at 5 MiB or has an
   honest documented measured limitation.

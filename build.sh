@@ -87,6 +87,12 @@ build_noct()
 		status)
 			"$repo/scripts/update-noct.sh" status
 			;;
+		init)
+			"$repo/scripts/update-noct.sh" init
+			;;
+		update)
+			"$repo/scripts/update-noct.sh" update "$@"
+			;;
 		clean)
 			make -C "$repo/bootloader" noct-clean boot98-libc-clean "$@"
 			;;
@@ -102,7 +108,9 @@ Commands:
   lifecycle-test run the M11 lifecycle, File, utility, and native-API host test
   softfloat-test run the M5 arithmetic/conversion/math known vectors
   verify        verify M4-M11, static i386 opcodes, and IDE/SCSI QEMU paths
-  status        print the imported origin and revision
+  init          initialize the pinned Noct submodule
+  update [REF]  fetch and stage a newer Noct gitlink (default: origin/main)
+  status        print the submodule origin and pinned/current revisions
   clean         remove only the selected Noct object files
 EOF
 			;;

@@ -1081,15 +1081,17 @@ Acceptance: known vectors and Noct float scripts pass; no x87/i486+ opcode;
 ### M6 — i386 JIT
 
 Status: **COMPLETE — REVIEWED AND COMMITTED 2026-08-07**. See
-`PC98BE-NOCT-M6-JIT.md` for runtime policy, generated-code audit, lifecycle,
-size, and 6 MiB i386 QEMU evidence.
+`PC98BE-NOCT-M6-JIT.md` for runtime policy, lifecycle, size, and 6 MiB i386
+QEMU evidence.
 
 Import the approved Noct JIT platform hook, enable x86 JIT, add configurable
 code maximum, and force JIT execution with the corpus.
 
 Acceptance: interpreter and forced-JIT output match; QEMU `-cpu 386` passes;
-VM destruction releases JIT storage; no forbidden static or generated opcode
-is observed. JIT is mandatory for completion, not an optional optimization.
+VM destruction releases JIT storage; the Noct binary and final BOOT.SYS pass
+the i386 static opcode audit. JIT is mandatory for completion, not an optional
+optimization. Generated JIT bytes are not linearly disassembled because the
+x86 generator interleaves skipped constant data with instructions.
 
 ### M7 — NCT file loading and shell resolution
 
@@ -1132,7 +1134,7 @@ gateway; all preexisting read and boot tests still pass.
 
 ### M10 — FAT16 writer and stdio/File API
 
-Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+Status: **COMPLETE — REVIEWED AND COMMITTED 2026-08-08**. See
 `PC98BE-NOCT-M10-FILE-API.md` for the cache and metadata-ordering rules,
 stdio/File ownership contract, limitations, size delta, host tests, upstream
 Noct tests, and independent QEMU marker-file evidence.
@@ -1145,6 +1147,10 @@ copies, full-disk, full-root, and injected-I/O-error cases pass. QEMU writes a
 marker file and the host independently reads it.
 
 ### M11 — Noct utilities
+
+Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+`PC98BE-NOCT-M11-UTILITIES.md` for the public-API boundary, path guard,
+bounded-copy behavior, packaging, and host/QEMU evidence.
 
 Add LS.NCT and CP.NCT first. Add bounded Block NAPI and DD.NCT only after a
 separate review of raw-write guards.

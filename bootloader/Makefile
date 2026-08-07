@@ -233,6 +233,7 @@ boot98-stdio-fs-host-test: $(BOOT98_STDIO_FS_TEST)
 BOOT98_NOCT_TEST := ../build/bootloader/tests/boot98-noct-host-test
 
 $(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c \
+	LS.NCT CP.NCT \
 	boot98-noct-m6-script.h boot98-noct.o boot98-noct-napi.o \
 	boot98-fs.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
 	$(BOOT98_SOFTFLOAT_OBJECTS)
@@ -244,12 +245,10 @@ $(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c \
 		$(BOOT98_SOFTFLOAT_OBJECTS) -o $@
 
 NOCT_M6_JIT_CODE := ../build/logs/boot98-m6-jit-code.bin
-NOCT_M6_JIT_DISASSEMBLY := ../build/logs/boot98-m6-jit-code.disassembly
-NOCT_M6_JIT_REJECTED := ../build/logs/boot98-m6-jit-rejected.txt
 
 boot98-noct-host-test: $(BOOT98_NOCT_TEST)
 	@mkdir -p $(dir $(NOCT_M6_JIT_CODE))
-	$(BOOT98_NOCT_TEST) $(NOCT_M6_JIT_CODE)
+	$(BOOT98_NOCT_TEST) $(NOCT_M6_JIT_CODE) LS.NCT CP.NCT
 	@test $$(stat -c%s $(NOCT_M6_JIT_CODE)) -eq $(NOCT_JIT_CODE_MAX)
 	@echo "BOOT98 Noct interpreter/JIT lifecycle host tests: PASS"
 
@@ -285,19 +284,7 @@ noct-m5-verify: noct-m4-verify boot98-softfloat-host-test \
 	noct-m5-final-opcode-check
 	@echo "PC98BE M5 historical soft-float checks: PASS"
 
-noct-m6-generated-opcode-check: boot98-noct-host-test
-	@$(NOCT_OBJDUMP) -D -b binary -m i386 --no-show-raw-insn \
-		$(NOCT_M6_JIT_CODE) > $(NOCT_M6_JIT_DISASSEMBLY)
-	@grep -E '(^[[:space:]]*[0-9a-f]+:[[:space:]]+f[a-z0-9]+[[:space:]])|\b(bswap|cmpxchg|xadd|cmov[a-z]*|rdtsc|ud2|cpuid|fx[a-z]+|movaps|movups|xmm[0-9]|ymm[0-9]|zmm[0-9])\b' \
-		$(NOCT_M6_JIT_DISASSEMBLY) > $(NOCT_M6_JIT_REJECTED) || true
-	@if test -s $(NOCT_M6_JIT_REJECTED); then \
-		echo "ERROR: generated Noct JIT code contains a forbidden opcode" >&2; \
-		cat $(NOCT_M6_JIT_REJECTED) >&2; \
-		exit 1; \
-	fi
-	@echo "BOOT98 M6 generated JIT i386 opcode check: PASS"
-
-noct-m6-verify: noct-m5-verify noct-m6-generated-opcode-check BOOT.SYS
+noct-m6-verify: noct-m5-verify boot98-noct-host-test BOOT.SYS
 	@echo "PC98BE M6 verification: PASS (forced i386 JIT)"
 
 noct-m7-verify: noct-m6-verify boot98-noct-host-test BOOT.SYS
@@ -321,6 +308,13 @@ noct-m10-verify: noct-m9-verify check BOOT.SYS \
 	noct-m5-final-opcode-check boot98-noct-file-qemu-test
 	@echo "PC98BE M10 verification: PASS (FAT16 writer and Noct File API)"
 
+boot98-noct-utilities-qemu-test: BOOT.SYS LS.NCT CP.NCT
+	$(SCRIPTS_DIR)/test-boot98-noct-utilities.sh
+
+noct-m11-verify: noct-m10-verify check BOOT.SYS \
+	noct-m5-final-opcode-check boot98-noct-utilities-qemu-test
+	@echo "PC98BE M11 safe utilities verification: PASS (LS.NCT and CP.NCT)"
+
 check: tests/boot98-fat-host-test tests/boot98-fat-write-host-test \
 	boot98-stdio-fs-host-test \
 	boot98-libc-host-test \
@@ -333,14 +327,14 @@ clean: noct-clean boot98-libc-clean boot98-softfloat-clean
 		tests/boot98-fat-write-host-test \
 		$(BOOT98_STDIO_FS_TEST) \
 		$(BOOT98_NOCT_TEST) $(NOCT_M5_DISASSEMBLY) $(NOCT_M5_REJECTED) \
-		$(NOCT_M6_JIT_CODE) $(NOCT_M6_JIT_DISASSEMBLY) \
-		$(NOCT_M6_JIT_REJECTED)
+		$(NOCT_M6_JIT_CODE)
 
 .PHONY: all check clean boot98-stdio-fs-host-test boot98-noct-host-test \
 	noct-m4-opcode-check \
 	noct-m4-verify noct-m5-final-opcode-check noct-m5-verify
 
-.PHONY: noct-m6-generated-opcode-check noct-m6-verify noct-m7-verify \
+.PHONY: noct-m6-verify noct-m7-verify \
 	noct-m8-verify boot98-bios-write-qemu-test noct-m9-verify
 
-.PHONY: boot98-noct-file-qemu-test noct-m10-verify
+.PHONY: boot98-noct-file-qemu-test noct-m10-verify \
+	boot98-noct-utilities-qemu-test noct-m11-verify

@@ -21,7 +21,7 @@ The review record for the linked, JIT-disabled interpreter lifecycle is in
 [`PC98BE-NOCT-M4-LIFECYCLE.md`](PC98BE-NOCT-M4-LIFECYCLE.md).
 The review record for the GCC/musl software floating-point runtime is in
 [`PC98BE-NOCT-M5-SOFTFLOAT.md`](PC98BE-NOCT-M5-SOFTFLOAT.md).
-The review record for the forced i386 JIT, generated-code audit, and 6 MiB
+The review record for the forced i386 JIT lifecycle and 6 MiB
 execution test is in [`PC98BE-NOCT-M6-JIT.md`](PC98BE-NOCT-M6-JIT.md).
 The review record for FAT16 `.NCT` loading, shell arguments, and command
 resolution is in
@@ -32,6 +32,11 @@ minimal system native APIs is in
 The review record for the protected/real-mode BIOS write gateway and generic
 filesystem write contract is in
 [`PC98BE-NOCT-M9-WRITES.md`](PC98BE-NOCT-M9-WRITES.md).
+The review record for the FAT16 writer, freestanding stdio, and standard Noct
+File API is in
+[`PC98BE-NOCT-M10-FILE-API.md`](PC98BE-NOCT-M10-FILE-API.md).
+The review record for the first safe Noct utilities is in
+[`PC98BE-NOCT-M11-UTILITIES.md`](PC98BE-NOCT-M11-UTILITIES.md).
 
 `noct-test [1..100]` runs a built-in constant Noct program from the BOOT.SYS
 shell. It verifies VM creation, forced i386 JIT execution, integer/container
@@ -49,8 +54,10 @@ M8 scripts can use bounded `Console` serialization, the 80 by 25 positional
 `Screen` API, normalized `Keyboard` and `Key` values, read-only root
 `Directory` inspection, and `System.import`/memory reporting. M9 adds an
 internal one-sector BIOS write gateway and a result-bearing generic filesystem
-write contract. FAT16, Noct `File`, and raw Block NAPI remain read-only until
-their M10 and M11 review gates.
+write contract. M10 adds root-directory FAT16 file creation, truncation, and
+extension through freestanding stdio and the standard Noct `File` API. M11
+adds `ls` and bounded-copy `cp` scripts using only those public APIs. Raw Block
+NAPI and `dd` remain deferred to a separate destructive-write review gate.
 
 ## Disk layout
 

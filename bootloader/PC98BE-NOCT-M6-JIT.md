@@ -1,6 +1,6 @@
 # PC-98 Bootstrap Environment: M6 i386 JIT
 
-Status: **M6 IMPLEMENTED — AWAITING USER REVIEW**
+Status: **M6 COMPLETE — REVIEWED AND COMMITTED 2026-08-07**
 
 Recorded on 2026-08-07 for M6 of
 `PC98BE-NOCT-IMPLEMENTATION-PLAN.md`. This milestone enables Noct's x86 JIT
@@ -70,12 +70,12 @@ Primary command:
 
 Result: **PASS**.
 
-## 4. Static and generated instruction audit
+## 4. Static instruction audit and historical generated-code evidence
 
-The normal object and final-ELF audits still reject x87, MMX, SSE/AVX, CMOV,
-CMPXCHG, XADD, CPUID, RDTSC, and other post-i386 patterns. M6 additionally
-captures the zero-initialized JIT region before it is released and disassembles
-it as raw i386 code. The saved evidence is:
+The normal object and final-ELF audits reject x87, MMX, SSE/AVX, CMOV,
+CMPXCHG, XADD, CPUID, RDTSC, and other post-i386 patterns. During the original
+M6 review, the zero-initialized JIT region was also captured before release and
+disassembled as raw i386 code. The historical evidence was:
 
 ```text
 build/logs/boot98-m6-jit-code.bin              196608 bytes
@@ -83,13 +83,17 @@ build/logs/boot98-m6-jit-code.disassembly
 build/logs/boot98-m6-jit-rejected.txt          empty
 ```
 
-The isolated generated-code check is also available as:
+Result at the M6 review boundary: **PASS**.
 
-```sh
-./build.sh noct jit-test
-```
-
-Result: **PASS**.
+The generated-code disassembly gate was retired in M11. Noct's i386 JIT emits
+only the basic i386 instruction set, while its code stream may place constant
+data behind an unconditional jump. A linear raw-binary disassembler can begin
+an instruction inside that skipped data and report a false x87 opcode. The
+maintained checks are therefore the static Noct/final-BOOT.SYS opcode audit,
+forced JIT execution on QEMU `-cpu 386`, interpreter/JIT parity, and repeated
+JIT-region release. The host lifecycle test may still retain a raw capture for
+size and lifetime observation; it is not interpreted as a standalone code
+image.
 
 ## 5. Six MiB i386 QEMU verification
 

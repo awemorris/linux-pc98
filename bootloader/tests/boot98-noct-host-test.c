@@ -16,6 +16,8 @@
 
 #define ARENA_SIZE (6U * 1024U * 1024U)
 #define OUTPUT_SIZE 1024U
+#define SCRIPT_SIZE 8192U
+#define SYS_READ 3
 #define SYS_WRITE 4
 #define SYS_OPEN 5
 #define SYS_CLOSE 6
@@ -29,16 +31,18 @@ static size_t jit_capture_length;
 static char output[OUTPUT_SIZE];
 static size_t output_length;
 static struct boot98_filesystem *test_filesystem;
+static char ls_source[SCRIPT_SIZE];
+static char cp_source[SCRIPT_SIZE];
 
 struct memory_record {
 	char name[16];
-	unsigned char data[256];
+	unsigned char data[20000];
 	uint64_t size;
 	unsigned flushes;
 	int exists;
 };
 
-static struct memory_record records[2];
+static struct memory_record records[4];
 
 static struct memory_record *find_record(const char *path, int create)
 {
@@ -46,12 +50,12 @@ static struct memory_record *find_record(const char *path, int create)
 
 	if (*path == '/')
 		path++;
-	for (index = 0; index < 2; index++)
+	for (index = 0; index < sizeof(records) / sizeof(records[0]); index++)
 		if (records[index].exists && !strcmp(records[index].name, path))
 			return &records[index];
 	if (!create)
 		return NULL;
-	for (index = 0; index < 2; index++)
+	for (index = 0; index < sizeof(records) / sizeof(records[0]); index++)
 		if (!records[index].exists) {
 			if (strlen(path) >= sizeof(records[index].name))
 				return NULL;
@@ -112,6 +116,8 @@ static enum boot98_fs_result memory_read(
 
 	(void)progress;
 	(void)progress_context;
+	if (offset > record->size || length > record->size - offset)
+		return BOOT98_FS_IO_ERROR;
 	memcpy(buffer, record->data + offset, length);
 	return BOOT98_FS_OK;
 }
@@ -162,7 +168,8 @@ static enum boot98_fs_result memory_readdir(
 	(void)filesystem;
 	if (*path && strcmp(path, "/"))
 		return BOOT98_FS_INVALID_PATH;
-	for (unsigned record = 0; record < 2; record++)
+	for (unsigned record = 0;
+	     record < sizeof(records) / sizeof(records[0]); record++)
 		if (records[record].exists && visible++ == index) {
 			strcpy(entry->name, records[record].name);
 			entry->size = records[record].size;
@@ -306,7 +313,7 @@ static int mock_directory_read(void *context, const char *path, unsigned index,
 	static const struct boot98_noct_dirent entries[] = {
 		{ "BOOT.CFG", 7, 0x20 },
 		{ "SCRIPTS", 0, 0x10 },
-		{ "LIB.NCT", sizeof(imported_source) - 1U, 0x20 },
+		{ "LIB.NCT", 38, 0x20 },
 	};
 	(void)context;
 	if (strcmp(path, "") != 0 && strcmp(path, "/") != 0)
@@ -340,6 +347,42 @@ host_syscall3(long number, long argument1, long argument2, long argument3)
 			  "b"(argument1), "c"(argument2), "d"(argument3) :
 			  "memory");
 	return result;
+}
+
+static int
+read_host_source(const char *path, char *buffer, size_t capacity)
+{
+	long descriptor;
+	size_t length = 0;
+
+	descriptor = host_syscall3(SYS_OPEN, (long)(uintptr_t)path, 0, 0);
+	if (descriptor < 0)
+		return 0;
+	while (length < capacity - 1U) {
+		long count = host_syscall3(SYS_READ, descriptor,
+			(long)(uintptr_t)(buffer + length),
+			(long)(capacity - 1U - length));
+
+		if (count < 0) {
+			(void)host_syscall3(SYS_CLOSE, descriptor, 0, 0);
+			return 0;
+		}
+		if (count == 0)
+			break;
+		length += (size_t)count;
+	}
+	if (length == capacity - 1U) {
+		char extra;
+		long count = host_syscall3(SYS_READ, descriptor,
+			(long)(uintptr_t)&extra, 1);
+
+		if (count != 0) {
+			(void)host_syscall3(SYS_CLOSE, descriptor, 0, 0);
+			return 0;
+		}
+	}
+	buffer[length] = '\0';
+	return host_syscall3(SYS_CLOSE, descriptor, 0, 0) == 0;
 }
 
 static int
@@ -419,14 +462,23 @@ run_case_args(const char *source, int argc, char *const argv[], int jit_enable,
 				       &options, &result);
 	if (success != (expected == BOOT98_NOCT_OK) ||
 	    result.status != expected ||
-	    result.script_status != expected_script_status)
+	    result.script_status != expected_script_status) {
+		if (output_length != 0)
+			(void)host_syscall3(SYS_WRITE, 2,
+				(long)(uintptr_t)output, (long)output_length);
 		return 10 + (int)result.status;
+	}
 	if (result.current_after_reset != 0 || boot98_heap_current() != 0 ||
 	    result.heap_errors != 0 || !boot98_heap_validate())
 		return 20;
 	if (expected_output != NULL && strcmp(output, expected_output) != 0) {
 		(void)host_syscall3(SYS_WRITE, 2, (long)(uintptr_t)output,
 				    (long)output_length);
+		(void)host_syscall3(SYS_WRITE, 2, (long)(uintptr_t)"EXPECTED:\n",
+				    10);
+		(void)host_syscall3(SYS_WRITE, 2,
+				    (long)(uintptr_t)expected_output,
+				    (long)strlen(expected_output));
 		return 30;
 	}
 	if (expected_output == NULL && output_length == 0)
@@ -508,7 +560,14 @@ main(int argc, char **argv)
 		"func main() { var f = File.open(\"/FINAL.TXT\", \"w\"); "
 		"return 0; }";
 	char *script_arguments[] = { "alpha", "beta" };
+	char *ls_bad_arguments[] = { "one", "two" };
+	char *cp_arguments[] = { "/SOURCE.BIN", "/COPY.BIN" };
+	char *cp_same_arguments[] = { "/SOURCE.BIN", "source.bin" };
+	char *cp_missing_arguments[] = { "/MISSING.BIN", "/COPY.BIN" };
 	static char interpreter_output[OUTPUT_SIZE];
+	static const char ls_output[] =
+		"BOOT.CFG 7\nSCRIPTS/ 0\nLIB.NCT 38\n";
+	static const char cp_output[] = "Copied 16417 bytes.\n";
 	struct boot98_noct_result result;
 	const struct boot98_filesystem_driver *drivers[] = { &memory_driver };
 	struct boot98_volume volume = {
@@ -519,7 +578,9 @@ main(int argc, char **argv)
 	unsigned iteration;
 	int status;
 
-	if (argc != 2 ||
+	if (argc != 4 ||
+	    !read_host_source(argv[2], ls_source, sizeof(ls_source)) ||
+	    !read_host_source(argv[3], cp_source, sizeof(cp_source)) ||
 	    host_syscall3(SYS_MPROTECT, (long)(uintptr_t)arena,
 			  sizeof(arena), 7) != 0)
 		return 1;
@@ -573,6 +634,17 @@ main(int argc, char **argv)
 	    mock.cursor_row != 4 || mock.cursor_column != 5 ||
 	    mock.cursor_visible != 0)
 		return 240;
+	for (iteration = 0; iteration < 20U; iteration++) {
+		status = run_case_args(ls_source, 0, NULL, 1, BOOT98_NOCT_OK,
+				       0, ls_output, &result);
+		if (status != 0)
+			return 50 + status;
+	}
+	status = run_case_args(ls_source, 2, ls_bad_arguments, 0,
+			       BOOT98_NOCT_OK, 2, "usage: ls [PATH]\n",
+			       &result);
+	if (status != 0)
+		return 60 + status;
 	status = run_case(invalid_screen, 0, BOOT98_NOCT_RUNTIME_ERROR, NULL,
 			  &result);
 	if (status != 0)
@@ -597,6 +669,36 @@ main(int argc, char **argv)
 	status = run_case(finalizer_script, 0, BOOT98_NOCT_OK, "", &result);
 	if (status != 0 || !records[1].exists || records[1].flushes == 0)
 		return 300 + status;
+	memset(records, 0, sizeof(records));
+	strcpy(records[0].name, "SOURCE.BIN");
+	records[0].exists = 1;
+	records[0].size = 16417;
+	for (iteration = 0; iteration < records[0].size; iteration++)
+		records[0].data[iteration] = (unsigned char)(iteration * 37U + 11U);
+	for (iteration = 0; iteration < 20U; iteration++) {
+		status = run_case_args(cp_source, 2, cp_arguments, 1,
+				       BOOT98_NOCT_OK, 0, cp_output, &result);
+		if (status != 0)
+			return 70 + status;
+		if (!records[1].exists ||
+		    records[1].size != records[0].size ||
+		    memcmp(records[1].data, records[0].data,
+			   (size_t)records[0].size) != 0 ||
+		    records[1].flushes == 0)
+			return 80;
+	}
+	status = run_case_args(cp_source, 2, cp_same_arguments, 1,
+			       BOOT98_NOCT_OK, 2,
+			       "cp: source and destination are the same file\n",
+			       &result);
+	if (status != 0)
+		return 90 + status;
+	status = run_case_args(cp_source, 2, cp_missing_arguments, 1,
+			       BOOT98_NOCT_OK, 1,
+			       "cp: source file not found: /MISSING.BIN\n",
+			       &result);
+	if (status != 0)
+		return 100 + status;
 	test_filesystem = NULL;
 	if (!write_capture_file(argv[1]))
 		return 340;

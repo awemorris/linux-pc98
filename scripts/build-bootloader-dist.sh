@@ -4,6 +4,10 @@ set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 release_dir="$repo/build/releases"
 output="${1:-$release_dir/bootloader.zip}"
+case "$output" in
+	/*) ;;
+	*) output="$PWD/$output" ;;
+esac
 stage=""
 
 cleanup()
@@ -38,6 +42,8 @@ install -m 0644 "$repo/bootloader/ipl-part.img" "$stage/IPL-PART.IMG"
 install -m 0644 "$repo/bootloader/IO.SYS" "$stage/IO.SYS"
 install -m 0644 "$repo/bootloader/BOOT.SYS" "$stage/BOOT.SYS"
 install -m 0644 "$repo/bootloader/HELLO.NCT" "$stage/HELLO.NCT"
+install -m 0644 "$repo/bootloader/LS.NCT" "$stage/LS.NCT"
+install -m 0644 "$repo/bootloader/CP.NCT" "$stage/CP.NCT"
 install -m 0644 "$repo/releases/boot98.cfg" "$stage/BOOT.CFG"
 install -m 0644 "$repo/bootloader/README.md" "$stage/README.md"
 install -m 0644 "$repo/bootloader/dos/README.md" "$stage/DOS-README.md"
@@ -52,7 +58,8 @@ install -m 0644 "$repo/third_party/noct/LICENSE" \
 	cd "$stage"
 	zip -X -9 -q "$output.part.$$" \
 		BOOT.CFG BOOT.SYS DOS-README.md GCC-SOFT-FP-LICENSE.txt \
-		HELLO.NCT INST.EXE IO.SYS IPL-LBA0.IMG IPL-LBA2.IMG IPL-PART.IMG \
+		CP.NCT HELLO.NCT INST.EXE IO.SYS IPL-LBA0.IMG IPL-LBA2.IMG \
+		IPL-PART.IMG LS.NCT \
 		LINUX98.EXE MUSL-COPYRIGHT.txt NOCT-LICENSE.txt README.md
 )
 unzip -tq "$output.part.$$"

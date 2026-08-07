@@ -173,6 +173,11 @@ mattrib -i "$image@@$offset" +r +h +s ::BOOT.SYS
 if test -f "$bootloader/HELLO.NCT"; then
 	mcopy -o -i "$image@@$offset" "$bootloader/HELLO.NCT" ::HELLO.NCT
 fi
+for utility in LS.NCT CP.NCT; do
+	if test -f "$bootloader/$utility"; then
+		mcopy -o -i "$image@@$offset" "$bootloader/$utility" ::"$utility"
+	fi
+done
 if test -n "$kernel"; then
 	mcopy -o -i "$image@@$offset" "$kernel" ::VMLINUX
 fi

@@ -1,0 +1,7 @@
+func main(args) {
+    Console.write("Hello from HELLO.NCT");
+    for (arg in args) {
+        Console.write(" " + arg);
+    }
+    return 0;
+}

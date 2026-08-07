@@ -89,9 +89,10 @@ capture_jit(void *context, const void *code, size_t length)
 }
 
 static int
-run_case(const char *source, int jit_enable,
-	 enum boot98_noct_status expected, const char *expected_output,
-	 struct boot98_noct_result *returned_result)
+run_case_args(const char *source, int argc, char *const argv[], int jit_enable,
+	      enum boot98_noct_status expected, int64_t expected_script_status,
+	      const char *expected_output,
+	      struct boot98_noct_result *returned_result)
 {
 	struct boot98_noct_options options;
 	struct boot98_noct_result result;
@@ -108,9 +109,11 @@ run_case(const char *source, int jit_enable,
 	options.write_context = NULL;
 	options.observe_jit_code = capture_jit;
 	options.jit_context = NULL;
-	success = boot98_noct_run("m6-test.nct", source, &options, &result);
+	success = boot98_noct_run_args("noct-test.nct", source, argc, argv,
+				       &options, &result);
 	if (success != (expected == BOOT98_NOCT_OK) ||
-	    result.status != expected)
+	    result.status != expected ||
+	    result.script_status != expected_script_status)
 		return 10 + (int)result.status;
 	if (result.current_after_reset != 0 || boot98_heap_current() != 0 ||
 	    result.heap_errors != 0 || !boot98_heap_validate())
@@ -134,12 +137,31 @@ run_case(const char *source, int jit_enable,
 	return 0;
 }
 
+static int
+run_case(const char *source, int jit_enable,
+	 enum boot98_noct_status expected, const char *expected_output,
+	 struct boot98_noct_result *returned_result)
+{
+	return run_case_args(source, 0, NULL, jit_enable, expected, 0,
+			     expected_output, returned_result);
+}
+
 int
 main(int argc, char **argv)
 {
 	static const char syntax_error[] = "func main( {";
 	static const char runtime_error[] =
 		"func main() { Console.write(1); }";
+	static const char argument_script[] =
+		"func main(args) { for (arg in args) { "
+		"Console.write(\"[\" + arg + \"]\"); } return 7; }";
+	static const char zero_argument_script[] =
+		"func main() { Console.write(\"zero\"); return 0; }";
+	static const char long_status_script[] =
+		"func main() { Console.write(\"long\"); return 9L; }";
+	static const char bad_signature[] =
+		"func main(first, second) { return 0; }";
+	char *script_arguments[] = { "alpha", "beta" };
 	static char interpreter_output[OUTPUT_SIZE];
 	struct boot98_noct_result result;
 	unsigned iteration;
@@ -168,6 +190,22 @@ main(int argc, char **argv)
 			  &result);
 	if (status != 0)
 		return 120 + status;
+	status = run_case_args(argument_script, 2, script_arguments, 0,
+			       BOOT98_NOCT_OK, 7, "[alpha][beta]", &result);
+	if (status != 0)
+		return 160 + status;
+	status = run_case_args(zero_argument_script, 2, script_arguments, 0,
+			       BOOT98_NOCT_OK, 0, "zero", &result);
+	if (status != 0)
+		return 170 + status;
+	status = run_case_args(long_status_script, 0, NULL, 0,
+			       BOOT98_NOCT_OK, 9, "long", &result);
+	if (status != 0)
+		return 175 + status;
+	status = run_case(bad_signature, 0, BOOT98_NOCT_SIGNATURE_ERROR,
+			  NULL, &result);
+	if (status != 0)
+		return 180 + status;
 	if (!write_capture_file(argv[1]))
 		return 200;
 	return 0;

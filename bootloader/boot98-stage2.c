@@ -829,7 +829,7 @@ static int command(char *s)
 	if (streq(v[0], "help")) {
 		puts("help echo pause wait devalias probe-ide probe-scsi "
 		     "disk part ls cat source kernel arg boot linux "
-		     "run iplware noct-test reboot halt\n");
+		     "run iplware noct noct-test reboot halt\n");
 		return 1;
 	}
 	if (streq(v[0], "echo")) {
@@ -987,6 +987,9 @@ static int command(char *s)
 		return n == 2 && run_iplware(v[1]);
 	if (streq(v[0], "run"))
 		return n >= 2 && run_applet(v[1], n - 2, &v[2]);
+	if (streq(v[0], "noct"))
+		return n >= 2 && boot98_noct_run_file(&mounted_fs, v[1],
+						      n - 2, &v[2]);
 	if (streq(v[0], "noct-test")) {
 		int repeat;
 
@@ -996,6 +999,34 @@ static int command(char *s)
 		if (repeat < 1 || repeat > 100)
 			return 0;
 		return boot98_noct_run_embedded((unsigned)repeat);
+	}
+	/* Unknown unqualified names resolve to NAME.NCT on the selected BOOT
+	 * filesystem.  C built-ins above always retain precedence, including
+	 * their argument-validation failures. */
+	{
+		char script_name[BOOT98_PATH_MAX];
+		unsigned length = 0;
+		const char *name = v[0];
+
+		while (name[length] != '\0') {
+			char ch = name[length];
+
+			if (ch == '.' || ch == '/' || ch == '\\' ||
+			    length + 5U >= sizeof(script_name))
+				return 0;
+			script_name[length] = ch >= 'a' && ch <= 'z' ?
+				(char)(ch - 'a' + 'A') : ch;
+			length++;
+		}
+		if (length == 0)
+			return 0;
+		script_name[length++] = '.';
+		script_name[length++] = 'N';
+		script_name[length++] = 'C';
+		script_name[length++] = 'T';
+		script_name[length] = '\0';
+		return boot98_noct_run_file(&mounted_fs, script_name,
+						 n - 1, &v[1]);
 	}
 	return 0;
 }

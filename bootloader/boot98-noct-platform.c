@@ -5,6 +5,7 @@
  */
 
 #include "boot98-console.h"
+#include "boot98-fs.h"
 #include "boot98-noct.h"
 #include "boot98-noct-m6-script.h"
 #include "boot98-noct-platform.h"
@@ -15,6 +16,7 @@
 #define SCRIPT_ARENA_BASE 0x00100000U
 #define SCRIPT_ARENA_LIMIT 0x00f00000U
 #define SCRIPT_ARENA_GUARD 0x00010000U
+#define SCRIPT_HEAP_MIN (2U * 1024U * 1024U)
 
 static const char embedded_source[] = BOOT98_NOCT_M6_SOURCE;
 
@@ -155,4 +157,74 @@ boot98_noct_run_embedded(unsigned repeat_count)
 	console_string(" bytes\n");
 	boot98_console_update_cursor();
 	return 1;
+}
+
+int
+boot98_noct_run_file(struct boot98_filesystem *filesystem, const char *path,
+		     int argc, char *const argv[])
+{
+	struct boot98_noct_options options;
+	struct boot98_noct_result result;
+	struct boot98_file file;
+	size_t arena_size;
+	size_t source_area;
+	char *source;
+	int ok;
+
+	if (filesystem == NULL || path == NULL || path[0] == '\0')
+		return 0;
+	if (!boot98_fs_open(filesystem, path, &file)) {
+		console_string("Noct: file not found: ");
+		console_string(path);
+		console_string("\n");
+		boot98_console_update_cursor();
+		return 0;
+	}
+	if (file.size > BOOT98_NOCT_SOURCE_MAX) {
+		console_string("Noct: source exceeds 256 KiB: ");
+		console_string(path);
+		console_string("\n");
+		boot98_console_update_cursor();
+		return 0;
+	}
+
+	enable_high_memory();
+	arena_size = script_arena_size();
+	source_area = ((size_t)file.size + 1U + 15U) & ~(size_t)15U;
+	if (arena_size < source_area + SCRIPT_HEAP_MIN) {
+		console_string("Noct: insufficient script arena\n");
+		boot98_console_update_cursor();
+		return 0;
+	}
+	source = (char *)(SCRIPT_ARENA_BASE + arena_size - source_area);
+	if (file.size != 0 &&
+	    !boot98_file_read(&file, 0, source, (uint32_t)file.size)) {
+		console_string("Noct: cannot read source: ");
+		console_string(path);
+		console_string("\n");
+		boot98_console_update_cursor();
+		return 0;
+	}
+	source[(size_t)file.size] = '\0';
+
+	options.arena = (void *)SCRIPT_ARENA_BASE;
+	options.arena_size = arena_size - source_area;
+	options.fail_after = BOOT98_NOCT_NO_FAILURE;
+	options.jit_enable = 1;
+	options.jit_threshold = 1;
+	options.write = console_writer;
+	options.write_context = NULL;
+	options.observe_jit_code = NULL;
+	options.jit_context = NULL;
+	ok = boot98_noct_run_args(path, source, argc, argv, &options, &result);
+	if (!ok) {
+		console_string("Noct: ");
+		console_string(boot98_noct_status_string(result.status));
+		console_string("\n");
+	} else if (result.script_status != 0) {
+		console_string("Noct: script returned nonzero status\n");
+		ok = 0;
+	}
+	boot98_console_update_cursor();
+	return ok;
 }

@@ -151,7 +151,7 @@ boot98-noct.o: boot98-noct.c boot98-noct.h libc/boot98-heap.h
 	$(CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) -c $< -o $@
 
 boot98-noct-platform.o: boot98-noct-platform.c boot98-noct-platform.h \
-	boot98-noct.h boot98-noct-m6-script.h boot98-console.h
+	boot98-noct.h boot98-noct-m6-script.h boot98-console.h boot98-fs.h
 	$(CC) $(BOOT98_LIBC_CPPFLAGS) -I. $(BOOT98_LIBC_CFLAGS) -c $< -o $@
 
 boot98-stage2.elf: $(STAGE2_OBJS) boot98-stage2.ld
@@ -263,6 +263,9 @@ noct-m6-generated-opcode-check: boot98-noct-host-test
 noct-m6-verify: noct-m5-verify noct-m6-generated-opcode-check BOOT.SYS
 	@echo "PC98BE M6 verification: PASS (forced i386 JIT)"
 
+noct-m7-verify: noct-m6-verify boot98-noct-host-test BOOT.SYS
+	@echo "PC98BE M7 host/build verification: PASS (arguments and main signature)"
+
 check: tests/boot98-fat-host-test boot98-libc-host-test \
 	boot98-softfloat-host-test boot98-noct-host-test
 	./tests/boot98-fat-host-test
@@ -276,4 +279,4 @@ clean: noct-clean boot98-libc-clean boot98-softfloat-clean
 .PHONY: all check clean boot98-noct-host-test noct-m4-opcode-check \
 	noct-m4-verify noct-m5-final-opcode-check noct-m5-verify
 
-.PHONY: noct-m6-generated-opcode-check noct-m6-verify
+.PHONY: noct-m6-generated-opcode-check noct-m6-verify noct-m7-verify

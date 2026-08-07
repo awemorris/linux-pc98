@@ -23,12 +23,21 @@ The review record for the GCC/musl software floating-point runtime is in
 [`PC98BE-NOCT-M5-SOFTFLOAT.md`](PC98BE-NOCT-M5-SOFTFLOAT.md).
 The review record for the forced i386 JIT, generated-code audit, and 6 MiB
 execution test is in [`PC98BE-NOCT-M6-JIT.md`](PC98BE-NOCT-M6-JIT.md).
+The review record for FAT16 `.NCT` loading, shell arguments, and command
+resolution is in
+[`PC98BE-NOCT-M7-FILES.md`](PC98BE-NOCT-M7-FILES.md).
 
 `noct-test [1..100]` runs a built-in constant Noct program from the BOOT.SYS
 shell. It verifies VM creation, forced i386 JIT execution, integer/container
 operations, software Float/Double arithmetic, the minimal `Console.write`
 Native API, JIT-region release, and complete arena reset before file-backed
-`.NCT` execution is introduced in M7.
+`.NCT` execution was introduced in M7.
+
+`noct FILE.NCT [args...]` executes an explicit source file from the selected
+BOOT filesystem.  An unknown unqualified shell command is also resolved as
+an uppercased `.NCT` filename after all C built-ins, so `hello a b` invokes
+`HELLO.NCT` with `main(args)`.  Sources are limited to 256 KiB, and `main`
+may accept either zero arguments or one argument array.
 
 ## Disk layout
 
@@ -38,7 +47,7 @@ Native API, JIT-region release, and complete arena reset before file-backed
 | 1 | PC-98 partition table: sixteen 32-byte entries |
 | 2 through 15 | Generic `ipl-lba2.bin` BOOT-partition selector |
 | BOOT partition start | One 1024-byte DOS-compatible FAT16 PBR/BPB reserved sector |
-| BOOT partition files | Contiguous `IO.SYS`, `BOOT.SYS`, `boot.cfg`, `VMLINUX`, applets, and optional extension BIOS files |
+| BOOT partition files | Contiguous `IO.SYS`, `BOOT.SYS`, `boot.cfg`, `VMLINUX`, `.NCT` scripts, applets, and optional extension BIOS files |
 | Partition 2 | ext4 root filesystem |
 
 `ipl-lba0.bin` is deliberately generic and silent.  It immediately loads the

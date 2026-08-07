@@ -1,0 +1,4 @@
+func main(args) {
+    Console.write("PC98BE-M7-BUILTIN-PRECEDENCE-FAIL\n");
+    return 1;
+}

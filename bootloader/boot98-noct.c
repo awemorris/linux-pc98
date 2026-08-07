@@ -117,27 +117,41 @@ register_console(NoctEnv *env)
 }
 
 int
-boot98_noct_run(const char *source_name, const char *source,
-		const struct boot98_noct_options *options,
-		struct boot98_noct_result *result)
+boot98_noct_run_args(const char *source_name, const char *source,
+		    int argc, char *const argv[],
+		    const struct boot98_noct_options *options,
+		    struct boot98_noct_result *result)
 {
 	NoctConfig config;
 	NoctVM *vm = NULL;
 	NoctEnv *env = NULL;
 	NoctValue return_value;
+	NoctValue main_value;
+	NoctValue arguments;
+	NoctValue argument_value;
+	NoctFunc *main_function = NULL;
 	struct jit_observation jit;
 	enum boot98_noct_status status = BOOT98_NOCT_INVALID_ARGUMENT;
 	int vm_created = 0;
+	int arguments_pinned = 0;
+	size_t parameter_count = 0;
+	int value_type = NOCT_VALUE_INT;
+	int64_t script_status = 0;
 	size_t peak = 0;
 	size_t before_reset = 0;
 	size_t after_reset = 0;
 	size_t errors = 0;
 
 	memset(&return_value, 0, sizeof(return_value));
+	memset(&main_value, 0, sizeof(main_value));
+	memset(&arguments, 0, sizeof(arguments));
+	memset(&argument_value, 0, sizeof(argument_value));
 	memset(&jit, 0, sizeof(jit));
 	if (result != NULL)
 		memset(result, 0, sizeof(*result));
-	if (source_name == NULL || source == NULL || options == NULL ||
+	if (source_name == NULL || source == NULL || argc < 0 ||
+	    argc > NOCT_ARG_MAX || (argc != 0 && argv == NULL) ||
+	    options == NULL ||
 	    options->arena == NULL || options->arena_size < 4096U ||
 	    options->write == NULL || options->jit_threshold < 0)
 		goto finish_without_heap;
@@ -173,14 +187,66 @@ boot98_noct_run(const char *source_name, const char *source,
 		emit_noct_error(env, "Noct source error");
 		goto cleanup;
 	}
-	if (!noct_enter_vm(env, "main", 0, NULL, &return_value)) {
+	if (!noct_get_global(env, "main", &main_value) ||
+	    !noct_get_func(env, &main_value, &main_function) ||
+	    !noct_get_func_param_count(env, main_function, &parameter_count)) {
+		status = BOOT98_NOCT_SIGNATURE_ERROR;
+		emit_noct_error(env, "Noct main error");
+		goto cleanup;
+	}
+	if (parameter_count > 1U) {
+		status = BOOT98_NOCT_SIGNATURE_ERROR;
+		emit_string("Noct main error: main must accept zero or one argument\n");
+		goto cleanup;
+	}
+	if (parameter_count == 1U) {
+		int index;
+
+		if (!noct_pin_local(env, 2, &arguments, &argument_value)) {
+			status = BOOT98_NOCT_API_ERROR;
+			emit_noct_error(env, "Noct API error");
+			goto cleanup;
+		}
+		arguments_pinned = 1;
+		if (!noct_make_empty_array(env, &arguments)) {
+			status = BOOT98_NOCT_API_ERROR;
+			emit_noct_error(env, "Noct API error");
+			goto cleanup;
+		}
+		for (index = 0; index < argc; index++) {
+			if (argv[index] == NULL ||
+			    !noct_set_array_elem_make_string(env, &arguments,
+							  (size_t)index,
+							  &argument_value,
+							  argv[index])) {
+				status = BOOT98_NOCT_API_ERROR;
+				emit_noct_error(env, "Noct API error");
+				goto cleanup;
+			}
+		}
+	}
+	if (!noct_enter_vm(env, "main", parameter_count == 0U ? 0U : 1U,
+			   parameter_count == 0U ? NULL : &arguments,
+			   &return_value)) {
 		status = BOOT98_NOCT_RUNTIME_ERROR;
 		emit_noct_error(env, "Noct runtime error");
 		goto cleanup;
 	}
+	if (noct_get_value_type(env, &return_value, &value_type)) {
+		if (value_type == NOCT_VALUE_INT) {
+			int value;
+
+			if (noct_get_int(env, &return_value, &value))
+				script_status = value;
+		} else if (value_type == NOCT_VALUE_LONG) {
+			(void)noct_get_long(env, &return_value, &script_status);
+		}
+	}
 	status = BOOT98_NOCT_OK;
 
 cleanup:
+	if (arguments_pinned)
+		(void)noct_unpin_local(env, 2, &arguments, &argument_value);
 	if (jit.region != NULL && options->observe_jit_code != NULL)
 		options->observe_jit_code(options->jit_context, jit.region,
 					  jit.size);
@@ -207,8 +273,18 @@ finish_without_heap:
 		result->heap_errors = errors;
 		result->jit_code_size = jit.size;
 		result->jit_region_released = jit.released;
+		result->script_status = script_status;
 	}
 	return status == BOOT98_NOCT_OK;
+}
+
+int
+boot98_noct_run(const char *source_name, const char *source,
+		const struct boot98_noct_options *options,
+		struct boot98_noct_result *result)
+{
+	return boot98_noct_run_args(source_name, source, 0, NULL, options,
+				    result);
 }
 
 const char *
@@ -227,6 +303,8 @@ boot98_noct_status_string(enum boot98_noct_status status)
 		return "API registration failed";
 	case BOOT98_NOCT_SOURCE_ERROR:
 		return "source error";
+	case BOOT98_NOCT_SIGNATURE_ERROR:
+		return "invalid main signature";
 	case BOOT98_NOCT_RUNTIME_ERROR:
 		return "runtime error";
 	case BOOT98_NOCT_CLEANUP_ERROR:

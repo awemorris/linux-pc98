@@ -8,6 +8,7 @@
 #define BOOT98_NOCT_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #define BOOT98_NOCT_NO_FAILURE ((size_t)-1)
 #ifndef BOOT98_NOCT_JIT_CODE_MAX
@@ -21,6 +22,7 @@ enum boot98_noct_status {
 	BOOT98_NOCT_VM_ERROR,
 	BOOT98_NOCT_API_ERROR,
 	BOOT98_NOCT_SOURCE_ERROR,
+	BOOT98_NOCT_SIGNATURE_ERROR,
 	BOOT98_NOCT_RUNTIME_ERROR,
 	BOOT98_NOCT_CLEANUP_ERROR,
 };
@@ -50,8 +52,13 @@ struct boot98_noct_result {
 	size_t heap_errors;
 	size_t jit_code_size;
 	int jit_region_released;
+	int64_t script_status;
 };
 
+int boot98_noct_run_args(const char *source_name, const char *source,
+			 int argc, char *const argv[],
+			 const struct boot98_noct_options *options,
+			 struct boot98_noct_result *result);
 int boot98_noct_run(const char *source_name, const char *source,
 		    const struct boot98_noct_options *options,
 		    struct boot98_noct_result *result);

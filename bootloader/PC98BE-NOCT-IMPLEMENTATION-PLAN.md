@@ -1080,7 +1080,7 @@ Acceptance: known vectors and Noct float scripts pass; no x87/i486+ opcode;
 
 ### M6 — i386 JIT
 
-Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+Status: **COMPLETE — REVIEWED AND COMMITTED 2026-08-07**. See
 `PC98BE-NOCT-M6-JIT.md` for runtime policy, generated-code audit, lifecycle,
 size, and 6 MiB i386 QEMU evidence.
 
@@ -1092,6 +1092,10 @@ VM destruction releases JIT storage; no forbidden static or generated opcode
 is observed. JIT is mandatory for completion, not an optional optimization.
 
 ### M7 — NCT file loading and shell resolution
+
+Status: **IMPLEMENTED — AWAITING USER REVIEW**. See
+`PC98BE-NOCT-M7-FILES.md` for command resolution, memory ownership, error
+paths, size, host tests, and 6 MiB i386 QEMU evidence.
 
 Load source from the current FAT16 filesystem, pass args to zero- or one-arg
 `main`, implement explicit and implicit command resolution, and add HELLO.NCT.

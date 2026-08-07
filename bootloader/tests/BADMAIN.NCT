@@ -1,0 +1,3 @@
+func main(first, second) {
+    return 0;
+}

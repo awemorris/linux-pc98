@@ -165,6 +165,9 @@ mcopy -o -i "$image@@$offset" "$bootloader/IO.SYS" ::IO.SYS
 mattrib -i "$image@@$offset" +r +h +s ::IO.SYS
 mcopy -o -i "$image@@$offset" "$bootloader/BOOT.SYS" ::BOOT.SYS
 mattrib -i "$image@@$offset" +r +h +s ::BOOT.SYS
+if test -f "$bootloader/HELLO.NCT"; then
+	mcopy -o -i "$image@@$offset" "$bootloader/HELLO.NCT" ::HELLO.NCT
+fi
 if test -n "$kernel"; then
 	mcopy -o -i "$image@@$offset" "$kernel" ::VMLINUX
 fi

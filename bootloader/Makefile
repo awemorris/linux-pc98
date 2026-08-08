@@ -21,6 +21,7 @@ include noct.mk
 
 STAGE2_OBJS := boot98-stage2-entry.o boot98-stage2.o boot98-console.o \
 	boot98-env.o boot98-fs.o boot98-beui.o boot98-beui-image.o \
+	boot98-namespace.o \
 	boot98-beui-pc98.o boot98-beui-pc98-cirrus.o \
 	boot98-beui-pc98-glyph.o boot98-beui-pc98-auto.o \
 	boot98-fat.o boot98-fat16.o boot98-image.o \
@@ -144,7 +145,7 @@ boot98-stage2.o: boot98-stage2.c boot98-abi.h boot98-console.h \
 	boot98-beui-pc98-auto.h boot98-beui-pc98-cirrus.h \
 	boot98-beui-pc98-glyph.h boot98-beui-pc98.h \
 	boot98-messages.h boot98-fat16.h boot98-fs.h boot98-image.h \
-	boot98-noct-napi.h
+	boot98-namespace.h boot98-noct-napi.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
 boot98-stage2-m9-test.o: boot98-stage2.c boot98-abi.h boot98-console.h \
@@ -182,6 +183,9 @@ boot98-beui-pc98-auto.o: boot98-beui-pc98-auto.c \
 boot98-fs.o: boot98-fs.c boot98-fs.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
+boot98-namespace.o: boot98-namespace.c boot98-namespace.h boot98-fs.h
+	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
+
 boot98-fat.o: boot98-fat.c boot98-fat.h boot98-fs.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
@@ -211,19 +215,22 @@ boot98-noct-target.o: boot98-noct-target.c boot98-noct-target.h \
 boot98-noct-platform.o: boot98-noct-platform.c boot98-noct-platform.h \
 	boot98-noct.h boot98-noct-memory.h boot98-noct-napi.h \
 	boot98-noct-m6-script.h \
-	boot98-console.h boot98-env.h boot98-fs.h
+	boot98-console.h boot98-env.h boot98-fs.h boot98-namespace.h \
+	libc/boot98-stdio-fs.h
 	$(CC) $(NOCT_CPPFLAGS) $(BOOT98_LIBC_CPPFLAGS) -I. \
 		$(BOOT98_LIBC_CFLAGS) -c $< -o $@
 
 boot98-stage2.elf: $(STAGE2_OBJS) boot98-stage2.ld
-	$(LD) -m elf_i386 -T boot98-stage2.ld -nostdlib $(STAGE2_OBJS) -o $@
+	$(LD) -m elf_i386 --gc-sections -T boot98-stage2.ld -nostdlib \
+		$(STAGE2_OBJS) -o $@
 
 BOOT.SYS: boot98-stage2.elf $(SCRIPTS_DIR)/patch-boot98-bin.py
 	$(OBJCOPY) -O binary $< $@
 	python3 $(SCRIPTS_DIR)/patch-boot98-bin.py $@
 
 boot98-stage2-m9-test.elf: $(M9_STAGE2_OBJS) boot98-stage2.ld
-	$(LD) -m elf_i386 -T boot98-stage2.ld -nostdlib $(M9_STAGE2_OBJS) -o $@
+	$(LD) -m elf_i386 --gc-sections -T boot98-stage2.ld -nostdlib \
+		$(M9_STAGE2_OBJS) -o $@
 
 BOOT-M9.SYS: boot98-stage2-m9-test.elf $(SCRIPTS_DIR)/patch-boot98-bin.py
 	$(OBJCOPY) -O binary $< $@
@@ -271,9 +278,11 @@ tests/boot98-fat-write-host-test: tests/boot98-fat-write-host-test.c \
 BOOT98_STDIO_FS_TEST := ../build/bootloader/tests/boot98-stdio-fs-host-test
 
 $(BOOT98_STDIO_FS_TEST): tests/boot98-stdio-fs-host-test.c boot98-fs.c \
-	boot98-fs.h boot98-env.c boot98-env.h $(BOOT98_LIBC_SOURCE_REL)
+	boot98-fs.h boot98-namespace.c boot98-namespace.h boot98-env.c \
+	boot98-env.h $(BOOT98_LIBC_SOURCE_REL)
 	@mkdir -p $(dir $@)
-	$(HOSTCC) $(BOOT98_HOST_TEST_CFLAGS) -I. boot98-fs.c boot98-env.c \
+	$(HOSTCC) $(BOOT98_HOST_TEST_CFLAGS) -I. boot98-fs.c \
+		boot98-namespace.c boot98-env.c \
 		$(BOOT98_LIBC_SOURCE_REL) $< -o $@
 
 boot98-stdio-fs-host-test: $(BOOT98_STDIO_FS_TEST)
@@ -314,7 +323,7 @@ $(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c \
 	LS.NCT CP.NCT \
 	boot98-noct-m6-script.h boot98-noct.o boot98-noct-napi.o \
 	boot98-noct-target.o boot98-beui.o boot98-beui-image.o \
-	boot98-env.o boot98-fs.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
+	boot98-env.o boot98-fs.o boot98-namespace.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
 	$(BOOT98_SOFTFLOAT_OBJECTS)
 	@mkdir -p $(dir $@)
 	$(HOSTCC) -m32 -no-pie -fno-builtin -fno-stack-protector -Wall -Wextra \
@@ -322,7 +331,7 @@ $(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c \
 		-DBOOT98_NOCT_JIT_CODE_MAX=$(NOCT_JIT_CODE_MAX) \
 	tests/boot98-noct-host-test.c boot98-noct.o boot98-noct-napi.o \
 		boot98-noct-target.o boot98-beui.o boot98-beui-image.o \
-		boot98-env.o boot98-fs.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
+		boot98-env.o boot98-fs.o boot98-namespace.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
 		$(BOOT98_SOFTFLOAT_OBJECTS) -o $@
 
 NOCT_M6_JIT_CODE := ../build/logs/boot98-m6-jit-code.bin

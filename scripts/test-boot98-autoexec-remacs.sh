@@ -54,6 +54,12 @@ else:
 PY
 )"
 
+# A lowercase-visible HOME entry exercises the complete path used by Remacs:
+# FileUtil.getHomeDirectory(), directory enumeration, TAB completion and FAT
+# writeback through the /diskN namespace.
+: > "$work/COMPLETE.TXT"
+mcopy -o -i "$image@@$offset" "$work/COMPLETE.TXT" ::HOME/COMPLETE.TXT
+
 rm -f -- "$monitor" "$menu_screenshot" "$emacs_screenshot" "$text_vram" \
 	"$single_key_vram" "$wide_cursor_attr" "$qemu_debug"
 "$qemu" -M pc9821 -cpu "$cpu" -m 16 -accel tcg -L "$bios_dir" \
@@ -172,6 +178,18 @@ time.sleep(1)
 qmp("screendump", {"filename": emacs_screenshot})
 qmp("pmemsave", {"val": 0xa0000, "size": 0x4000,
                   "filename": text_vram})
+# Remacs must traverse the /disk1 namespace, enumerate the FAT directory with
+# lowercase names, accept a genuine Tab key, and open complete.txt.  HOME is
+# verified separately through the startup-file path because QMP cannot express
+# the PC-98 keyboard's tilde key portably.
+emacs_command("find-file")
+type_text("/disk1/home/comp")
+press("tab")
+press("ret")
+time.sleep(.5)
+type_text("tabok")
+emacs_command("save-buffer")
+time.sleep(.5)
 emacs_command("save-buffers-kill-terminal")
 time.sleep(1)
 qmp("quit", wait_reply=False)
@@ -192,19 +210,24 @@ wait "$qemu_pid" 2>/dev/null || true
 trap - EXIT INT TERM
 rm -f -- "$monitor"
 
-rm -f -- "$work/EDIT-SAVED.TXT"
+rm -f -- "$work/EDIT-SAVED.TXT" "$work/COMPLETE-SAVED.TXT"
 mcopy -i "$image@@$offset" ::EDIT.TXT "$work/EDIT-SAVED.TXT"
-python3 - "$work/EDIT-SAVED.TXT" "$menu_screenshot" "$emacs_screenshot" \
-	"$single_key_vram" "$wide_cursor_attr" <<'PY'
+mcopy -i "$image@@$offset" ::HOME/COMPLETE.TXT "$work/COMPLETE-SAVED.TXT"
+python3 - "$work/EDIT-SAVED.TXT" "$work/COMPLETE-SAVED.TXT" \
+	"$menu_screenshot" "$emacs_screenshot" "$single_key_vram" \
+	"$wide_cursor_attr" <<'PY'
 import sys
 
 saved = open(sys.argv[1], "rb").read()
 expected = "Boots日本語表示テスト\n".encode()
 if saved != expected:
     raise SystemExit(f"Remacs modifier/input mismatch: {saved.hex()}")
-if open(sys.argv[4], "rb").read(2) != b"B\0":
+completion = open(sys.argv[2], "rb").read()
+if completion != b"tabok":
+    raise SystemExit(f"Remacs HOME/TAB completion mismatch: {completion!r}")
+if open(sys.argv[5], "rb").read(2) != b"B\0":
     raise SystemExit("Remacs did not redraw a single key promptly")
-attributes = open(sys.argv[5], "rb").read()
+attributes = open(sys.argv[6], "rb").read()
 if len(attributes) != 4 or not (attributes[0] & 4 and attributes[2] & 4):
     raise SystemExit(f"Japanese cursor did not cover both cells: {attributes.hex()}")
 
@@ -216,12 +239,12 @@ def ppm(path):
     width, height = map(int, parts[1].split())
     return width, height, parts[3]
 
-width, height, pixels = ppm(sys.argv[2])
+width, height, pixels = ppm(sys.argv[3])
 colors = {pixels[pos:pos + 3] for pos in range(0, len(pixels), 3)}
 if width < 640 or height < 400 or len(colors) < 4:
     raise SystemExit("AUTOEXEC graphical menu was not captured")
 
-width, height, pixels = ppm(sys.argv[3])
+width, height, pixels = ppm(sys.argv[4])
 for row in range(height * 2 // 3, height):
     line = pixels[row * width * 3:(row + 1) * width * 3]
     bright = sum(1 for col in range(width)

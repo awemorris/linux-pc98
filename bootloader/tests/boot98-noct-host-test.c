@@ -976,6 +976,8 @@ main(int argc, char **argv)
 	if (!boot98_env_unset(&test_environment, "REPL"))
 		return 191;
 	if (boot98_key_normalize_bios_ax(0x1c0d) != BOOT98_KEY_ENTER ||
+	    boot98_key_normalize_bios_ax(0x0f00) != BOOT98_KEY_TAB ||
+	    boot98_key_normalize_bios_ax(0x0f09) != BOOT98_KEY_TAB ||
 	    boot98_key_normalize_bios_ax(0x3b00) != BOOT98_KEY_LEFT ||
 	    boot98_key_normalize_bios_ax(0x3900) != BOOT98_KEY_DELETE ||
 	    boot98_key_normalize_bios_ax(0xff00) != 0x1ff)

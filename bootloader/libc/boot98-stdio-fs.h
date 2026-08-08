@@ -4,8 +4,10 @@
 
 struct boot98_filesystem;
 struct boot98_environment;
+struct boot98_namespace;
 
 void boot98_stdio_set_filesystem(struct boot98_filesystem *filesystem);
+void boot98_stdio_set_namespace(struct boot98_namespace *namespace);
 void boot98_stdio_set_environment(struct boot98_environment *environment);
 int boot98_stdio_close_all(void);
 

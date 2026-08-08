@@ -7,6 +7,7 @@
 #include "boot98-stdio-fs.h"
 #include "../boot98-env.h"
 #include "../boot98-fs.h"
+#include "../boot98-namespace.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -31,8 +32,10 @@ struct filesystem_stream {
 };
 
 static struct boot98_filesystem *active_filesystem;
+static struct boot98_namespace *active_namespace;
 static struct boot98_environment *active_environment;
 static struct filesystem_stream *open_streams;
+static char current_directory[BOOT98_PATH_MAX] = "/";
 
 static int result_errno(enum boot98_fs_result result)
 {
@@ -67,6 +70,20 @@ void boot98_stdio_set_filesystem(struct boot98_filesystem *filesystem)
 	active_filesystem = filesystem;
 }
 
+void boot98_stdio_set_namespace(struct boot98_namespace *namespace)
+{
+	const char *name;
+
+	active_namespace = namespace;
+	current_directory[0] = '/';
+	current_directory[1] = '\0';
+	name = boot98_namespace_default_name(namespace);
+	if (name != NULL && strlen(name) + 2U <= sizeof(current_directory)) {
+		current_directory[1] = '\0';
+		strcat(current_directory, name);
+	}
+}
+
 void boot98_stdio_set_environment(struct boot98_environment *environment)
 {
 	active_environment = environment;
@@ -75,12 +92,29 @@ void boot98_stdio_set_environment(struct boot98_environment *environment)
 FILE *fopen(const char *path, const char *mode)
 {
 	struct filesystem_stream *handle;
+	char absolute[BOOT98_PATH_MAX];
+	const char *resolved_path = path;
 	enum boot98_fs_result result;
 	unsigned flags;
 
-	if (path == NULL || mode == NULL || active_filesystem == NULL) {
+	if (path == NULL || mode == NULL ||
+	    (active_filesystem == NULL && active_namespace == NULL)) {
 		errno = path == NULL || mode == NULL ? EINVAL : ENOENT;
 		return NULL;
+	}
+	if (active_namespace != NULL && path[0] != '/') {
+		size_t cwd_length = strlen(current_directory);
+		size_t path_length = strlen(path);
+
+		if (cwd_length + 1U + path_length >= sizeof(absolute)) {
+			errno = ENAMETOOLONG;
+			return NULL;
+		}
+		memcpy(absolute, current_directory, cwd_length);
+		if (cwd_length == 0 || absolute[cwd_length - 1U] != '/')
+			absolute[cwd_length++] = '/';
+		memcpy(absolute + cwd_length, path, path_length + 1U);
+		resolved_path = absolute;
 	}
 	if (!strcmp(mode, "r") || !strcmp(mode, "rb"))
 		flags = STREAM_READ;
@@ -96,9 +130,20 @@ FILE *fopen(const char *path, const char *mode)
 		return NULL;
 	}
 	memset(handle, 0, sizeof(*handle));
-	result = flags == STREAM_WRITE ?
-		boot98_fs_create_result(active_filesystem, path, &handle->file) :
-		boot98_fs_open_result(active_filesystem, path, &handle->file);
+	if (active_namespace != NULL)
+		result = flags == STREAM_WRITE ?
+			boot98_namespace_create_result(active_namespace,
+						       resolved_path,
+						       &handle->file) :
+			boot98_namespace_open_result(active_namespace,
+						     resolved_path,
+						     &handle->file);
+	else
+		result = flags == STREAM_WRITE ?
+			boot98_fs_create_result(active_filesystem, resolved_path,
+						&handle->file) :
+			boot98_fs_open_result(active_filesystem, resolved_path,
+					      &handle->file);
 	if (result != BOOT98_FS_OK) {
 		errno = result_errno(result);
 		free(handle);
@@ -323,13 +368,33 @@ char *fgets(char *buffer, int size, FILE *stream)
 int access(const char *path, int mode)
 {
 	struct boot98_dirent entry;
+	char absolute[BOOT98_PATH_MAX];
+	const char *resolved_path = path;
 	enum boot98_fs_result result;
 
-	if (active_filesystem == NULL || path == NULL || mode != F_OK) {
+	if ((active_filesystem == NULL && active_namespace == NULL) ||
+	    path == NULL || mode != F_OK) {
 		errno = path == NULL || mode != F_OK ? EINVAL : ENOENT;
 		return -1;
 	}
-	result = boot98_fs_stat_result(active_filesystem, path, &entry);
+	if (active_namespace != NULL && path[0] != '/') {
+		size_t cwd_length = strlen(current_directory);
+		size_t path_length = strlen(path);
+
+		if (cwd_length + 1U + path_length >= sizeof(absolute)) {
+			errno = ENAMETOOLONG;
+			return -1;
+		}
+		memcpy(absolute, current_directory, cwd_length);
+		if (cwd_length == 0 || absolute[cwd_length - 1U] != '/')
+			absolute[cwd_length++] = '/';
+		memcpy(absolute + cwd_length, path, path_length + 1U);
+		resolved_path = absolute;
+	}
+	result = active_namespace != NULL ?
+		boot98_namespace_stat_result(active_namespace, resolved_path,
+					      &entry) :
+		boot98_fs_stat_result(active_filesystem, resolved_path, &entry);
 	if (result != BOOT98_FS_OK) {
 		errno = result_errno(result);
 		return -1;
@@ -337,36 +402,63 @@ int access(const char *path, int mode)
 	return 0;
 }
 
-/*
- * Boots currently exposes one mounted filesystem rooted at "/".  Noct's
- * FileUtil API expects the POSIX current-directory entry points, so provide
- * the root-only semantics here rather than teaching the portable Noct core
- * about the boot environment.
- */
 char *getcwd(char *buffer, size_t size)
 {
-	if (buffer == NULL || size < 2) {
+	size_t length = strlen(current_directory) + 1U;
+
+	if (buffer == NULL || size < length) {
 		errno = buffer == NULL ? EINVAL : ERANGE;
 		return NULL;
 	}
-	buffer[0] = '/';
-	buffer[1] = '\0';
+	memcpy(buffer, current_directory, length);
 	return buffer;
 }
 
 int chdir(const char *path)
 {
+	struct boot98_dirent entry;
+	char absolute[BOOT98_PATH_MAX];
+	const char *resolved = path;
+	size_t length;
+
 	if (path == NULL) {
 		errno = EINVAL;
 		return -1;
 	}
-	if (path[0] == '\0' ||
-	    (path[0] == '.' && path[1] == '\0') ||
-	    (path[0] == '/' && path[1] == '\0') ||
-	    (path[0] == '\\' && path[1] == '\0'))
+	if (path[0] == '\0' || (path[0] == '.' && path[1] == '\0'))
 		return 0;
-	errno = ENOENT;
-	return -1;
+	if (active_namespace == NULL) {
+		if (path[0] == '/' && path[1] == '\0')
+			return 0;
+		errno = ENOENT;
+		return -1;
+	}
+	if (path[0] != '/') {
+		size_t cwd_length = strlen(current_directory);
+		size_t path_length = strlen(path);
+
+		if (cwd_length + 1U + path_length >= sizeof(absolute)) {
+			errno = ENAMETOOLONG;
+			return -1;
+		}
+		memcpy(absolute, current_directory, cwd_length);
+		if (cwd_length == 0 || absolute[cwd_length - 1U] != '/')
+			absolute[cwd_length++] = '/';
+		memcpy(absolute + cwd_length, path, path_length + 1U);
+		resolved = absolute;
+	}
+	if (boot98_namespace_stat_result(active_namespace, resolved, &entry) !=
+		    BOOT98_FS_OK || !(entry.attributes & 0x10U)) {
+		errno = ENOENT;
+		return -1;
+	}
+	length = strlen(resolved);
+	if (length >= sizeof(current_directory)) {
+		errno = ENAMETOOLONG;
+		return -1;
+	}
+	memcpy(current_directory, resolved, length + 1U);
+	return 0;
 }
 
 char *getenv(const char *name)

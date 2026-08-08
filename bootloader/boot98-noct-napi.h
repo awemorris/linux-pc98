@@ -19,6 +19,7 @@ typedef struct rt_env NoctEnv;
 enum boot98_key_code {
 	BOOT98_KEY_ESCAPE = 0x1b,
 	BOOT98_KEY_BACKSPACE = 0x08,
+	BOOT98_KEY_TAB = 0x09,
 	BOOT98_KEY_ENTER = 0x0d,
 	BOOT98_KEY_PAGE_UP = 0x136,
 	BOOT98_KEY_PAGE_DOWN = 0x137,

@@ -237,6 +237,10 @@ static int translate_key(int bios_key)
 		return -1;
 
 	switch (key) {
+	case BOOT98_KEY_TAB:
+		/* Remacs completion and ordinary editor insertion both use the
+		 * terminal's literal Tab character, not a modified Ctrl-I event. */
+		return BOOT98_KEY_TAB;
 	case BOOT98_KEY_BACKSPACE:
 		return 0x7f;
 	case BOOT98_KEY_ENTER:

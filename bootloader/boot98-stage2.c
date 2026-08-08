@@ -13,6 +13,7 @@
 #include "boot98-fs.h"
 #include "boot98-image.h"
 #include "boot98-messages.h"
+#include "boot98-namespace.h"
 #include "boot98-noct-napi.h"
 #include "boot98-noct-platform.h"
 
@@ -89,6 +90,7 @@ struct startup_state {
 	unsigned timeout_budget;
 };
 static struct boot98_filesystem mounted_fs;
+static struct boot98_namespace mounted_namespace;
 static struct boot98_environment boot_environment;
 static struct boot98_beui_pc98_auto beui_display;
 static struct boot98_beui_hal beui_hal;
@@ -315,7 +317,8 @@ static int disk_volume_write(void *context, uint32_t lba,
 	return !writesec(context, lba, buffer);
 }
 
-static int mountpart(int device_index, int partition_index)
+static int mountpart_into(struct boot98_filesystem *filesystem,
+			  int device_index, int partition_index)
 {
 	const struct boot98_filesystem_driver *const drivers[] = {
 		&boot98_fat16_driver,
@@ -331,8 +334,92 @@ static int mountpart(int device_index, int partition_index)
 	volume.sector_size = 512;
 	volume.read = disk_volume_read;
 	volume.write = disk_volume_write;
-	return boot98_fs_mount(&mounted_fs, &volume, drivers,
+	return boot98_fs_mount(filesystem, &volume, drivers,
 			       sizeof(drivers) / sizeof(drivers[0]));
+}
+
+static int mountpart(int device_index, int partition_index)
+{
+	return mountpart_into(&mounted_fs, device_index, partition_index);
+}
+
+static int disk_mount_name(int device_index, char name[8])
+{
+	unsigned ordinal;
+
+	if (device_index < 0 || (unsigned)device_index >= device_count)
+		return 0;
+	ordinal = (unsigned)device_index + 1U;
+	name[0] = 'd';
+	name[1] = 'i';
+	name[2] = 's';
+	name[3] = 'k';
+	if (ordinal < 10U) {
+		name[4] = (char)('0' + ordinal);
+		name[5] = 0;
+	} else {
+		name[4] = (char)('0' + ordinal / 10U);
+		name[5] = (char)('0' + ordinal % 10U);
+		name[6] = 0;
+	}
+	return 1;
+}
+
+static void select_disk_home(int device_index)
+{
+	char name[8];
+	char home[24];
+	char dictionary[48];
+	unsigned name_length;
+
+	if (!disk_mount_name(device_index, name) ||
+	    !boot98_namespace_set_default(&mounted_namespace, name))
+		return;
+	home[0] = '/';
+	name_length = slen(name);
+	memcopy(home + 1, name, name_length);
+	memcopy(home + 1 + name_length, "/home", 6);
+	(void)boot98_env_set(&boot_environment, "HOME", home);
+	memcopy(dictionary, home, slen(home));
+	memcopy(dictionary + slen(home), "/skkjisyo.dic", 14);
+	(void)boot98_env_set(&boot_environment, "REMACS_SKK_DICT", dictionary);
+}
+
+/* Mount one user-visible FAT volume per physical disk.  BOOT is preferred;
+ * otherwise the first readable FAT16 partition becomes /diskN.  The
+ * namespace is intentionally above the filesystem drivers so future ext4
+ * and UFS drivers can use the same UNIX path contract. */
+static void register_scanned_disk(int device_index)
+{
+	struct boot98_filesystem filesystem;
+	char name[8];
+	int preferred = -1;
+	int fallback = -1;
+	int partition;
+
+	if (!disk_mount_name(device_index, name))
+		return;
+	for (partition = 0; partition < MAX_PARTS; partition++) {
+		if (!parts[partition].valid)
+			continue;
+		if (streq(parts[partition].name, "BOOT"))
+			preferred = partition;
+		else if (fallback < 0)
+			fallback = partition;
+	}
+	if (preferred >= 0 &&
+	    mountpart_into(&filesystem, device_index, preferred)) {
+		(void)boot98_namespace_mount(&mounted_namespace, name, &filesystem);
+		return;
+	}
+	for (partition = fallback; partition >= 0 && partition < MAX_PARTS;
+	     partition++)
+		if (parts[partition].valid &&
+		    mountpart_into(&filesystem, device_index, partition)) {
+			(void)boot98_namespace_mount(&mounted_namespace, name,
+						&filesystem);
+			return;
+		}
 }
 
 /* Keyboard input, parser, and stateful shell selection helpers. */
@@ -511,6 +598,7 @@ static int selectpart(const char *s)
 			if (!mountpart(curdev, i))
 				return 0;
 			curpart = i;
+			select_disk_home(curdev);
 			kernel_name[0] = kernel_arg[0] = 0;
 			return 1;
 		}
@@ -1038,7 +1126,8 @@ static int run_noct_application(const char *name, const char *extension,
 		if (!boot98_fs_open(&mounted_fs, path, &file))
 			return 0;
 	}
-	return boot98_noct_run_file(&mounted_fs, &boot_environment, path,
+	return boot98_noct_run_file(&mounted_namespace, &mounted_fs,
+				    &boot_environment, path,
 				    argc, argv, noct_key_read, noct_key_poll,
 				    noct_clock_second, 0);
 }
@@ -1245,11 +1334,12 @@ static int command(char *s)
 		return n >= 2 && run_applet(v[1], n - 2, &v[2]);
 	if (streq(v[0], "noct")) {
 		if (n == 1)
-			return boot98_noct_run_repl(&mounted_fs,
+			return boot98_noct_run_repl(&mounted_namespace, &mounted_fs,
 						    &boot_environment, noct_key_read,
 						    noct_key_poll,
 						    noct_clock_second, 0);
-		return boot98_noct_run_file(&mounted_fs, &boot_environment,
+		return boot98_noct_run_file(&mounted_namespace, &mounted_fs,
+					    &boot_environment,
 					    v[1], n - 2, &v[2],
 					    noct_key_read, noct_key_poll,
 					    noct_clock_second, 0);
@@ -1298,6 +1388,7 @@ static void findboot(void)
 				    mountpart(i, p)) {
 					curdev = i;
 					curpart = p;
+					select_disk_home((int)i);
 					return;
 				}
 		}
@@ -1344,6 +1435,7 @@ static void consider_automatic_device(struct startup_state *state, int device)
 	if (device < 0 || !(devs[device].flags & BOOT98_DEV_HAS_GEOMETRY) ||
 	    !scanparts(device))
 		return;
+	register_scanned_disk(device);
 	for (int partition = 0; partition < MAX_PARTS; partition++) {
 		if (!parts[partition].valid)
 			continue;
@@ -1386,6 +1478,7 @@ static int activate_automatic_target(const struct startup_state *state)
 		return 0;
 	curdev = state->auto_device;
 	curpart = state->auto_partition;
+	select_disk_home(curdev);
 	kernel_name[0] = kernel_arg[0] = 0;
 	return 1;
 }
@@ -1422,7 +1515,8 @@ static int run_autoexec(void)
 	if (!boot98_fs_open(&mounted_fs, "AUTOEXEC.NCT", &file))
 		return 0;
 	(void)boot98_env_unset(&boot_environment, "BOOT_ACTION");
-	script_ok = boot98_noct_run_file(&mounted_fs, &boot_environment,
+	script_ok = boot98_noct_run_file(&mounted_namespace, &mounted_fs,
+					 &boot_environment,
 					 "AUTOEXEC.NCT", 0, 0, noct_key_read,
 					 noct_key_poll, noct_clock_second, 0);
 	/* A graphical script may have owned Cirrus or GDC graphics.  Restore the
@@ -1658,6 +1752,7 @@ static void probe_next_startup_device(struct startup_state *state)
 static int startup_menu(struct startup_state *state)
 {
 	curdev = curpart = -1;
+	boot98_namespace_init(&mounted_namespace);
 	state->phase = STARTUP_DRAW;
 	state->next_candidate = 0;
 	state->fixed_count = device_count;
@@ -1766,9 +1861,9 @@ void boot98_main(const struct boot98_handoff *h)
 	if (boot98_beui_pc98_auto_make_hal(&beui_hal, &beui_display))
 		boot98_noct_set_beui_hal(&beui_hal);
 	boot98_env_init(&boot_environment);
-	(void)boot98_env_set(&boot_environment, "HOME", "HOME");
+	(void)boot98_env_set(&boot_environment, "HOME", "/");
 	(void)boot98_env_set(&boot_environment, "REMACS_SKK_DICT",
-			     "HOME/SKKJISYO.DIC");
+			     "/skkjisyo.dic");
 	for (;;) {
 		struct startup_state startup;
 

@@ -8,6 +8,7 @@
 #define BOOT98_NOCT_PLATFORM_H
 
 struct boot98_filesystem;
+struct boot98_namespace;
 struct boot98_environment;
 struct boot98_beui_hal;
 typedef int (*boot98_noct_key_fn)(void *context);
@@ -17,13 +18,15 @@ typedef int (*boot98_noct_clock_fn)(void *context);
 void boot98_noct_set_beui_hal(const struct boot98_beui_hal *hal);
 
 int boot98_noct_run_embedded(unsigned repeat_count);
-int boot98_noct_run_file(struct boot98_filesystem *filesystem,
+int boot98_noct_run_file(struct boot98_namespace *namespace,
+			 struct boot98_filesystem *filesystem,
 			 struct boot98_environment *environment,
 			 const char *path, int argc, char *const argv[],
 			 boot98_noct_key_fn key_read,
 			 boot98_noct_key_fn key_poll,
 			 boot98_noct_clock_fn clock_second, void *key_context);
-int boot98_noct_run_repl(struct boot98_filesystem *filesystem,
+int boot98_noct_run_repl(struct boot98_namespace *namespace,
+			 struct boot98_filesystem *filesystem,
 			 struct boot98_environment *environment,
 			 boot98_noct_key_fn key_read,
 			 boot98_noct_key_fn key_poll,

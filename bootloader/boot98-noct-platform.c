@@ -12,6 +12,8 @@
 #include "boot98-noct-napi.h"
 #include "boot98-noct-m6-script.h"
 #include "boot98-noct-platform.h"
+#include "boot98-namespace.h"
+#include "libc/boot98-stdio-fs.h"
 
 #include <noct/noct.h>
 #include <stddef.h>
@@ -25,6 +27,7 @@ static const struct boot98_beui_hal *target_beui_hal;
 
 struct target_context {
 	struct boot98_filesystem *filesystem;
+	struct boot98_namespace *namespace;
 	boot98_noct_key_fn key_read;
 	boot98_noct_key_fn key_poll;
 	boot98_noct_clock_fn clock_second;
@@ -209,8 +212,12 @@ target_file_size(void *context, const char *path, uint32_t *size)
 	struct target_context *target = context;
 	struct boot98_file file;
 
-	if (target->filesystem == NULL || size == NULL ||
-	    !boot98_fs_open(target->filesystem, path, &file) ||
+	if (size == NULL ||
+	    (target->namespace != NULL ?
+		boot98_namespace_open_result(target->namespace, path, &file) !=
+			BOOT98_FS_OK :
+		target->filesystem == NULL ||
+		!boot98_fs_open(target->filesystem, path, &file)) ||
 	    file.size > UINT32_MAX)
 		return 0;
 	*size = (uint32_t)file.size;
@@ -224,8 +231,11 @@ target_file_read(void *context, const char *path, uint32_t offset,
 	struct target_context *target = context;
 	struct boot98_file file;
 
-	return target->filesystem != NULL &&
-	       boot98_fs_open(target->filesystem, path, &file) &&
+	return (target->namespace != NULL ?
+		boot98_namespace_open_result(target->namespace, path, &file) ==
+			BOOT98_FS_OK :
+		target->filesystem != NULL &&
+		boot98_fs_open(target->filesystem, path, &file)) &&
 	       boot98_file_read(&file, offset, buffer, length);
 }
 
@@ -237,9 +247,13 @@ target_directory_read(void *context, const char *path, unsigned index,
 	struct boot98_dirent filesystem_entry;
 	size_t length;
 
-	if (target->filesystem == NULL || entry == NULL || path == NULL)
+	if ((target->filesystem == NULL && target->namespace == NULL) ||
+	    entry == NULL || path == NULL)
 		return -1;
-	if (!boot98_fs_readdir(target->filesystem, path, index,
+	if (target->namespace != NULL ?
+	    boot98_namespace_readdir_result(target->namespace, path, index,
+					      &filesystem_entry) != BOOT98_FS_OK :
+	    !boot98_fs_readdir(target->filesystem, path, index,
 				 &filesystem_entry))
 		return 0;
 	length = strnlen(filesystem_entry.name, sizeof(filesystem_entry.name));
@@ -393,7 +407,8 @@ boot98_noct_run_embedded(unsigned repeat_count)
 }
 
 int
-boot98_noct_run_file(struct boot98_filesystem *filesystem,
+boot98_noct_run_file(struct boot98_namespace *namespace,
+		     struct boot98_filesystem *filesystem,
 		     struct boot98_environment *environment, const char *path,
 		     int argc, char *const argv[], boot98_noct_key_fn key_read,
 		     boot98_noct_key_fn key_poll,
@@ -421,6 +436,7 @@ boot98_noct_run_file(struct boot98_filesystem *filesystem,
 	}
 	enable_high_memory();
 	target.filesystem = filesystem;
+	target.namespace = namespace;
 	target.key_read = key_read;
 	target.key_poll = key_poll;
 	target.clock_second = clock_second;
@@ -468,6 +484,7 @@ boot98_noct_run_file(struct boot98_filesystem *filesystem,
 	options.filesystem = filesystem;
 	options.environment = environment;
 	options.memory = &memory;
+	boot98_stdio_set_namespace(namespace);
 	boot98_console_save_state(&console_state);
 	if (file.size >= sizeof(NOCT_BYTECODE_HEADER) - 1U &&
 	    memcmp(source, NOCT_BYTECODE_HEADER,
@@ -487,11 +504,13 @@ boot98_noct_run_file(struct boot98_filesystem *filesystem,
 		ok = 0;
 	}
 	boot98_console_restore_terminal(&console_state);
+	boot98_stdio_set_namespace(NULL);
 	return ok;
 }
 
 int
-boot98_noct_run_repl(struct boot98_filesystem *filesystem,
+boot98_noct_run_repl(struct boot98_namespace *namespace,
+		     struct boot98_filesystem *filesystem,
 		     struct boot98_environment *environment,
 		     boot98_noct_key_fn key_read, boot98_noct_key_fn key_poll,
 		     boot98_noct_clock_fn clock_second, void *key_context)
@@ -508,6 +527,7 @@ boot98_noct_run_repl(struct boot98_filesystem *filesystem,
 		return 0;
 	enable_high_memory();
 	target.filesystem = filesystem;
+	target.namespace = namespace;
 	target.key_read = key_read;
 	target.key_poll = key_poll;
 	target.clock_second = clock_second;
@@ -532,6 +552,7 @@ boot98_noct_run_repl(struct boot98_filesystem *filesystem,
 	options.filesystem = filesystem;
 	options.environment = environment;
 	options.memory = &memory;
+	boot98_stdio_set_namespace(namespace);
 	boot98_console_save_state(&console_state);
 	ok = boot98_noct_repl(&options, repl_read_line, &target, &result);
 	if (!ok) {
@@ -540,5 +561,6 @@ boot98_noct_run_repl(struct boot98_filesystem *filesystem,
 		console_string("\n");
 	}
 	boot98_console_restore_terminal(&console_state);
+	boot98_stdio_set_namespace(NULL);
 	return ok;
 }

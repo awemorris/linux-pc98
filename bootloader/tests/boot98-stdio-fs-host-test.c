@@ -2,6 +2,7 @@
 
 #include "boot98-fs.h"
 #include "boot98-env.h"
+#include "boot98-namespace.h"
 #include "libc/boot98-heap.h"
 #include "libc/boot98-stdio-fs.h"
 
@@ -110,9 +111,14 @@ static enum boot98_fs_result readdir(struct boot98_filesystem *filesystem,
 		const char *path, unsigned index, struct boot98_dirent *entry)
 {
 	(void)filesystem;
-	if ((*path && strcmp(path, "/")) || index || !exists)
+	if (index || !exists)
 		return BOOT98_FS_NOT_FOUND;
-	strcpy(entry->name, "TEST.TXT");
+	if (!strcmp(path, "HOME") || !strcmp(path, "home"))
+		strcpy(entry->name, "COMPLETE.TXT");
+	else if (!*path || !strcmp(path, "/"))
+		strcpy(entry->name, "TEST.TXT");
+	else
+		return BOOT98_FS_NOT_FOUND;
 	entry->size = content_size;
 	return BOOT98_FS_OK;
 }
@@ -124,6 +130,12 @@ static enum boot98_fs_result stat_file(struct boot98_filesystem *filesystem,
 	enum boot98_fs_result result;
 
 	(void)filesystem;
+	if (!strcmp(path, "HOME") || !strcmp(path, "home")) {
+		strcpy(entry->name, "HOME");
+		entry->size = 0;
+		entry->attributes = 0x10;
+		return BOOT98_FS_OK;
+	}
 	result = populate(path, &file);
 	if (result != BOOT98_FS_OK)
 		return result;
@@ -162,6 +174,8 @@ int main(void)
 		.read = dummy_read,
 	};
 	struct boot98_filesystem filesystem;
+	struct boot98_namespace namespace;
+	struct boot98_dirent entry;
 	struct boot98_environment environment;
 	FILE *file;
 	char line[32];
@@ -200,6 +214,27 @@ int main(void)
 
 	assert(fopen("/TEST.TXT", "rb") != NULL);
 	assert(boot98_stdio_close_all() == 0);
+
+	boot98_namespace_init(&namespace);
+	assert(boot98_namespace_mount(&namespace, "disk1", &filesystem));
+	assert(boot98_namespace_set_default(&namespace, "disk1"));
+	assert(boot98_namespace_readdir_result(&namespace, "/disk1", 0,
+					       &entry) == BOOT98_FS_OK);
+	assert(!strcmp(entry.name, "test.txt"));
+	assert(boot98_namespace_readdir_result(&namespace, "/disk1/home/", 0,
+					       &entry) == BOOT98_FS_OK);
+	assert(!strcmp(entry.name, "complete.txt"));
+	boot98_stdio_set_namespace(&namespace);
+	assert(getcwd(line, sizeof(line)) == line);
+	assert(!strcmp(line, "/disk1"));
+	assert(chdir("/disk1/home") == 0);
+	assert(getcwd(line, sizeof(line)) == line);
+	assert(!strcmp(line, "/disk1/home"));
+	assert(chdir("/disk1") == 0);
+	file = fopen("TEST.TXT", "rb");
+	assert(file != NULL);
+	assert(fclose(file) == 0);
+	boot98_stdio_set_namespace(NULL);
 	boot98_stdio_set_filesystem(NULL);
 	boot98_stdio_set_environment(NULL);
 	assert(boot98_heap_current() == 0 && boot98_heap_validate());

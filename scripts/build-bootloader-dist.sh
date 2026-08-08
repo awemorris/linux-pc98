@@ -50,6 +50,7 @@ install -m 0644 "$repo/build/bootloader/remacs/REMACS.NB" \
 	"$stage/CMD/REMACS.NB"
 install -m 0644 "$repo/build/bootloader/remacs/SKKJISYO.DIC" \
 	"$stage/HOME/SKKJISYO.DIC"
+install -m 0644 "$repo/bootloader/EMACS.RC" "$stage/HOME/.remacs.el"
 install -m 0644 "$repo/bootloader/EMACS.RC" "$stage/HOME/.emacs"
 install -m 0644 "$repo/releases/boot98.cfg" "$stage/BOOT.CFG"
 install -m 0644 "$repo/bootloader/README.md" "$stage/README.md"
@@ -65,7 +66,7 @@ install -m 0644 "$repo/third_party/noct/LICENSE" \
 	cd "$stage"
 	zip -X -9 -q "$output.part.$$" \
 		AUTOEXEC.NCT BOOT.CFG BOOT.SYS DOS-README.md GCC-SOFT-FP-LICENSE.txt \
-		CMD/CP.NCT CMD/LS.NCT CMD/REMACS.NB HOME/.emacs \
+		CMD/CP.NCT CMD/LS.NCT CMD/REMACS.NB HOME/.emacs HOME/.remacs.el \
 		HOME/SKKJISYO.DIC HELLO.NCT \
 		INST.EXE IO.SYS IPL-LBA0.IMG IPL-LBA2.IMG IPL-PART.IMG \
 		LINUX98.EXE MUSL-COPYRIGHT.txt NOCT-LICENSE.txt README.md

@@ -1334,6 +1334,7 @@ register_key_dictionary(NoctEnv *env)
 		int value;
 	} keys[] = {
 		{ "Escape", BOOT98_KEY_ESCAPE },
+		{ "Tab", BOOT98_KEY_TAB },
 		{ "Enter", BOOT98_KEY_ENTER },
 		{ "Backspace", BOOT98_KEY_BACKSPACE },
 		{ "Delete", BOOT98_KEY_DELETE },
@@ -1380,10 +1381,16 @@ int
 boot98_key_normalize_bios_ax(uint16_t bios_ax)
 {
 	unsigned ascii = bios_ax & 0xffU;
+	unsigned scan = bios_ax >> 8;
 
 	if (ascii != 0)
 		return (int)ascii;
-	return 0x100 | (bios_ax >> 8);
+	/* Some genuine PC-98 BIOS revisions return Tab as scan 0x0f with a
+	 * zero ASCII byte.  Noct and Remacs use the ordinary control character,
+	 * so normalize both BIOS forms at the shared keyboard boundary. */
+	if (scan == 0x0fU)
+		return BOOT98_KEY_TAB;
+	return 0x100 | scan;
 }
 
 int

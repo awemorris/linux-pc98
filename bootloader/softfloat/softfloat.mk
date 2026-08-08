@@ -127,11 +127,11 @@ boot98-softfloat-opcode-check: boot98-softfloat-objects
 
 $(BOOT98_SOFTFLOAT_TEST): tests/boot98-softfloat-host-test.c \
 	$(BOOT98_LIBC_OBJECTS) $(BOOT98_SOFTFLOAT_OBJECTS) boot98-fs.c \
-	boot98-fs.h
+	boot98-fs.h boot98-namespace.c boot98-namespace.h
 	@mkdir -p $(dir $@)
 	$(HOSTCC) $(BOOT98_LIBC_CPPFLAGS) $(BOOT98_SOFTFLOAT_CFLAGS) \
 		-no-pie \
-		tests/boot98-softfloat-host-test.c boot98-fs.c \
+		tests/boot98-softfloat-host-test.c boot98-fs.c boot98-namespace.c \
 		$(BOOT98_LIBC_OBJECTS) \
 		$(BOOT98_SOFTFLOAT_OBJECTS) -o $@
 

@@ -32,9 +32,9 @@ NOCT_SOURCE_REL := \
 	src/core/execution.c \
 	src/core/gc.c \
 	src/core/intrinsics.c \
-	src/core/regex.c \
 	src/core/objectmodel-st.c \
 	src/repl/repl.c \
+	src/api/regex.c \
 	src/api/api-file.c \
 	src/api/api-term-backend.c \
 	src/api/jisx0208.c
@@ -55,6 +55,7 @@ NOCT_CPPFLAGS := \
 	-Ilibc \
 	-I$(NOCT_ROOT)/include \
 	-I$(NOCT_ROOT)/src/core \
+	-I$(NOCT_ROOT)/src/api \
 	-DNOCT_TARGET_PC98BE \
 	-DNOCT_MEMORY_SMALL \
 	-DNOCT_JIT_CODE_MAX=$(NOCT_JIT_CODE_MAX) \
@@ -70,6 +71,7 @@ endif
 
 NOCT_CFLAGS := \
 	-m32 -march=i386 -Os -ffreestanding -fno-builtin \
+	-ffunction-sections -fdata-sections \
 	-fno-pic -fno-pie -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -fno-unwind-tables \
 	-fno-isolate-erroneous-paths-dereference -fno-strict-aliasing \
@@ -102,6 +104,11 @@ $(NOCT_BUILD_DIR)/api-%.o: $(NOCT_ROOT)/src/api/api-%.c
 	$(NOCT_CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) \
 		$(NOCT_WARNING_EXCEPTIONS) -c $< -o $@
 
+$(NOCT_BUILD_DIR)/regex.o: $(NOCT_ROOT)/src/api/regex.c
+	@mkdir -p $(NOCT_BUILD_DIR)
+	$(NOCT_CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) \
+		$(NOCT_WARNING_EXCEPTIONS) -c $< -o $@
+
 $(NOCT_BUILD_DIR)/jisx0208.o: $(NOCT_ROOT)/src/api/jisx0208.c
 	@mkdir -p $(NOCT_BUILD_DIR)
 	$(NOCT_CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) \
@@ -128,10 +135,11 @@ noct-opcode-check: noct-objects
 NOCT_M3_RELOC := ../build/bootloader/noct-libc-m3.o
 NOCT_M3_UNDEFINED := ../build/bootloader/noct-libc-m3.undefined
 
-noct-link-audit: noct-objects boot98-libc-objects boot98-fs.o
+noct-link-audit: noct-objects boot98-libc-objects boot98-fs.o \
+	boot98-namespace.o
 	@mkdir -p $(dir $(NOCT_M3_RELOC))
 	$(NOCT_LD) -m elf_i386 -r $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
-		boot98-fs.o \
+		boot98-fs.o boot98-namespace.o \
 		-o $(NOCT_M3_RELOC)
 	@$(NOCT_NM) -u $(NOCT_M3_RELOC) | awk '{print $$NF}' | sort -u > \
 		$(NOCT_M3_UNDEFINED)

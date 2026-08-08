@@ -206,6 +206,9 @@ test -f "$bootloader/EMACS.RC" || {
 	echo "Default Emacs configuration not found: $bootloader/EMACS.RC" >&2
 	exit 1
 }
+# Current Remacs reads ~/.remacs.el.  Keep the historical .emacs copy in
+# published images as a convenience for older experimental builds.
+mcopy -o -i "$image@@$offset" "$bootloader/EMACS.RC" ::HOME/.remacs.el
 mcopy -o -i "$image@@$offset" "$bootloader/EMACS.RC" ::HOME/.emacs
 if test -n "$kernel"; then
 	mcopy -o -i "$image@@$offset" "$kernel" ::VMLINUX

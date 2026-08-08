@@ -132,6 +132,7 @@ printf '%s\n' \
 	'kernel VMLINUX' \
 	"arg root=$root_device rootfstype=ext4 rw${kernel_extra_args:+ $kernel_extra_args}" \
 	'boot' >"$cfg"
+BOOT98_AUTOEXEC="$repo/bootloader/AUTOEXEC.NCT" \
 DISK_HEADS="${DISK_HEADS:-8}" DISK_SECTORS="${DISK_SECTORS:-17}" \
 	"$repo/scripts/install-boot98-image.sh" --install-disk-stubs \
 		"$output" "$boot_vmlinux" "$cfg"

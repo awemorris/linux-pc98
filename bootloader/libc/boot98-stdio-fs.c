@@ -5,6 +5,7 @@
  */
 
 #include "boot98-stdio-fs.h"
+#include "../boot98-env.h"
 #include "../boot98-fs.h"
 
 #include <errno.h>
@@ -18,6 +19,11 @@
 #define STREAM_READ 1U
 #define STREAM_WRITE 2U
 
+/* Small standalone libc tests do not link the Boots environment store. */
+extern const char *boot98_env_get(
+	const struct boot98_environment *environment,
+	const char *name) __attribute__((weak));
+
 struct filesystem_stream {
 	FILE stream;
 	struct boot98_file file;
@@ -25,6 +31,7 @@ struct filesystem_stream {
 };
 
 static struct boot98_filesystem *active_filesystem;
+static struct boot98_environment *active_environment;
 static struct filesystem_stream *open_streams;
 
 static int result_errno(enum boot98_fs_result result)
@@ -58,6 +65,11 @@ static struct filesystem_stream *filesystem_stream(FILE *stream)
 void boot98_stdio_set_filesystem(struct boot98_filesystem *filesystem)
 {
 	active_filesystem = filesystem;
+}
+
+void boot98_stdio_set_environment(struct boot98_environment *environment)
+{
+	active_environment = environment;
 }
 
 FILE *fopen(const char *path, const char *mode)
@@ -323,4 +335,43 @@ int access(const char *path, int mode)
 		return -1;
 	}
 	return 0;
+}
+
+/*
+ * Boots currently exposes one mounted filesystem rooted at "/".  Noct's
+ * FileUtil API expects the POSIX current-directory entry points, so provide
+ * the root-only semantics here rather than teaching the portable Noct core
+ * about the boot environment.
+ */
+char *getcwd(char *buffer, size_t size)
+{
+	if (buffer == NULL || size < 2) {
+		errno = buffer == NULL ? EINVAL : ERANGE;
+		return NULL;
+	}
+	buffer[0] = '/';
+	buffer[1] = '\0';
+	return buffer;
+}
+
+int chdir(const char *path)
+{
+	if (path == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+	if (path[0] == '\0' ||
+	    (path[0] == '.' && path[1] == '\0') ||
+	    (path[0] == '/' && path[1] == '\0') ||
+	    (path[0] == '\\' && path[1] == '\0'))
+		return 0;
+	errno = ENOENT;
+	return -1;
+}
+
+char *getenv(const char *name)
+{
+	if (boot98_env_get == NULL)
+		return NULL;
+	return (char *)boot98_env_get(active_environment, name);
 }

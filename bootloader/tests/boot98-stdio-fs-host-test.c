@@ -1,11 +1,13 @@
 /* Host-side tests for BOOT98 filesystem-backed stdio. */
 
 #include "boot98-fs.h"
+#include "boot98-env.h"
 #include "libc/boot98-heap.h"
 #include "libc/boot98-stdio-fs.h"
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -160,13 +162,19 @@ int main(void)
 		.read = dummy_read,
 	};
 	struct boot98_filesystem filesystem;
+	struct boot98_environment environment;
 	FILE *file;
 	char line[32];
 	char bytes[4];
 
 	boot98_heap_init(arena, sizeof(arena));
+	boot98_env_init(&environment);
+	assert(boot98_env_set(&environment, "HOME", "HOME"));
 	assert(boot98_fs_mount(&filesystem, &volume, drivers, 1));
 	boot98_stdio_set_filesystem(&filesystem);
+	boot98_stdio_set_environment(&environment);
+	assert(!strcmp(getenv("HOME"), "HOME"));
+	assert(getenv("MISSING") == NULL);
 	assert(access("/TEST.TXT", F_OK) == -1);
 	file = fopen("/TEST.TXT", "wb");
 	assert(file != NULL);
@@ -193,6 +201,7 @@ int main(void)
 	assert(fopen("/TEST.TXT", "rb") != NULL);
 	assert(boot98_stdio_close_all() == 0);
 	boot98_stdio_set_filesystem(NULL);
+	boot98_stdio_set_environment(NULL);
 	assert(boot98_heap_current() == 0 && boot98_heap_validate());
 	puts("BOOT98 filesystem stdio host tests: OK");
 	return 0;

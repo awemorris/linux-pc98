@@ -25,9 +25,10 @@ and audio interfaces. The display backend owns mode save/restore through
 Dirty-rectangle display flushing is represented now so G2/G3 need not break
 the lifecycle ABI.
 
-StratoHAL is the intended hardware provenance. It will be pinned as a
-`third_party` submodule when G2 starts. G1 deliberately contains no copied
-StratoHAL code, DOS/4G runtime, or game-loop policy.
+StratoHAL is the intended hardware provenance. G2 uses a separate work clone
+and imports only the reviewed register-level behavior needed by each backend;
+StratoHAL is not a submodule and its complete tree is not vendored. G1 itself
+contains no copied StratoHAL code, DOS/4G runtime, or game-loop policy.
 
 ## Noct API
 
@@ -59,6 +60,7 @@ At this gate `BOOT.SYS` is 288,692 bytes, below its 320 KiB limit.
 
 ## Next gate
 
-G2 pins StratoHAL, audits the source boundary, and implements Cirrus plus GDC
-safe mode first. Trident, shared Unicode/JIS glyph drawing, the polled PC-98
-bus mouse, and WSS then complete the hardware HAL.
+G2 records the exact StratoHAL work-clone revision, audits every file-level
+adaptation, and implements GDC safe mode before Cirrus. Trident, shared
+Unicode/JIS glyph drawing, the polled PC-98 bus mouse, and WSS then complete
+the hardware HAL.

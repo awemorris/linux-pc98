@@ -58,8 +58,13 @@ The first BeUI review gate fixes the opt-in graphical lifecycle and hardware
 abstraction boundary without importing display-register code. Noct exposes
 `BeUI.init`, `close`, `isOpen`, `getWidth`, `getHeight`, `poll`, and `flush`.
 All VM exit paths force a close, while ordinary scripts never probe or change
-graphics. The PC-98 Cirrus/GDC/Trident, glyph, bus-mouse, and WSS backends are
-the next review gate. See [`BOOTS-G1-BEUI.md`](BOOTS-G1-BEUI.md).
+graphics. PC-98 GDC safe mode, Core-Graph/Cirrus, BMP images, and the CGROM
+glyph backend are now implemented. A keyboard-only Cockpit-style menu is
+covered on both display paths. Trident, bus mouse, and WSS remain later
+gates. See [`BOOTS-G1-BEUI.md`](BOOTS-G1-BEUI.md),
+[`BOOTS-G2A-GDC-BMP.md`](BOOTS-G2A-GDC-BMP.md),
+[`BOOTS-G2B-CIRRUS.md`](BOOTS-G2B-CIRRUS.md), and
+[`BOOTS-G2C-GLYPH-MENU.md`](BOOTS-G2C-GLYPH-MENU.md).
 
 `noct-test [1..100]` runs a built-in constant Noct program from the BOOT.SYS
 shell. It verifies VM creation, forced i386 JIT execution, integer/container

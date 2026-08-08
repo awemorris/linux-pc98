@@ -117,19 +117,51 @@ static int term_move_to(void *context, unsigned row, unsigned column)
 static int term_write(void *context, const char *utf8, size_t length)
 {
 	struct target_term *term = context;
-	int cells;
+	size_t position = 0;
 
 	if (term->services == NULL || term->services->screen_put_utf8 == NULL ||
 	    utf8 == NULL || length > 0xffffffffU)
 		return 0;
-	cells = term->services->screen_put_utf8(term->services->context,
-		term->row, term->column, utf8, (unsigned)length,
-		term->attribute);
-	if (cells < 0)
-		return 0;
-	term->column += (unsigned)cells;
-	if (term->column > 79U)
-		term->column = 79U;
+	while (position < length) {
+		size_t start = position;
+		int cells;
+
+		while (position < length && (uint8_t)utf8[position] != 0x1bU)
+			position++;
+		if (position != start) {
+			cells = term->services->screen_put_utf8(
+				term->services->context, term->row, term->column,
+				utf8 + start, (unsigned)(position - start),
+				term->attribute);
+			if (cells < 0)
+				return 0;
+			term->column += (unsigned)cells;
+			if (term->column > 79U)
+				term->column = 79U;
+		}
+		if (position == length)
+			break;
+		/* Remacs uses only SGR reset and reverse-video escapes in its
+		 * composed rows.  Translate those to native PC-98 attributes. */
+		if (length - position >= 4U && utf8[position + 1U] == '[' &&
+		    utf8[position + 3U] == 'm' &&
+		    (utf8[position + 2U] == '0' || utf8[position + 2U] == '7')) {
+			if (utf8[position + 2U] == '7')
+				term->attribute |= 0x04U;
+			else
+				term->attribute = 0xe1U;
+			position += 4U;
+			continue;
+		}
+		/* Keep an unsupported escape visible for diagnostics. */
+		cells = term->services->screen_put_utf8(term->services->context,
+			term->row, term->column, utf8 + position, 1U,
+			term->attribute);
+		if (cells < 0)
+			return 0;
+		term->column += (unsigned)cells;
+		position++;
+	}
 	return 1;
 }
 
@@ -196,6 +228,7 @@ static int term_flush(void *context)
 
 static int translate_key(int bios_key)
 {
+	unsigned shift = ((unsigned)bios_key >> 16) & 0xffU;
 	int key = boot98_key_normalize_bios_ax((uint16_t)bios_key);
 
 	switch (key) {
@@ -229,7 +262,8 @@ static int translate_key(int bios_key)
 	}
 	if (key >= BOOT98_KEY_F1 && key <= BOOT98_KEY_F10)
 		return NOCT_TERM_KEY_F1 + key - BOOT98_KEY_F1;
-	if (key == 0)
+	/* PC-98 INT 18h/AH=07h reports CTRL in shift-state bit 4. */
+	if ((shift & 0x10U) != 0 && key == 0x20)
 		return NOCT_TERM_MOD_CTRL | 0x20;
 	if (key > 0 && key <= 0x1a)
 		return NOCT_TERM_MOD_CTRL | (key + 0x60);

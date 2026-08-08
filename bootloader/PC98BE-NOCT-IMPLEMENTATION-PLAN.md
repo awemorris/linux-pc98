@@ -1442,9 +1442,10 @@ the bus mouse. A script enters the graphical environment only by calling
 2. Keep BeUI's generic NAPI and widget policy in linux-pc98. Hardware access
    is hidden behind display, glyph, pointer, clock, and audio HAL interfaces;
    NoctLang must not acquire PC-98 register knowledge.
-3. Either pin StratoHAL as a submodule and move reusable register-level code
-   upstream, or import an audited snapshot plus a reproducible patch. Decide
-   before implementation; do not silently copy the DOS/4G main loop or C
+3. Keep StratoHAL in a separate work clone. Import only the reviewed
+   file-level register behavior needed by a Boots backend, record the exact
+   source commit and function provenance, and preserve applicable zlib
+   notices. Do not vendor the complete tree or copy its DOS/4G main loop and C
    runtime dependencies.
 4. The event loop is cooperative and single-threaded. It polls input/audio,
    dispatches events, and flushes dirty display regions. It does not adopt
@@ -1460,8 +1461,9 @@ host tests are implemented. The host backend verifies one enter/leave pair,
 pointer unwind, idempotent init/close, explicit close, omitted close, and
 runtime-error close with the arena returning to zero. The PC-98 target does not
 bind a graphical backend yet, so `BeUI.init()` intentionally reports
-unavailable there until G2 supplies an audited display backend. StratoHAL will
-be pinned as a submodule for G2; no register-level source was copied in G1.
+unavailable there until G2 supplies an audited display backend. StratoHAL is
+consulted through a separate work clone for G2; no register-level source was
+copied in G1.
 
 ### G2 — PC-98 graphical and input HAL
 
@@ -1480,6 +1482,38 @@ be pinned as a submodule for G2; no register-level source was copied in G1.
    a separately tested interrupt path is needed.
 5. Decode UTF-8 once, share the Unicode-to-JIS mapping with the PC98 Term
    backend, and fetch/draw PC-98 font-ROM glyphs through one glyph service.
+6. Use BMP rather than PNG for pre-boot image assets so Boots has no zlib
+   dependency. Decode uncompressed 1/4/8-bit indexed BMP into one-byte INDEX8
+   pixels and 24-bit BMP into packed RGB24. Keep both representations behind
+   the BeUI image object; each display backend converts at draw time to its
+   actual framebuffer depth. Reject compressed, malformed, oversized, or
+   out-of-bounds images before allocating target storage.
+7. Provide allocation-free `line`, 8x8 `patternFill`, and pattern-masked image
+   drawing primitives for low-memory machines. Patterns are 64-bit 1bpp masks
+   consumed directly by the display backend; these operations must not create
+   a backing surface or a temporary full-size mask.
+
+G2a implementation status (2026-08-08): the GDC 640x400 4bpp safe-mode
+backend, allocation-free BMP decoder, INDEX8/RGB24 image object, Noct
+`fill/line/patternFill/loadImage/drawImage/drawImagePattern/destroyImage`
+APIs, and target HAL binding are
+implemented. Source behavior was reviewed from StratoHAL commit
+`76e909577bdf4629f11e473539b446a948fef830`, principally `98disp_gdc.c`; only
+the required mode/plane/color behavior was adapted. Host tests cover BMP
+1/4/8/24bpp decoding and GDC plane writes. A `-cpu 386 -m 6` QEMU test loads
+an 8bpp BMP from FAT16, draws it through GDC, restores text mode, and records a
+completion marker.
+
+G2b implementation status (2026-08-08): a narrow PC-9821 Core-Graph/GD5440
+backend now implements the recovered NEC path-08h gate and 640x480x8 mode
+stream, direct one-MiB linear-aperture drawing, RGB332 conversion for both
+BeUI image formats, and automatic Core-Graph-to-GDC fallback. Detection uses
+the 58h-5Dh motherboard ID range plus relocated CR27 validation before any
+VRAM write. Host register tests and the same FAT16 BMP workload pass on QEMU
+`pc9821`, `-cpu 386`, 6 MiB with a 640x480 screenshot; the `pc9801` GDC test
+passes in the same gate. Exact provenance and limitations are recorded in
+`BOOTS-G2B-CIRRUS.md`. Classic WAB Cirrus, PCI-laptop Cirrus, Trident, glyphs,
+bus mouse, and WSS remain G2 work.
 
 Acceptance: QEMU Cirrus and GDC safe mode draw the same test scene, adapter
 absence falls back deterministically, mouse events update a pointer without
@@ -1626,7 +1660,7 @@ Never:
 | Remacs is packaged before its pure-Noct/single-bytecode conversion lands | dependency inventory or missing globals | keep only the pinned submodule, periodically inspect upstream, and package nothing until the upstream artifact is self-contained |
 | Non-POSIX `FileUtil.listDirectory` silently returns empty | Remacs file-dialog test | add a generic upstream directory backend and map it to Boots FAT enumeration |
 | Unicode is treated as SJIS or raw JIS | Japanese Term/glyph corpus | decode UTF-8, map Unicode to JIS kuten through one audited StratoHAL-derived table |
-| StratoHAL DOS/game loop is copied wholesale | source/provenance review | isolate register-level code behind G1 HAL; retain zlib notices and remove DOS/4G policy |
+| StratoHAL DOS/game loop is copied wholesale | source/provenance review | use a separate work clone, import only reviewed file-level register behavior behind the G1 HAL, retain applicable zlib notices, and exclude DOS/4G policy |
 | GUI damages unsupported hardware during detection | QEMU traces and real-hardware gate | use read-only/signature probes first; require explicit backend override for experimental paths |
 | Dirty-rectangle logic leaves stale pixels | overlap/clipping scene tests | centralize invalidation and repaint intersecting siblings in deterministic tree order |
 | AUTOEXEC starts while probing owns transient state | probe/timeout stress test | record first BOOT partition, run only after stable handoff, and honor key cancellation |

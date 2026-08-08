@@ -246,11 +246,22 @@ struct mock_platform {
 	int beui_pointer_stop_count;
 	int beui_pointer_poll_count;
 	int beui_flush_count;
+	int beui_fill_count;
+	int beui_draw_count;
 };
 
 static struct mock_platform mock;
 static const char imported_source[] =
 	"func imported() { return \"imported\"; }";
+static const uint8_t mock_bmp[] = {
+	0x42, 0x4d, 0x3a, 0x00, 0x00, 0x00, 0, 0, 0, 0,
+	0x36, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00,
+	0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+	0x01, 0x00, 0x18, 0x00, 0, 0, 0, 0,
+	0x04, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	0x00, 0x00, 0xff, 0x00,
+};
 
 static int mock_screen_clear(void *context)
 {
@@ -336,7 +347,7 @@ static int mock_keyboard_poll(void *context)
 			platform->keyboard_bios_position];
 	if (platform->keyboard_bios_key != 0)
 		return platform->keyboard_bios_key;
-	return BOOT98_KEY_LEFT;
+	return 0x3b00; /* raw PC-98 BIOS AX for cursor left */
 }
 
 static int mock_keyboard_read(void *context)
@@ -363,9 +374,12 @@ static int mock_keyboard_read(void *context)
 static int mock_file_size(void *context, const char *path, uint32_t *size)
 {
 	(void)context;
-	if (strcmp(path, "LIB.NCT") != 0)
+	if (strcmp(path, "LIB.NCT") == 0)
+		*size = (uint32_t)strlen(imported_source);
+	else if (strcmp(path, "TEST.BMP") == 0)
+		*size = sizeof(mock_bmp);
+	else
 		return 0;
-	*size = (uint32_t)strlen(imported_source);
 	return 1;
 }
 
@@ -373,11 +387,18 @@ static int mock_file_read(void *context, const char *path, uint32_t offset,
 			  void *buffer, uint32_t length)
 {
 	(void)context;
-	if (strcmp(path, "LIB.NCT") != 0 ||
-	    offset > strlen(imported_source) ||
-	    length > strlen(imported_source) - offset)
+	if (strcmp(path, "LIB.NCT") == 0) {
+		if (offset > strlen(imported_source) ||
+		    length > strlen(imported_source) - offset)
+			return 0;
+		memcpy(buffer, imported_source + offset, length);
+	} else if (strcmp(path, "TEST.BMP") == 0) {
+		if (offset > sizeof(mock_bmp) || length > sizeof(mock_bmp) - offset)
+			return 0;
+		memcpy(buffer, mock_bmp + offset, length);
+	} else {
 		return 0;
-	memcpy(buffer, imported_source + offset, length);
+	}
 	return 1;
 }
 
@@ -431,6 +452,34 @@ mock_beui_flush(void *context,
 }
 
 static int
+mock_beui_fill(void *context, const struct boot98_beui_rect *rectangle,
+	       uint32_t color)
+{
+	struct mock_platform *platform = context;
+
+	if (rectangle->x != 1 || rectangle->y != 2 || rectangle->width != 3 ||
+	    rectangle->height != 4 || color != 0x112233U)
+		return 0;
+	platform->beui_fill_count++;
+	return 1;
+}
+
+static int
+mock_beui_draw_image(void *context, unsigned x, unsigned y,
+		     const struct boot98_beui_image *image)
+{
+	struct mock_platform *platform = context;
+
+	if (x != 5 || y != 6 || image->format != BOOT98_BEUI_IMAGE_RGB24 ||
+	    image->width != 1 || image->height != 1 || image->stride != 3 ||
+	    image->pixels[0] != 0xff || image->pixels[1] != 0 ||
+	    image->pixels[2] != 0)
+		return 0;
+	platform->beui_draw_count++;
+	return 1;
+}
+
+static int
 mock_beui_pointer_start(void *context,
 			 const struct boot98_beui_display_info *display)
 {
@@ -462,6 +511,8 @@ static const struct boot98_beui_hal mock_beui = {
 		.context = &mock,
 		.enter = mock_beui_enter,
 		.leave = mock_beui_leave,
+		.fill = mock_beui_fill,
+		.draw_image = mock_beui_draw_image,
 		.flush = mock_beui_flush,
 	},
 	.pointer = {
@@ -814,6 +865,7 @@ main(int argc, char **argv)
 		"Term.flush() != 1) { return 4; } "
 		"if (Term.readKey(10) != (Term.META | 0x78)) { return 5; } "
 		"if (Term.readKey(10) != (Term.CTRL | 0x63)) { return 7; } "
+		"if (Term.readKey(10) != (Term.CTRL | 0x20)) { return 9; } "
 		"if (Term.readKey(10) != Term.KEY_LEFT) { return 8; } "
 		"var entries = FileUtil.listDirectory(\"/\"); "
 		"if (Array.size(entries) != 3 || entries[0] != \"BOOT.CFG\" || "
@@ -841,6 +893,10 @@ main(int argc, char **argv)
 		"func main() { print(BeUI.isOpen()); print(BeUI.init()); "
 		"print(BeUI.init()); print(BeUI.getWidth()); "
 		"print(BeUI.getHeight()); print(BeUI.poll()); "
+		"print(BeUI.fill(1, 2, 3, 4, 1122867)); "
+		"var image = BeUI.loadImage(\"TEST.BMP\"); print(image); "
+		"print(BeUI.drawImage(image, 5, 6)); "
+		"print(BeUI.destroyImage(image)); "
 		"print(BeUI.flush()); print(BeUI.close()); "
 		"print(BeUI.isOpen()); return 0; }";
 	static const char beui_cleanup_script[] =
@@ -956,12 +1012,13 @@ main(int argc, char **argv)
 		return 247;
 	memset(&mock, 0, sizeof(mock));
 	status = run_case(beui_script, 0, BOOT98_NOCT_OK,
-			  "0\n1\n1\n640\n400\n1\n1\n1\n0\n", &result);
+			  "0\n1\n1\n640\n400\n1\n1\n1\n1\n1\n1\n1\n0\n", &result);
 	if (status != 0 || mock.beui_enter_count != 1 ||
 	    mock.beui_leave_count != 1 ||
 	    mock.beui_pointer_start_count != 1 ||
 	    mock.beui_pointer_stop_count != 1 ||
-	    mock.beui_pointer_poll_count != 1 || mock.beui_flush_count != 1)
+	    mock.beui_pointer_poll_count != 1 || mock.beui_flush_count != 1 ||
+	    mock.beui_fill_count != 1 || mock.beui_draw_count != 1)
 		return 248 + status;
 	memset(&mock, 0, sizeof(mock));
 	status = run_case(beui_cleanup_script, 1, BOOT98_NOCT_OK, "", &result);
@@ -983,7 +1040,9 @@ main(int argc, char **argv)
 	mock.keyboard_bios_queue[0] = 0x001b;
 	mock.keyboard_bios_queue[1] = 0x0078;
 	mock.keyboard_bios_queue[2] = 0x0003;
-	mock.keyboard_bios_count = 3;
+	/* BL shift-state bit 4 is packed into bits 23:16 by Stage 1. */
+	mock.keyboard_bios_queue[3] = 0x00100020;
+	mock.keyboard_bios_count = 4;
 	status = run_case_args(term_script, 0, NULL, 0, BOOT98_NOCT_OK, 0,
 			       "", &result);
 	if (status != 0)

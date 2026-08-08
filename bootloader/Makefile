@@ -6,6 +6,7 @@ HOSTCC ?= cc
 .DEFAULT_GOAL := all
 ASFLAGS := --32
 STAGE2_CFLAGS := -m32 -march=i386 -Os -ffreestanding -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -Wall -Wextra -Werror
+CIRRUS_CFLAGS := $(filter-out -Os,$(STAGE2_CFLAGS)) -O2
 SCRIPTS_DIR := ../scripts
 
 include libc/libc.mk
@@ -15,10 +16,13 @@ include noct.mk
 # Milestone verification nests QEMU tests.  Keep those chains ordered even
 # when the caller requests a highly parallel compile.
 .NOTPARALLEL: noct-m9-verify noct-m10-verify noct-m11-verify \
-	noct-m14-verify noct-m15-verify noct-m17-verify
+	noct-m14-verify noct-m15-verify noct-m17-verify beui-g2b-verify \
+	beui-g2c-verify
 
 STAGE2_OBJS := boot98-stage2-entry.o boot98-stage2.o boot98-console.o \
-	boot98-env.o boot98-fs.o boot98-beui.o \
+	boot98-env.o boot98-fs.o boot98-beui.o boot98-beui-image.o \
+	boot98-beui-pc98.o boot98-beui-pc98-cirrus.o \
+	boot98-beui-pc98-glyph.o boot98-beui-pc98-auto.o \
 	boot98-fat.o boot98-fat16.o boot98-image.o \
 	boot98-noct.o boot98-noct-memory.o boot98-noct-napi.o \
 	boot98-noct-platform.o boot98-noct-target.o \
@@ -137,7 +141,10 @@ boot98-messages.h: boot98-messages.txt \
 	python3 $(SCRIPTS_DIR)/generate-boot98-messages.py $< $@
 
 boot98-stage2.o: boot98-stage2.c boot98-abi.h boot98-console.h \
-	boot98-messages.h boot98-fat16.h boot98-fs.h boot98-image.h
+	boot98-beui-pc98-auto.h boot98-beui-pc98-cirrus.h \
+	boot98-beui-pc98-glyph.h boot98-beui-pc98.h \
+	boot98-messages.h boot98-fat16.h boot98-fs.h boot98-image.h \
+	boot98-noct-napi.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
 boot98-stage2-m9-test.o: boot98-stage2.c boot98-abi.h boot98-console.h \
@@ -151,6 +158,25 @@ boot98-env.o: boot98-env.c boot98-env.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
 boot98-beui.o: boot98-beui.c boot98-beui.h
+	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
+
+boot98-beui-image.o: boot98-beui-image.c boot98-beui-image.h boot98-beui.h
+	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
+
+boot98-beui-pc98.o: boot98-beui-pc98.c boot98-beui-pc98.h boot98-beui.h
+	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
+
+boot98-beui-pc98-cirrus.o: boot98-beui-pc98-cirrus.c \
+	boot98-beui-pc98-cirrus.h boot98-beui.h
+	$(CC) $(CIRRUS_CFLAGS) -c $< -o $@
+
+boot98-beui-pc98-glyph.o: boot98-beui-pc98-glyph.c \
+	boot98-beui-pc98-glyph.h boot98-beui.h
+	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
+
+boot98-beui-pc98-auto.o: boot98-beui-pc98-auto.c \
+	boot98-beui-pc98-auto.h boot98-beui-pc98-cirrus.h \
+	boot98-beui-pc98-glyph.h boot98-beui-pc98.h boot98-beui.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
 boot98-fs.o: boot98-fs.c boot98-fs.h
@@ -174,7 +200,8 @@ boot98-noct-memory.o: boot98-noct-memory.c boot98-noct-memory.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
 boot98-noct-napi.o: boot98-noct-napi.c boot98-noct-napi.h boot98-noct.h \
-	boot98-noct-memory.h boot98-env.h boot98-beui.h libc/boot98-heap.h
+	boot98-noct-memory.h boot98-env.h boot98-beui.h boot98-beui-image.h \
+	libc/boot98-heap.h
 	$(CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) -c $< -o $@
 
 boot98-noct-target.o: boot98-noct-target.c boot98-noct-target.h \
@@ -244,9 +271,9 @@ tests/boot98-fat-write-host-test: tests/boot98-fat-write-host-test.c \
 BOOT98_STDIO_FS_TEST := ../build/bootloader/tests/boot98-stdio-fs-host-test
 
 $(BOOT98_STDIO_FS_TEST): tests/boot98-stdio-fs-host-test.c boot98-fs.c \
-	boot98-fs.h $(BOOT98_LIBC_SOURCE_REL)
+	boot98-fs.h boot98-env.c boot98-env.h $(BOOT98_LIBC_SOURCE_REL)
 	@mkdir -p $(dir $@)
-	$(HOSTCC) $(BOOT98_HOST_TEST_CFLAGS) -I. boot98-fs.c \
+	$(HOSTCC) $(BOOT98_HOST_TEST_CFLAGS) -I. boot98-fs.c boot98-env.c \
 		$(BOOT98_LIBC_SOURCE_REL) $< -o $@
 
 boot98-stdio-fs-host-test: $(BOOT98_STDIO_FS_TEST)
@@ -267,10 +294,26 @@ tests/boot98-beui-host-test: tests/boot98-beui-host-test.c \
 	$(HOSTCC) -std=c11 -O2 -Wall -Wextra -Werror -I. \
 		boot98-beui.c $< -o $@
 
+tests/boot98-beui-image-host-test: tests/boot98-beui-image-host-test.c \
+	boot98-beui-image.c boot98-beui-image.h boot98-beui.h
+	$(HOSTCC) -std=c11 -O2 -Wall -Wextra -Werror -I. \
+		boot98-beui-image.c $< -o $@
+
+tests/boot98-beui-pc98-host-test: tests/boot98-beui-pc98-host-test.c \
+	boot98-beui.c boot98-beui-pc98.c boot98-beui-pc98.h boot98-beui.h
+	$(HOSTCC) -std=c11 -O2 -Wall -Wextra -Werror -I. \
+		boot98-beui.c boot98-beui-pc98.c $< -o $@
+
+tests/boot98-beui-cirrus-host-test: \
+	tests/boot98-beui-cirrus-host-test.c boot98-beui-pc98-cirrus.c \
+	boot98-beui-pc98-cirrus.h boot98-beui.h
+	$(HOSTCC) -std=c11 -O2 -Wall -Wextra -Werror -I. \
+		boot98-beui-pc98-cirrus.c $< -o $@
+
 $(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c \
 	LS.NCT CP.NCT \
 	boot98-noct-m6-script.h boot98-noct.o boot98-noct-napi.o \
-	boot98-noct-target.o boot98-beui.o \
+	boot98-noct-target.o boot98-beui.o boot98-beui-image.o \
 	boot98-env.o boot98-fs.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
 	$(BOOT98_SOFTFLOAT_OBJECTS)
 	@mkdir -p $(dir $@)
@@ -278,7 +321,7 @@ $(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c \
 		-Werror -I. -Ilibc/include -Ilibc -I$(NOCT_ROOT)/include \
 		-DBOOT98_NOCT_JIT_CODE_MAX=$(NOCT_JIT_CODE_MAX) \
 	tests/boot98-noct-host-test.c boot98-noct.o boot98-noct-napi.o \
-		boot98-noct-target.o boot98-beui.o \
+		boot98-noct-target.o boot98-beui.o boot98-beui-image.o \
 		boot98-env.o boot98-fs.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
 		$(BOOT98_SOFTFLOAT_OBJECTS) -o $@
 
@@ -364,6 +407,9 @@ noct-m14-verify: noct-m11-verify check BOOT.SYS \
 boot98-noct-repl-qemu-test: BOOT.SYS
 	$(SCRIPTS_DIR)/test-boot98-noct-repl.sh
 
+boot98-term-japanese-qemu-test: BOOT.SYS
+	$(SCRIPTS_DIR)/test-boot98-term-japanese.sh
+
 noct-m15-verify: noct-m14-verify check BOOT.SYS \
 	noct-m5-final-opcode-check boot98-noct-repl-qemu-test
 	@echo "Boots M15 REPL verification: PASS (keyboard/error/Ctrl-C on i386)"
@@ -380,9 +426,43 @@ noct-m17-verify: noct-m15-verify check BOOT.SYS \
 beui-g1-verify: check BOOT.SYS noct-m5-final-opcode-check
 	@echo "Boots BeUI G1 verification: PASS (lifecycle and HAL boundary)"
 
+boot98-beui-gdc-qemu-test: BOOT.SYS
+	$(SCRIPTS_DIR)/test-boot98-beui-gdc.sh
+
+beui-g2a-verify: check BOOT.SYS noct-m5-final-opcode-check \
+	boot98-beui-gdc-qemu-test
+	@echo "Boots BeUI G2a verification: PASS (GDC and BMP image path)"
+
+boot98-beui-cirrus-qemu-test: BOOT.SYS
+	$(SCRIPTS_DIR)/test-boot98-beui-cirrus.sh
+
+beui-g2b-verify: beui-g2a-verify
+	$(SCRIPTS_DIR)/test-boot98-beui-cirrus.sh
+	@echo "Boots BeUI G2b verification: PASS (Core-Graph/Cirrus and GDC fallback)"
+
+boot98-beui-menu-cirrus-qemu-test: BOOT.SYS
+	$(SCRIPTS_DIR)/test-boot98-beui-menu.sh
+
+boot98-beui-menu-gdc-qemu-test: BOOT.SYS
+	BOOT98_BEUI_MACHINE=pc9801 BOOT98_BEUI_TEST_TAG=menu-gdc \
+		$(SCRIPTS_DIR)/test-boot98-beui-menu.sh
+
+beui-g2c-verify: beui-g2b-verify \
+	boot98-beui-menu-cirrus-qemu-test boot98-beui-menu-gdc-qemu-test
+	@echo "Boots BeUI G2c verification: PASS (CGROM text and keyboard menu)"
+
+boot98-autoexec-remacs-qemu-test: BOOT.SYS
+	$(SCRIPTS_DIR)/test-boot98-autoexec-remacs.sh
+
+beui-g4-verify: beui-g2c-verify boot98-term-japanese-qemu-test \
+	boot98-autoexec-remacs-qemu-test
+	@echo "Boots BeUI G4 verification: PASS (AUTOEXEC.NCT to Remacs)"
+
 check: tests/boot98-fat-host-test tests/boot98-fat-write-host-test \
 	tests/boot98-env-host-test tests/boot98-noct-memory-host-test \
-	tests/boot98-beui-host-test \
+	tests/boot98-beui-host-test tests/boot98-beui-image-host-test \
+	tests/boot98-beui-pc98-host-test \
+	tests/boot98-beui-cirrus-host-test \
 	boot98-stdio-fs-host-test \
 	boot98-libc-host-test \
 	boot98-softfloat-host-test boot98-noct-host-test
@@ -391,11 +471,17 @@ check: tests/boot98-fat-host-test tests/boot98-fat-write-host-test \
 	./tests/boot98-env-host-test
 	./tests/boot98-noct-memory-host-test
 	./tests/boot98-beui-host-test
+	./tests/boot98-beui-image-host-test
+	./tests/boot98-beui-pc98-host-test
+	./tests/boot98-beui-cirrus-host-test
 
 clean: noct-clean boot98-libc-clean boot98-softfloat-clean
 	rm -f *.o *.elf *.bin *.com *.BIN *.SYS tests/boot98-fat-host-test \
 	tests/boot98-fat-write-host-test tests/boot98-env-host-test \
 		tests/boot98-noct-memory-host-test tests/boot98-beui-host-test \
+		tests/boot98-beui-image-host-test \
+		tests/boot98-beui-pc98-host-test \
+		tests/boot98-beui-cirrus-host-test \
 		$(BOOT98_STDIO_FS_TEST) \
 		$(BOOT98_NOCT_TEST) $(NOCT_M5_DISASSEMBLY) $(NOCT_M5_REJECTED) \
 		$(NOCT_M6_JIT_CODE)
@@ -410,6 +496,11 @@ clean: noct-clean boot98-libc-clean boot98-softfloat-clean
 .PHONY: boot98-noct-file-qemu-test noct-m10-verify \
 	boot98-noct-utilities-qemu-test noct-m11-verify \
 	boot98-noct-env-qemu-test noct-m14-verify \
-	boot98-noct-repl-qemu-test noct-m15-verify
+	boot98-noct-repl-qemu-test boot98-term-japanese-qemu-test \
+	noct-m15-verify
 
-.PHONY: beui-g1-verify
+.PHONY: beui-g1-verify boot98-beui-gdc-qemu-test beui-g2a-verify \
+	boot98-beui-cirrus-qemu-test beui-g2b-verify \
+	boot98-beui-menu-cirrus-qemu-test \
+	boot98-beui-menu-gdc-qemu-test beui-g2c-verify \
+	boot98-autoexec-remacs-qemu-test beui-g4-verify

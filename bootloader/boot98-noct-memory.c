@@ -26,27 +26,27 @@ struct profile_limits {
 
 static const struct profile_limits limits[] = {
 	[BOOT98_NOCT_MEMORY_5] = {
-		"5M", 4U * MIB, 256U * KIB, 8U * KIB,
+		"5M", 4U * MIB, 512U * KIB, 8U * KIB,
 		128U * KIB, 32U * KIB, 512U * KIB, 96U * KIB,
 	},
 	[BOOT98_NOCT_MEMORY_8] = {
-		"8M", 8U * MIB, 256U * KIB, 16U * KIB,
+		"8M", 8U * MIB, 512U * KIB, 16U * KIB,
 		256U * KIB, 64U * KIB, 1U * MIB, 192U * KIB,
 	},
 	[BOOT98_NOCT_MEMORY_16] = {
-		"16M", 14U * MIB, 256U * KIB, 32U * KIB,
+		"16M", 14U * MIB, 512U * KIB, 32U * KIB,
 		512U * KIB, 128U * KIB, 2U * MIB, 256U * KIB,
 	},
 	[BOOT98_NOCT_MEMORY_32] = {
-		"32M", 16U * MIB, 256U * KIB, 32U * KIB,
+		"32M", 16U * MIB, 512U * KIB, 32U * KIB,
 		1U * MIB, 256U * KIB, 4U * MIB, 512U * KIB,
 	},
 	[BOOT98_NOCT_MEMORY_64] = {
-		"64M", 48U * MIB, 256U * KIB, 32U * KIB,
+		"64M", 48U * MIB, 512U * KIB, 32U * KIB,
 		2U * MIB, 256U * KIB, 8U * MIB, 1U * MIB,
 	},
 	[BOOT98_NOCT_MEMORY_LARGE] = {
-		">64M", 64U * MIB, 256U * KIB, 32U * KIB,
+		">64M", 64U * MIB, 512U * KIB, 32U * KIB,
 		2U * MIB, 512U * KIB, 16U * MIB, 2U * MIB,
 	},
 };

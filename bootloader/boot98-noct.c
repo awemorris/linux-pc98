@@ -136,6 +136,7 @@ run_program_args(const char *program_name, void *program, uint32_t program_size,
 	active_console.context = options->write_context;
 	boot98_heap_init(options->arena, options->arena_size);
 	boot98_stdio_set_filesystem(options->filesystem);
+	boot98_stdio_set_environment(options->environment);
 	boot98_heap_set_observer(observe_heap, &jit);
 	if (options->fail_after != BOOT98_NOCT_NO_FAILURE)
 		boot98_heap_set_failure_after(options->fail_after);
@@ -240,6 +241,7 @@ cleanup:
 	if (boot98_stdio_close_all() != 0 && status == BOOT98_NOCT_OK)
 		status = BOOT98_NOCT_CLEANUP_ERROR;
 	boot98_stdio_set_filesystem(NULL);
+	boot98_stdio_set_environment(NULL);
 	boot98_noct_target_cleanup();
 	boot98_noct_napi_cleanup();
 	peak = boot98_heap_peak();
@@ -336,6 +338,7 @@ boot98_noct_repl(const struct boot98_noct_options *options,
 	active_console.context = options->write_context;
 	boot98_heap_init(options->arena, options->arena_size);
 	boot98_stdio_set_filesystem(options->filesystem);
+	boot98_stdio_set_environment(options->environment);
 	boot98_heap_set_observer(observe_heap, &jit);
 	if (options->fail_after != BOOT98_NOCT_NO_FAILURE)
 		boot98_heap_set_failure_after(options->fail_after);
@@ -423,6 +426,7 @@ cleanup:
 	if (boot98_stdio_close_all() != 0 && status == BOOT98_NOCT_OK)
 		status = BOOT98_NOCT_CLEANUP_ERROR;
 	boot98_stdio_set_filesystem(NULL);
+	boot98_stdio_set_environment(NULL);
 	boot98_noct_target_cleanup();
 	boot98_noct_napi_cleanup();
 	peak = boot98_heap_peak();

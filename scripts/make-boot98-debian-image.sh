@@ -199,6 +199,7 @@ mkswap --quiet --label PC98SWAP "$swap_image"
 dd if="$swap_image" of="$output" bs=512 seek="$swap_start" \
 	conv=notrunc,sparse status=progress
 
+BOOT98_AUTOEXEC="$repo/bootloader/AUTOEXEC.NCT" \
 DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
 	"$repo/scripts/install-boot98-image.sh" --install-disk-stubs \
 	"$output" "$kernel" "$cfg"

@@ -73,6 +73,8 @@ enum boot98_bios_service {
 	BOOT98_BIOS_PROBE_FIXED = 10,
 	/* One 512-byte fixed-disk write through the low-memory BIOS bounce area. */
 	BOOT98_BIOS_DISK_WRITE = 11,
+	/* Stop displaying G-VRAM (INT 18h, AH=41h). */
+	BOOT98_BIOS_DISPLAY_STOP = 12,
 };
 
 struct boot98_bios_request {

@@ -4,6 +4,7 @@ machine	NEC PC-9800 ｼﾘｰｽﾞ ﾊﾟｰｿﾅﾙ ｺﾝﾋﾟｭｰﾀ
 loader	UNIX ﾌﾞｰﾄﾛｰﾀﾞ ﾊﾞｰｼﾞｮﾝ 1.00
 copyright	Copyright (C) 2026 NEC FANS on X.com
 probing	ﾃﾞｨｽｸを検索中...
+automatic_run	自動実行します...
 found_suffix	 台みつかりました
 boot_from	ﾃﾞｨｽｸから起動:
 auto_prefix	  1) 自動起動 (

@@ -19,6 +19,7 @@ void *calloc(size_t count, size_t size);
 void *realloc(void *pointer, size_t size);
 void free(void *pointer);
 char *strdup(const char *string);
+char *getenv(const char *name);
 
 int atoi(const char *string);
 long atol(const char *string);

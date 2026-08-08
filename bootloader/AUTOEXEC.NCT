@@ -1,0 +1,100 @@
+// Boots graphical startup menu.  The VM returns after placing exactly one
+// command in BOOT_ACTION; Stage 2 validates and executes that command only
+// after BeUI and the Noct arena have been torn down.
+
+func drawRow(y, text, active) {
+    if (active == 1) {
+        BeUI.fill(190, y - 8, 414, 36, 736602);
+        BeUI.line(190, y - 8, 603, y - 8, 2857715);
+        BeUI.line(190, y + 27, 603, y + 27, 2857715);
+        BeUI.line(190, y - 8, 190, y + 27, 2857715);
+        BeUI.line(603, y - 8, 603, y + 27, 2857715);
+        BeUI.drawText(">", 204, y, 2857715, 736602);
+        BeUI.drawText(text, 228, y, 16777215, 736602);
+    } else {
+        BeUI.fill(190, y - 8, 414, 36, 1842979);
+        BeUI.drawText(" ", 204, y, 10069165, 1842979);
+        BeUI.drawText(text, 228, y, 12698049, 1842979);
+    }
+}
+
+func drawMenu(selected) {
+    var height = BeUI.getHeight();
+    BeUI.fill(0, 0, 640, height, 1053204);
+
+    BeUI.fill(0, 0, 640, 42, 1382680);
+    BeUI.fill(0, 40, 640, 2, 47062);
+    BeUI.drawText("Boots/98", 18, 12, 16777215, 1382680);
+    BeUI.drawText("Boot loader and pre-boot environment", 190, 12,
+                  10069165, 1382680);
+
+    BeUI.fill(0, 42, 164, height - 42, 4737109);
+    BeUI.drawText("SYSTEM", 16, 68, 6252390, 4737109);
+    BeUI.drawText("Overview", 24, 100, 10069165, 4737109);
+    BeUI.drawText("Storage", 24, 132, 10069165, 4737109);
+    BeUI.drawText("Networking", 24, 164, 10069165, 4737109);
+    BeUI.fill(0, 194, 164, 34, 1053204);
+    BeUI.fill(0, 194, 3, 34, 2857715);
+    BeUI.drawText("Boot menu", 24, 203, 16777215, 1053204);
+    BeUI.drawText("TOOLS", 16, 246, 6252390, 4737109);
+    BeUI.drawText("Emacs", 24, 274, 10069165, 4737109);
+    BeUI.drawText("Noct shell", 24, 306, 10069165, 4737109);
+    BeUI.drawText("Terminal", 24, 338, 10069165, 4737109);
+
+    BeUI.drawText("ブートストラップ環境", 190, 66,
+                  16777215, 1053204);
+    BeUI.drawText("起動する項目を選択してください", 190, 94,
+                  10069165, 1053204);
+    BeUI.line(190, 118, 603, 118, 3224893);
+    drawRow(142, "Linux を起動", selected == 0);
+    drawRow(186, "Emacs", selected == 1);
+    drawRow(230, "シェルに戻る", selected == 2);
+
+    BeUI.fill(164, height - 42, 476, 42, 1382680);
+    BeUI.drawText("↑ ↓", 190, height - 29, 2857715, 1382680);
+    BeUI.drawText(": 選択", 230, height - 29, 10069165, 1382680);
+    BeUI.drawText("Enter", 338, height - 29, 2857715, 1382680);
+    BeUI.drawText(": 決定", 386, height - 29, 10069165, 1382680);
+    BeUI.flush();
+}
+
+func rowText(index) {
+    if (index == 0) { return "Linux を起動"; }
+    if (index == 1) { return "Emacs"; }
+    return "シェルに戻る";
+}
+
+func main() {
+    if (BeUI.init() != 1) { return 1; }
+    var selected = 0;
+    drawMenu(selected);
+    while (1) {
+        var key = Keyboard.read();
+        var previous = selected;
+        if (key == Key.Down && selected < 2) { selected = selected + 1; }
+        if (key == Key.Up && selected > 0) { selected = selected - 1; }
+        if (selected != previous) {
+            drawRow(142 + previous * 44, rowText(previous), 0);
+            drawRow(142 + selected * 44, rowText(selected), 1);
+            BeUI.flush();
+        }
+        if (key == 27) {
+            BeUI.close();
+            System.setEnv("BOOT_ACTION", "echo Entering shell.");
+            return 0;
+        }
+        if (key == Key.Enter) {
+            BeUI.close();
+            if (selected == 0) {
+                System.setEnv("BOOT_ACTION", "source BOOT.CFG");
+            }
+            if (selected == 1) {
+                System.setEnv("BOOT_ACTION", "emacs EDIT.TXT");
+            }
+            if (selected == 2) {
+                System.setEnv("BOOT_ACTION", "echo Entering shell.");
+            }
+            return 0;
+        }
+    }
+}

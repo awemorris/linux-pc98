@@ -782,6 +782,8 @@ gateway_real:
 	shrl	$4, %eax
 	movw	%ax, %es
 	movw	%es:(%bx), %ax
+	cmpw	$12, %ax
+	je	gateway_display_stop
 	cmpw	$11, %ax
 	je	gateway_disk_write
 	cmpw	$10, %ax
@@ -814,35 +816,33 @@ gateway_clock_second:
 	jmp	gateway_real_return
 
 gateway_key_read:
-	xorb	%ah, %ah
+	/*
+	 * The extended BIOS service returns the key-data pair in AX and the
+	 * modifier snapshot in BL.  Keep AX intact in bits 15:0 and expose BL
+	 * in bits 23:16 so the 32-bit Term adapter can distinguish C-SPC from
+	 * an ordinary space.  The text menu normalizes AX and ignores BL.
+	 */
+	movb	$0x07, %ah
 	int	$0x18
-	testb	%al, %al
-	jnz	1f
-	movzbl	%ah, %eax
-	orl	$0x100, %eax
-	jmp	2f
-1:
-	movzbl	%al, %eax
-2:
+	movzbl	%bl, %edx
+	shll	$16, %edx
+	movzwl	%ax, %eax
+	orl	%edx, %eax
 	movl	%eax, %cs:gateway_result
 	jmp	gateway_real_return
 
 gateway_key_poll:
-	movb	$0x01, %ah
+	movb	$0x08, %ah
 	int	$0x18
-	testb	%bh, %bh
-	jz	3f
-	testb	%al, %al
-	jnz	1f
-	movzbl	%ah, %eax
-	orl	$0x100, %eax
-	jmp	2f
-1:
-	movzbl	%al, %eax
-2:
+	testw	%ax, %ax
+	jz	1f
+	movzbl	%bl, %edx
+	shll	$16, %edx
+	movzwl	%ax, %eax
+	orl	%edx, %eax
 	movl	%eax, %cs:gateway_result
 	jmp	gateway_real_return
-3:
+1:
 	movl	$0xffffffff, %cs:gateway_result
 	jmp	gateway_real_return
 
@@ -851,6 +851,12 @@ gateway_display_reset:
 	movb	$0xc0, %ch
 	int	$0x18
 	movb	$0x40, %ah
+	int	$0x18
+	movl	$0, %cs:gateway_result
+	jmp	gateway_real_return
+
+gateway_display_stop:
+	movb	$0x41, %ah
 	int	$0x18
 	movl	$0, %cs:gateway_result
 	jmp	gateway_real_return

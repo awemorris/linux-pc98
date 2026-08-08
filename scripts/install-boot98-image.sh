@@ -171,6 +171,14 @@ mattrib -i "$image@@$offset" +r +h +s ::IO.SYS
 mcopy -o -i "$image@@$offset" "$stage2_image" ::BOOT.SYS
 mattrib -i "$image@@$offset" +r +h +s ::BOOT.SYS
 mmd -i "$image@@$offset" ::CMD 2>/dev/null || true
+mmd -i "$image@@$offset" ::HOME 2>/dev/null || true
+if test -n "${BOOT98_AUTOEXEC:-}"; then
+	test -f "$BOOT98_AUTOEXEC" || {
+		echo "AUTOEXEC.NCT not found: $BOOT98_AUTOEXEC" >&2
+		exit 1
+	}
+	mcopy -o -i "$image@@$offset" "$BOOT98_AUTOEXEC" ::AUTOEXEC.NCT
+fi
 if test -f "$bootloader/HELLO.NCT"; then
 	mcopy -o -i "$image@@$offset" "$bootloader/HELLO.NCT" ::HELLO.NCT
 fi
@@ -180,6 +188,7 @@ for utility in LS.NCT CP.NCT; do
 	fi
 done
 remacs_nb="${REMACS_NB:-$repo/build/bootloader/remacs/REMACS.NB}"
+remacs_skk="${REMACS_SKK_DICT:-$repo/build/bootloader/remacs/SKKJISYO.DIC}"
 if test ! -s "$remacs_nb"; then
 	"$repo/scripts/build-remacs-bytecode.sh"
 fi
@@ -188,6 +197,16 @@ test -s "$remacs_nb" || {
 	exit 1
 }
 mcopy -o -i "$image@@$offset" "$remacs_nb" ::CMD/REMACS.NB
+test -s "$remacs_skk" || {
+	echo "Remacs SKK dictionary not found: $remacs_skk" >&2
+	exit 1
+}
+mcopy -o -i "$image@@$offset" "$remacs_skk" ::HOME/SKKJISYO.DIC
+test -f "$bootloader/EMACS.RC" || {
+	echo "Default Emacs configuration not found: $bootloader/EMACS.RC" >&2
+	exit 1
+}
+mcopy -o -i "$image@@$offset" "$bootloader/EMACS.RC" ::HOME/.emacs
 if test -n "$kernel"; then
 	mcopy -o -i "$image@@$offset" "$kernel" ::VMLINUX
 fi

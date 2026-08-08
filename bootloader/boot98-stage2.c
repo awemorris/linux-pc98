@@ -8,10 +8,12 @@
 #include "boot98-abi.h"
 #include "boot98-console.h"
 #include "boot98-env.h"
+#include "boot98-beui-pc98-auto.h"
 #include "boot98-fat16.h"
 #include "boot98-fs.h"
 #include "boot98-image.h"
 #include "boot98-messages.h"
+#include "boot98-noct-napi.h"
 #include "boot98-noct-platform.h"
 
 #define MAX_PARTS 16
@@ -21,7 +23,7 @@
 #define CMD_ADDR 0x81000U
 #define PC98_ADDR 0x82000U
 #define PC98_SETUP_NODE_SIZE 32U
-#define STARTUP_TIMEOUT_SECONDS 3
+#define STARTUP_TIMEOUT_SECONDS 1
 #define MAX_FIXED_DEVICES 12
 
 /*
@@ -63,6 +65,12 @@ enum startup_auto_kind {
 	STARTUP_AUTO_PBR,
 };
 
+enum startup_config_kind {
+	STARTUP_CONFIG_NONE,
+	STARTUP_CONFIG_AUTOEXEC,
+	STARTUP_CONFIG_BOOTCFG,
+};
+
 struct startup_state {
 	enum startup_phase phase;
 	unsigned next_candidate;
@@ -71,11 +79,15 @@ struct startup_state {
 	int auto_partition;
 	int auto_priority;
 	enum startup_auto_kind auto_kind;
+	enum startup_config_kind auto_config_kind;
+	int automatic_cancelled;
 	int timeout_start;
 	unsigned timeout_budget;
 };
 static struct boot98_filesystem mounted_fs;
 static struct boot98_environment boot_environment;
+static struct boot98_beui_pc98_auto beui_display;
+static struct boot98_beui_hal beui_hal;
 static struct part parts[MAX_PARTS];
 static int curdev = -1, curpart = -1;
 static char kernel_name[BOOT98_PATH_MAX], kernel_arg[256];
@@ -203,6 +215,20 @@ static uint32_t call(uint16_t svc)
 	rq.service = svc;
 	return gw(&rq);
 }
+
+static int
+beui_display_reset(void *context)
+{
+	(void)context;
+	return call(BOOT98_BIOS_DISPLAY_RESET) == 0;
+}
+
+static int
+beui_display_stop(void *context)
+{
+	(void)context;
+	return call(BOOT98_BIOS_DISPLAY_STOP) == 0;
+}
 static int readsec(const struct boot98_device *d, uint32_t lba, void *buf)
 {
 	rq.bios_id = d->bios_id;
@@ -319,11 +345,15 @@ static void prompt(void)
 	puts(" ok ");
 	update_cursor();
 }
-static int key(void)
+static uint32_t raw_key(void)
 {
 	/* A blocking read must never leave the hardware cursor stale or hidden. */
 	update_cursor();
-	return (int)call(BOOT98_BIOS_KEY_READ);
+	return call(BOOT98_BIOS_KEY_READ);
+}
+static int key(void)
+{
+	return boot98_key_normalize_bios_ax((uint16_t)raw_key());
 }
 static uint32_t applet_key(void)
 {
@@ -337,7 +367,7 @@ static int poll(void)
 static int noct_key_read(void *context)
 {
 	(void)context;
-	return key();
+	return (int)raw_key();
 }
 
 static int noct_key_poll(void *context)
@@ -551,6 +581,7 @@ static int run_iplware(const char *n)
 		return 0;
 	findboot();
 	call(BOOT98_BIOS_DISPLAY_RESET);
+	(void)boot98_beui_pc98_gdc_clear_graphics(&beui_display.gdc);
 	boot98_console_reset();
 	boot98_console_set_mode(BOOT98_CONSOLE_TERMINAL);
 	puts("IPLware returned; devices reprobed.\n");
@@ -1179,8 +1210,16 @@ static int command(char *s)
 					    noct_key_read, noct_key_poll,
 					    noct_clock_second, 0);
 	}
-	if (streq(v[0], "emacs"))
+	if (streq(v[0], "emacs")) {
+		const char *dictionary = boot98_env_get(&boot_environment,
+						      "REMACS_SKK_DICT");
+
+		/* The 8.3 path is present in every Boots image with REMACS.NB. */
+		if (dictionary == NULL || dictionary[0] == '\0')
+			(void)boot98_env_set(&boot_environment, "REMACS_SKK_DICT",
+					     "HOME/SKKJISYO.DIC");
 		return run_noct_application("REMACS", ".NB", n - 1, &v[1]);
+	}
 	if (streq(v[0], "noct-test")) {
 		int repeat;
 
@@ -1232,6 +1271,17 @@ static int menu_device(unsigned ordinal)
 	return -1;
 }
 
+static enum startup_config_kind boot_volume_startup_kind(void)
+{
+	struct boot98_file file;
+
+	if (boot98_fs_open(&mounted_fs, "AUTOEXEC.NCT", &file))
+		return STARTUP_CONFIG_AUTOEXEC;
+	if (boot98_fs_open(&mounted_fs, "BOOT.CFG", &file))
+		return STARTUP_CONFIG_BOOTCFG;
+	return STARTUP_CONFIG_NONE;
+}
+
 static unsigned fixed_device_ordinal(int device)
 {
 	unsigned ordinal = 0;
@@ -1243,10 +1293,9 @@ static unsigned fixed_device_ordinal(int device)
 
 static void consider_automatic_device(struct startup_state *state, int device)
 {
-	struct boot98_file file;
 	int first_bootable = -1;
 	int config_partition = -1;
-	int priority;
+	enum startup_config_kind config_kind = STARTUP_CONFIG_NONE;
 
 	if (device < 0 || !(devs[device].flags & BOOT98_DEV_HAS_GEOMETRY) ||
 	    !scanparts(device))
@@ -1261,17 +1310,17 @@ static void consider_automatic_device(struct startup_state *state, int device)
 			first_bootable = partition;
 		if (config_partition < 0 && streq(parts[partition].name, "BOOT") &&
 		    mountpart(device, partition) &&
-		    boot98_fs_open(&mounted_fs, "BOOT.CFG", &file))
+		    (config_kind = boot_volume_startup_kind()) !=
+			    STARTUP_CONFIG_NONE)
 			config_partition = partition;
 	}
-	if (config_partition >= 0) {
-		priority = devs[device].bios_id == ho->boot_bios_id ? 1 : 2;
-		if (priority < state->auto_priority) {
-			state->auto_priority = priority;
-			state->auto_kind = STARTUP_AUTO_CONFIG;
-			state->auto_device = device;
-			state->auto_partition = config_partition;
-		}
+	if (config_partition >= 0 && state->auto_priority > 1) {
+		/* Discovery order is stable: keep the first BOOT volume found. */
+		state->auto_priority = 1;
+		state->auto_kind = STARTUP_AUTO_CONFIG;
+		state->auto_config_kind = config_kind;
+		state->auto_device = device;
+		state->auto_partition = config_partition;
 	}
 	if (first_bootable >= 0 && 3 < state->auto_priority) {
 		state->auto_priority = 3;
@@ -1283,19 +1332,81 @@ static void consider_automatic_device(struct startup_state *state, int device)
 
 static int activate_automatic_target(const struct startup_state *state)
 {
-	struct boot98_file file;
-
 	if (state->auto_kind == STARTUP_AUTO_NONE ||
 	    !scanparts(state->auto_device) ||
 	    !parts[state->auto_partition].valid)
 		return 0;
 	if (state->auto_kind == STARTUP_AUTO_CONFIG &&
 	    (!mountpart(state->auto_device, state->auto_partition) ||
-	     !boot98_fs_open(&mounted_fs, "BOOT.CFG", &file)))
+	     boot_volume_startup_kind() == STARTUP_CONFIG_NONE))
 		return 0;
 	curdev = state->auto_device;
 	curpart = state->auto_partition;
 	kernel_name[0] = kernel_arg[0] = 0;
+	return 1;
+}
+
+/* AUTOEXEC.NCT may select one action, but it cannot inject a second shell
+ * line or leave a stale action behind for a later VM invocation. */
+static int valid_boot_action(const char *action)
+{
+	unsigned length = 0;
+	int non_space = 0;
+
+	if (action == 0)
+		return 0;
+	while (action[length] != 0) {
+		unsigned char ch = (unsigned char)action[length++];
+
+		if (length >= LINE_MAX || ch < 0x20U || ch == 0x7fU)
+			return 0;
+		if (ch != ' ' && ch != '\t')
+			non_space = 1;
+	}
+	return non_space;
+}
+
+/* Return zero when no graphical startup script exists, one after executing
+ * its selected action, and -1 when the script/action failed validation. */
+static int run_autoexec(void)
+{
+	struct boot98_file file;
+	const char *selected;
+	char action[LINE_MAX];
+	int script_ok;
+
+	if (!boot98_fs_open(&mounted_fs, "AUTOEXEC.NCT", &file))
+		return 0;
+	(void)boot98_env_unset(&boot_environment, "BOOT_ACTION");
+	script_ok = boot98_noct_run_file(&mounted_fs, &boot_environment,
+					 "AUTOEXEC.NCT", 0, 0, noct_key_read,
+					 noct_key_poll, noct_clock_second, 0);
+	/* A graphical script may have owned Cirrus or GDC graphics.  Restore the
+	 * firmware text display and erase every GDC graphics plane before its
+	 * selected Boots command runs.  Real Cirrus-equipped machines retain the
+	 * old graphics VRAM contents when the display is switched back to GDC. */
+	call(BOOT98_BIOS_DISPLAY_RESET);
+	(void)boot98_beui_pc98_gdc_clear_graphics(&beui_display.gdc);
+	boot98_console_reset();
+	boot98_console_set_mode(BOOT98_CONSOLE_TERMINAL);
+	if (!script_ok) {
+		puts("AUTOEXEC.NCT failed; returning to the text shell.\n");
+		return -1;
+	}
+	selected = boot98_env_get(&boot_environment, "BOOT_ACTION");
+	if (!valid_boot_action(selected) ||
+	    !strcopy(action, selected, sizeof(action))) {
+		(void)boot98_env_unset(&boot_environment, "BOOT_ACTION");
+		puts("AUTOEXEC.NCT did not select a valid BOOT_ACTION.\n");
+		return -1;
+	}
+	(void)boot98_env_unset(&boot_environment, "BOOT_ACTION");
+	if (!command(action)) {
+		puts("BOOT_ACTION failed: ");
+		puts(action);
+		putc('\n');
+		return -1;
+	}
 	return 1;
 }
 
@@ -1305,6 +1416,53 @@ static void draw_startup_header(void)
 	boot98_console_write_at(2, 0, boot98_msg_loader);
 	boot98_console_write_at(3, 0, boot98_msg_copyright);
 	boot98_console_write_at(5, 0, boot98_msg_probing);
+}
+
+static void draw_probe_progress(unsigned current, uint8_t device_class,
+				uint8_t bios_id)
+{
+	char filled[BOOT98_CONSOLE_COLUMNS + 1U];
+	char empty[BOOT98_CONSOLE_COLUMNS + 1U];
+	unsigned columns = current * BOOT98_CONSOLE_COLUMNS /
+		MAX_FIXED_DEVICES;
+	unsigned index;
+
+	boot98_console_clear_row(5);
+	boot98_console_write_at(5, 0, boot98_msg_probing);
+	putc(' ');
+	puts(device_class == BOOT98_DEV_IDE ? "IDE " : "SCSI ");
+	dec((unsigned)bios_id -
+	    (device_class == BOOT98_DEV_IDE ? 0x80U : 0xa0U) + 1U);
+	puts(" (");
+	dec(current);
+	putc('/');
+	dec(MAX_FIXED_DEVICES);
+	putc(')');
+
+	for (index = 0; index < columns; index++)
+		filled[index] = ' ';
+	filled[index] = 0;
+	for (index = 0; index < BOOT98_CONSOLE_COLUMNS - columns; index++)
+		empty[index] = ' ';
+	empty[index] = 0;
+	boot98_console_put_sjis_at(BOOT98_CONSOLE_ROWS - 1U, 0,
+				   (const uint8_t *)filled,
+				   BOOT98_CONSOLE_NORMAL_ATTRIBUTE | 0x04U);
+	if (columns < BOOT98_CONSOLE_COLUMNS)
+		boot98_console_put_sjis_at(BOOT98_CONSOLE_ROWS - 1U, columns,
+					   (const uint8_t *)empty,
+					   BOOT98_CONSOLE_NORMAL_ATTRIBUTE);
+}
+
+static void draw_automatic_status(const struct startup_state *state)
+{
+	draw_probe_progress(MAX_FIXED_DEVICES, BOOT98_DEV_SCSI, 0xa7);
+	boot98_console_clear_row(5);
+	boot98_console_write_at(5, 0, boot98_msg_automatic_run);
+	if (state->auto_config_kind == STARTUP_CONFIG_AUTOEXEC)
+		puts(" AUTOEXEC.NCT");
+	else if (state->auto_config_kind == STARTUP_CONFIG_BOOTCFG)
+		puts(" BOOT.CFG");
 }
 
 static void draw_startup_menu(const struct startup_state *state)
@@ -1346,6 +1504,7 @@ static void draw_startup_menu(const struct startup_state *state)
 
 static void accept_startup_selection(int key_code)
 {
+	boot98_console_clear_row(BOOT98_CONSOLE_ROWS - 1U);
 	if (key_code == 0x1b)
 		puts("ESC");
 	else if (key_code >= 0)
@@ -1443,6 +1602,7 @@ static void probe_next_startup_device(struct startup_state *state)
 		device_class = BOOT98_DEV_SCSI;
 		bios_id = 0xa0 + candidate - 4;
 	}
+	draw_probe_progress(candidate + 1U, device_class, bios_id);
 	new_device = probe_fixed_device(device_class, bios_id);
 	state->fixed_count = device_count;
 	if (new_device >= 0)
@@ -1460,6 +1620,8 @@ static int startup_menu(struct startup_state *state)
 	state->auto_device = state->auto_partition = -1;
 	state->auto_priority = 4;
 	state->auto_kind = STARTUP_AUTO_NONE;
+	state->auto_config_kind = STARTUP_CONFIG_NONE;
+	state->automatic_cancelled = 0;
 	state->timeout_start = -1;
 	state->timeout_budget = 0x20000;
 
@@ -1475,26 +1637,34 @@ static int startup_menu(struct startup_state *state)
 
 		if (state->phase == STARTUP_PROBE) {
 			key_code = pending_startup_key();
-			if (key_code >= 0 &&
-			    (result = handle_startup_key(state, key_code)) >= 0)
-				return result;
+			if (key_code >= 0) {
+				state->automatic_cancelled = 1;
+				if ((result = handle_startup_key(state, key_code)) >= 0)
+					return result;
+			}
 			if (state->next_candidate < MAX_FIXED_DEVICES) {
 				probe_next_startup_device(state);
 				draw_startup_menu(state);
 				key_code = pending_startup_key();
-				if (key_code >= 0 &&
-				    (result = handle_startup_key(state,
-							 key_code)) >= 0)
-					return result;
+				if (key_code >= 0) {
+					state->automatic_cancelled = 1;
+					if ((result = handle_startup_key(state,
+								 key_code)) >= 0)
+						return result;
+				}
 				continue;
 			}
 			state->phase = STARTUP_TIMEOUT;
 			state->timeout_start = clock_second();
+			if (!state->automatic_cancelled &&
+			    state->auto_kind != STARTUP_AUTO_NONE)
+				draw_automatic_status(state);
 			draw_startup_menu(state);
 			continue;
 		}
 
-		if (state->auto_kind == STARTUP_AUTO_NONE) {
+		if (state->auto_kind == STARTUP_AUTO_NONE ||
+		    state->automatic_cancelled) {
 			key_code = key();
 			result = handle_startup_key(state, key_code);
 			if (result >= 0)
@@ -1503,9 +1673,12 @@ static int startup_menu(struct startup_state *state)
 		}
 
 		key_code = pending_startup_key();
-		if (key_code >= 0 &&
-		    (result = handle_startup_key(state, key_code)) >= 0)
-			return result;
+		if (key_code >= 0) {
+			state->automatic_cancelled = 1;
+			if ((result = handle_startup_key(state, key_code)) >= 0)
+				return result;
+			continue;
+		}
 		int now = clock_second();
 		if ((state->timeout_start >= 0 && now >= 0 &&
 		     (now - state->timeout_start + 60) % 60 >=
@@ -1544,7 +1717,14 @@ void boot98_main(const struct boot98_handoff *h)
 	}
 	devs = discovered_devices;
 	gw = (boot98_bios_gateway_t)h->bios_gateway;
+	boot98_beui_pc98_auto_default(&beui_display, beui_display_reset,
+				      beui_display_stop, NULL);
+	if (boot98_beui_pc98_auto_make_hal(&beui_hal, &beui_display))
+		boot98_noct_set_beui_hal(&beui_hal);
 	boot98_env_init(&boot_environment);
+	(void)boot98_env_set(&boot_environment, "HOME", "HOME");
+	(void)boot98_env_set(&boot_environment, "REMACS_SKK_DICT",
+			     "HOME/SKKJISYO.DIC");
 	for (;;) {
 		struct startup_state startup;
 
@@ -1558,9 +1738,14 @@ void boot98_main(const struct boot98_handoff *h)
 			putc('\n');
 		}
 		if (automatic) {
-			char source_cfg[] = "source BOOT.CFG";
-			if (curpart < 0 || !command(source_cfg))
-				puts("BOOT.CFG automatic boot failed.\n");
+			int autoexec = curpart >= 0 ? run_autoexec() : -1;
+
+			if (autoexec == 0) {
+				char source_cfg[] = "source BOOT.CFG";
+
+				if (!command(source_cfg))
+					puts("BOOT.CFG automatic boot failed.\n");
+			}
 		}
 		for (;;) {
 			prompt();

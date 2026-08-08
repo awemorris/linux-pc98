@@ -9,8 +9,12 @@
 
 struct boot98_filesystem;
 struct boot98_environment;
+struct boot98_beui_hal;
 typedef int (*boot98_noct_key_fn)(void *context);
 typedef int (*boot98_noct_clock_fn)(void *context);
+
+/* Installed once by the PC-98 Stage 2 target before a Noct VM is created. */
+void boot98_noct_set_beui_hal(const struct boot98_beui_hal *hal);
 
 int boot98_noct_run_embedded(unsigned repeat_count);
 int boot98_noct_run_file(struct boot98_filesystem *filesystem,

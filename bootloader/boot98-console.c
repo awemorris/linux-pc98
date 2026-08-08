@@ -214,7 +214,11 @@ static uint16_t unicode_to_pc98(uint32_t codepoint, unsigned *width)
 				uint16_t ten = (uint16_t)(0x21U + index % 94U);
 
 				*width = 2;
-				return (uint16_t)((ten << 8) | ku);
+				/* PC-98 text VRAM stores the JIS row (ku) as a
+				 * one-based font row, while the cell (ten) remains
+				 * in the high byte.  This is the same final -0x20
+				 * conversion used by the Shift-JIS path below. */
+				return (uint16_t)((ten << 8) | (ku - 0x20U));
 			}
 	*width = 1;
 	return '?';

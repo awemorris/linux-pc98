@@ -21,6 +21,7 @@
 #define SCRIPT_HEAP_MIN (2U * 1024U * 1024U)
 
 static const char embedded_source[] = BOOT98_NOCT_M6_SOURCE;
+static const struct boot98_beui_hal *target_beui_hal;
 
 struct target_context {
 	struct boot98_filesystem *filesystem;
@@ -29,6 +30,12 @@ struct target_context {
 	boot98_noct_clock_fn clock_second;
 	void *key_context;
 };
+
+void
+boot98_noct_set_beui_hal(const struct boot98_beui_hal *hal)
+{
+	target_beui_hal = hal;
+}
 
 static void
 console_string(const char *string)
@@ -249,7 +256,9 @@ static void
 make_services(struct boot98_noct_services *services,
 	      struct target_context *context)
 {
+	memset(services, 0, sizeof(*services));
 	services->context = context;
+	services->beui = target_beui_hal;
 	services->screen_clear = target_screen_clear;
 	services->screen_clear_row = target_screen_clear_row;
 	services->screen_put = target_screen_put;

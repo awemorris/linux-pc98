@@ -6,6 +6,7 @@
 
 #include "boot98-noct-napi.h"
 #include "boot98-beui.h"
+#include "boot98-beui-image.h"
 #include "boot98-noct.h"
 #include "boot98-noct-memory.h"
 #include "boot98-env.h"
@@ -23,11 +24,20 @@
 #define SERIALIZE_LIMIT 4096U
 #define SERIALIZE_DEPTH 4U
 #define SERIALIZE_ITEMS 64U
+#define BEUI_IMAGE_SOURCE_MAX (2U * 1024U * 1024U)
+#define BEUI_IMAGE_PIXELS_MAX (2U * 1024U * 1024U)
 
 struct imported_source {
 	struct imported_source *next;
 	char *path;
 	char *source;
+};
+
+struct beui_image_handle {
+	struct beui_image_handle *next;
+	int identifier;
+	struct boot98_beui_image image;
+	uint8_t pixels[];
 };
 
 struct active_napi {
@@ -37,6 +47,8 @@ struct active_napi {
 	size_t arena_size;
 	size_t source_max;
 	struct imported_source *imports;
+	struct beui_image_handle *images;
+	int next_image_identifier;
 	struct boot98_environment *environment;
 };
 
@@ -44,7 +56,7 @@ struct api_item {
 	const char *global_name;
 	const char *field_name;
 	size_t parameter_count;
-	const char *parameters[5];
+	const char *parameters[6];
 	bool (*function)(NoctEnv *env);
 };
 
@@ -535,6 +547,8 @@ cfunc_keyboard_poll(NoctEnv *env)
 		return false;
 	}
 	key = active.services->keyboard_poll(active.services->context);
+	if (key >= 0)
+		key = boot98_key_normalize_bios_ax((uint16_t)key);
 	return return_int(env, key);
 }
 
@@ -548,6 +562,8 @@ cfunc_keyboard_read(NoctEnv *env)
 		return false;
 	}
 	key = active.services->keyboard_read(active.services->context);
+	if (key >= 0)
+		key = boot98_key_normalize_bios_ax((uint16_t)key);
 	return return_int(env, key);
 }
 
@@ -635,6 +651,359 @@ cfunc_beui_flush(NoctEnv *env)
 		return false;
 	}
 	return return_int(env, 1);
+}
+
+static struct beui_image_handle *
+find_beui_image(int identifier)
+{
+	struct beui_image_handle *handle;
+
+	for (handle = active.images; handle != NULL; handle = handle->next)
+		if (handle->identifier == identifier)
+			return handle;
+	return NULL;
+}
+
+static bool
+cfunc_beui_text_width(NoctEnv *env)
+{
+	NoctValue argument;
+	const char *text;
+	unsigned width;
+	unsigned height;
+	bool ok = false;
+
+	memset(&argument, 0, sizeof(argument));
+	if (!noct_pin_local(env, 1, &argument))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &argument, &text) ||
+	    !boot98_beui_measure_text(text, &width, &height)) {
+		noct_error(env, "BeUI.textWidth failed.");
+		goto out;
+	}
+	(void)height;
+	ok = return_int(env, (int)width);
+out:
+	(void)noct_unpin_local(env, 1, &argument);
+	return ok;
+}
+
+static bool
+cfunc_beui_text_height(NoctEnv *env)
+{
+	NoctValue argument;
+	const char *text;
+	unsigned width;
+	unsigned height;
+	bool ok = false;
+
+	memset(&argument, 0, sizeof(argument));
+	if (!noct_pin_local(env, 1, &argument))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &argument, &text) ||
+	    !boot98_beui_measure_text(text, &width, &height)) {
+		noct_error(env, "BeUI.textHeight failed.");
+		goto out;
+	}
+	(void)width;
+	ok = return_int(env, (int)height);
+out:
+	(void)noct_unpin_local(env, 1, &argument);
+	return ok;
+}
+
+static bool
+cfunc_beui_draw_text(NoctEnv *env)
+{
+	NoctValue argument;
+	const char *text;
+	int x;
+	int y;
+	int foreground;
+	int background;
+	bool ok = false;
+
+	memset(&argument, 0, sizeof(argument));
+	if (!noct_pin_local(env, 1, &argument))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &argument, &text) ||
+	    !noct_get_arg_check_int(env, 1, &argument, &x) ||
+	    !noct_get_arg_check_int(env, 2, &argument, &y) ||
+	    !noct_get_arg_check_int(env, 3, &argument, &foreground) ||
+	    !noct_get_arg_check_int(env, 4, &argument, &background) ||
+	    x < 0 || y < 0 || foreground < 0 || foreground > 0xffffff ||
+	    background < 0 || background > 0xffffff ||
+	    !boot98_beui_draw_text(text, (unsigned)x, (unsigned)y,
+		(uint32_t)foreground, (uint32_t)background)) {
+		noct_error(env, "BeUI.drawText received an invalid argument.");
+		goto out;
+	}
+	ok = return_int(env, 1);
+out:
+	(void)noct_unpin_local(env, 1, &argument);
+	return ok;
+}
+
+static bool
+cfunc_beui_fill(NoctEnv *env)
+{
+	NoctValue argument;
+	struct boot98_beui_rect rectangle;
+	int x;
+	int y;
+	int width;
+	int height;
+	int color;
+	bool ok = false;
+
+	memset(&argument, 0, sizeof(argument));
+	if (!noct_pin_local(env, 1, &argument))
+		return false;
+	if (!noct_get_arg_check_int(env, 0, &argument, &x) ||
+	    !noct_get_arg_check_int(env, 1, &argument, &y) ||
+	    !noct_get_arg_check_int(env, 2, &argument, &width) ||
+	    !noct_get_arg_check_int(env, 3, &argument, &height) ||
+	    !noct_get_arg_check_int(env, 4, &argument, &color) ||
+	    x < 0 || y < 0 || width <= 0 || height <= 0 || color < 0 ||
+	    color > 0xffffff) {
+		noct_error(env, "BeUI.fill received an invalid argument.");
+		goto out;
+	}
+	rectangle.x = (unsigned)x;
+	rectangle.y = (unsigned)y;
+	rectangle.width = (unsigned)width;
+	rectangle.height = (unsigned)height;
+	if (!boot98_beui_fill(&rectangle, (uint32_t)color)) {
+		noct_error(env, "BeUI.fill failed.");
+		goto out;
+	}
+	ok = return_int(env, 1);
+out:
+	(void)noct_unpin_local(env, 1, &argument);
+	return ok;
+}
+
+static bool
+cfunc_beui_line(NoctEnv *env)
+{
+	NoctValue argument;
+	int x0;
+	int y0;
+	int x1;
+	int y1;
+	int color;
+	bool ok = false;
+
+	memset(&argument, 0, sizeof(argument));
+	if (!noct_pin_local(env, 1, &argument))
+		return false;
+	if (!noct_get_arg_check_int(env, 0, &argument, &x0) ||
+	    !noct_get_arg_check_int(env, 1, &argument, &y0) ||
+	    !noct_get_arg_check_int(env, 2, &argument, &x1) ||
+	    !noct_get_arg_check_int(env, 3, &argument, &y1) ||
+	    !noct_get_arg_check_int(env, 4, &argument, &color) ||
+	    x0 < 0 || y0 < 0 || x1 < 0 || y1 < 0 || color < 0 ||
+	    color > 0xffffff ||
+	    !boot98_beui_line((unsigned)x0, (unsigned)y0, (unsigned)x1,
+			      (unsigned)y1, (uint32_t)color)) {
+		noct_error(env, "BeUI.line received an invalid argument.");
+		goto out;
+	}
+	ok = return_int(env, 1);
+out:
+	(void)noct_unpin_local(env, 1, &argument);
+	return ok;
+}
+
+static bool
+cfunc_beui_pattern_fill(NoctEnv *env)
+{
+	NoctValue argument;
+	struct boot98_beui_rect rectangle;
+	int x;
+	int y;
+	int width;
+	int height;
+	int color;
+	int64_t pattern;
+	bool ok = false;
+
+	memset(&argument, 0, sizeof(argument));
+	if (!noct_pin_local(env, 1, &argument))
+		return false;
+	if (!noct_get_arg_check_int(env, 0, &argument, &x) ||
+	    !noct_get_arg_check_int(env, 1, &argument, &y) ||
+	    !noct_get_arg_check_int(env, 2, &argument, &width) ||
+	    !noct_get_arg_check_int(env, 3, &argument, &height) ||
+	    !noct_get_arg_check_int(env, 4, &argument, &color) ||
+	    !noct_get_arg_check_long(env, 5, &argument, &pattern) ||
+	    x < 0 || y < 0 || width <= 0 || height <= 0 || color < 0 ||
+	    color > 0xffffff) {
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
+		goto out;
+	}
+	rectangle.x = (unsigned)x;
+	rectangle.y = (unsigned)y;
+	rectangle.width = (unsigned)width;
+	rectangle.height = (unsigned)height;
+	if (!boot98_beui_pattern_fill(&rectangle, (uint32_t)color,
+				      (uint64_t)pattern)) {
+		noct_error(env, "BeUI.patternFill failed.");
+		goto out;
+	}
+	ok = return_int(env, 1);
+out:
+	(void)noct_unpin_local(env, 1, &argument);
+	return ok;
+}
+
+static bool
+cfunc_beui_load_image(NoctEnv *env)
+{
+	NoctValue argument;
+	struct beui_image_handle *handle = NULL;
+	enum boot98_beui_image_format format;
+	const char *path;
+	uint8_t *source = NULL;
+	uint32_t source_size;
+	size_t pixel_size;
+	unsigned width;
+	unsigned height;
+	bool ok = false;
+
+	memset(&argument, 0, sizeof(argument));
+	if (!noct_pin_local(env, 1, &argument))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &argument, &path) ||
+	    !services_ready() || active.services->file_size == NULL ||
+	    active.services->file_read == NULL ||
+	    !active.services->file_size(active.services->context, path,
+					&source_size) ||
+	    source_size == 0 || source_size > BEUI_IMAGE_SOURCE_MAX) {
+		noct_error(env, "BeUI.loadImage cannot read the image.");
+		goto out;
+	}
+	source = malloc(source_size);
+	if (source == NULL ||
+	    !active.services->file_read(active.services->context, path, 0,
+				       source, source_size) ||
+	    !boot98_beui_bmp_measure(source, source_size, &format, &width,
+				     &height, &pixel_size) ||
+	    pixel_size == 0 || pixel_size > BEUI_IMAGE_PIXELS_MAX ||
+	    pixel_size > SIZE_MAX - sizeof(*handle)) {
+		noct_error(env, "BeUI.loadImage received an unsupported BMP.");
+		goto out;
+	}
+	(void)format;
+	(void)width;
+	(void)height;
+	handle = malloc(sizeof(*handle) + pixel_size);
+	if (handle == NULL || !boot98_beui_bmp_decode(source, source_size,
+			handle->pixels, pixel_size, &handle->image)) {
+		noct_error(env, "BeUI.loadImage has insufficient memory.");
+		goto out;
+	}
+	if (active.next_image_identifier <= 0)
+		active.next_image_identifier = 1;
+	handle->identifier = active.next_image_identifier++;
+	handle->next = active.images;
+	active.images = handle;
+	handle = NULL;
+	ok = return_int(env, active.images->identifier);
+out:
+	free(handle);
+	free(source);
+	(void)noct_unpin_local(env, 1, &argument);
+	return ok;
+}
+
+static bool
+cfunc_beui_draw_image(NoctEnv *env)
+{
+	NoctValue argument;
+	struct beui_image_handle *handle;
+	int identifier;
+	int x;
+	int y;
+	bool ok = false;
+
+	memset(&argument, 0, sizeof(argument));
+	if (!noct_pin_local(env, 1, &argument))
+		return false;
+	if (!noct_get_arg_check_int(env, 0, &argument, &identifier) ||
+	    !noct_get_arg_check_int(env, 1, &argument, &x) ||
+	    !noct_get_arg_check_int(env, 2, &argument, &y) || x < 0 || y < 0 ||
+	    (handle = find_beui_image(identifier)) == NULL ||
+	    !boot98_beui_draw_image((unsigned)x, (unsigned)y, &handle->image)) {
+		noct_error(env, "BeUI.drawImage failed.");
+		goto out;
+	}
+	ok = return_int(env, 1);
+out:
+	(void)noct_unpin_local(env, 1, &argument);
+	return ok;
+}
+
+static bool
+cfunc_beui_draw_image_pattern(NoctEnv *env)
+{
+	NoctValue argument;
+	struct beui_image_handle *handle;
+	int identifier;
+	int x;
+	int y;
+	int64_t pattern;
+	bool ok = false;
+
+	memset(&argument, 0, sizeof(argument));
+	if (!noct_pin_local(env, 1, &argument))
+		return false;
+	if (!noct_get_arg_check_int(env, 0, &argument, &identifier) ||
+	    !noct_get_arg_check_int(env, 1, &argument, &x) ||
+	    !noct_get_arg_check_int(env, 2, &argument, &y) ||
+	    !noct_get_arg_check_long(env, 3, &argument, &pattern) ||
+	    x < 0 || y < 0 ||
+	    (handle = find_beui_image(identifier)) == NULL ||
+	    !boot98_beui_draw_image_pattern((unsigned)x, (unsigned)y,
+					    &handle->image,
+					    (uint64_t)pattern)) {
+		noct_error(env, "BeUI.drawImagePattern failed.");
+		goto out;
+	}
+	ok = return_int(env, 1);
+out:
+	(void)noct_unpin_local(env, 1, &argument);
+	return ok;
+}
+
+static bool
+cfunc_beui_destroy_image(NoctEnv *env)
+{
+	NoctValue argument;
+	struct beui_image_handle **link;
+	int identifier;
+	bool ok = false;
+
+	memset(&argument, 0, sizeof(argument));
+	if (!noct_pin_local(env, 1, &argument))
+		return false;
+	if (!noct_get_arg_check_int(env, 0, &argument, &identifier))
+		goto invalid;
+	for (link = &active.images; *link != NULL; link = &(*link)->next) {
+		struct beui_image_handle *handle = *link;
+
+		if (handle->identifier != identifier)
+			continue;
+		*link = handle->next;
+		free(handle);
+		ok = return_int(env, 1);
+		goto out;
+	}
+invalid:
+	noct_error(env, "BeUI.destroyImage received an invalid handle.");
+out:
+	(void)noct_unpin_local(env, 1, &argument);
+	return ok;
 }
 
 static bool
@@ -1061,6 +1430,30 @@ boot98_noct_napi_register(NoctEnv *env,
 		  cfunc_beui_get_height },
 		{ "BeUI.poll", "poll", 0, { NULL }, cfunc_beui_poll },
 		{ "BeUI.flush", "flush", 0, { NULL }, cfunc_beui_flush },
+		{ "BeUI.fill", "fill", 5,
+		  { "x", "y", "width", "height", "color" },
+		  cfunc_beui_fill },
+		{ "BeUI.line", "line", 5,
+		  { "x0", "y0", "x1", "y1", "color" }, cfunc_beui_line },
+		{ "BeUI.patternFill", "patternFill", 6,
+		  { "x", "y", "width", "height", "color", "pattern" },
+		  cfunc_beui_pattern_fill },
+		{ "BeUI.textWidth", "textWidth", 1, { "text" },
+		  cfunc_beui_text_width },
+		{ "BeUI.textHeight", "textHeight", 1, { "text" },
+		  cfunc_beui_text_height },
+		{ "BeUI.drawText", "drawText", 5,
+		  { "text", "x", "y", "foreground", "background" },
+		  cfunc_beui_draw_text },
+		{ "BeUI.loadImage", "loadImage", 1, { "path" },
+		  cfunc_beui_load_image },
+		{ "BeUI.drawImage", "drawImage", 3,
+		  { "image", "x", "y" }, cfunc_beui_draw_image },
+		{ "BeUI.drawImagePattern", "drawImagePattern", 4,
+		  { "image", "x", "y", "pattern" },
+		  cfunc_beui_draw_image_pattern },
+		{ "BeUI.destroyImage", "destroyImage", 1, { "image" },
+		  cfunc_beui_destroy_image },
 	};
 	static struct api_item directory[] = {
 		{ "Directory.list", "list", 1, { "path" },
@@ -1095,6 +1488,8 @@ boot98_noct_napi_register(NoctEnv *env,
 	active.source_max = options->memory != NULL ?
 		options->memory->source_max : BOOT98_NOCT_SOURCE_MAX;
 	active.imports = NULL;
+	active.images = NULL;
+	active.next_image_identifier = 1;
 	active.environment = options->environment;
 	if (!boot98_beui_bind(options->services != NULL ?
 				options->services->beui : NULL) ||
@@ -1123,9 +1518,16 @@ void
 boot98_noct_napi_cleanup(void)
 {
 	struct imported_source *source = active.imports;
+	struct beui_image_handle *image = active.images;
 
 	/* Restores text mode even when a script raises or omits BeUI.close(). */
 	boot98_beui_cleanup();
+	while (image != NULL) {
+		struct beui_image_handle *next = image->next;
+
+		free(image);
+		image = next;
+	}
 
 	while (source != NULL) {
 		struct imported_source *next = source->next;

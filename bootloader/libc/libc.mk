@@ -45,10 +45,10 @@ $(BOOT98_LIBC_BUILD_DIR)/%.o: libc/%.c
 		-c $< -o $@
 
 $(BOOT98_LIBC_TEST): tests/boot98-libc-host-test.c $(BOOT98_LIBC_SOURCE_REL) \
-	boot98-fs.c boot98-fs.h
+	boot98-fs.c boot98-fs.h boot98-env.c boot98-env.h
 	@mkdir -p $(BOOT98_TEST_BUILD_DIR)
 	$(HOSTCC) $(BOOT98_HOST_TEST_CFLAGS) \
-		boot98-fs.c $(BOOT98_LIBC_SOURCE_REL) $< -o $@
+		boot98-fs.c boot98-env.c $(BOOT98_LIBC_SOURCE_REL) $< -o $@
 
 boot98-libc-objects: $(BOOT98_LIBC_OBJECTS)
 

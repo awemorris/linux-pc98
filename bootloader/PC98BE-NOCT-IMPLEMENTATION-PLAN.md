@@ -207,26 +207,28 @@ licenses and appear separately in the source and binary release inventory.
 | Address | Current use |
 |---:|---|
 | `0x00020000` | BOOT.SYS header and load image start |
-| `0x00060000` | End of the current 256 KiB load-image window |
-| `0x00070000` | `boot_params`; BOOT.SYS BSS must end below here |
-| `0x00071000` | Linux command line |
-| `0x00072000` | PC-98 setup-data node |
+| `0x00070000` | End of the 320 KiB BOOT.SYS load-image window |
+| `0x00080000` | `boot_params`; BOOT.SYS BSS must end below here |
+| `0x00081000` | Linux command line |
+| `0x00082000` | PC-98 setup-data node |
 | `0x0008f000` | protected-mode stack area |
 | `0x00100000` | first Linux ELF `PT_LOAD` segment and initial script arena |
 
-The existing BOOT.SYS is approximately 14 KiB, so the present linker limit
-offers about 242 KiB of additional load-image space, not 256 KiB in addition
-to the existing image. Every milestone must report:
+The original 256 KiB window became insufficient after the selected Noct File
+API gained its required JIS X 0208 table. Stage 1 now permits a 320 KiB load
+image and Linux boot parameters move from `0x70000` to `0x80000`; the kernel
+receives that address in ESI, so it is not a protocol-fixed location. Every
+milestone must report:
 
 ```text
 BOOT.SYS file bytes
 resident .text/.rodata/.data bytes
 resident BSS bytes
-remaining bytes before 0x60000 and 0x70000
+remaining bytes before 0x70000 and 0x80000
 ```
 
-Do not increase the on-disk `BOOT.SYS` size limit or change `IO.SYS` until a
-link map proves the existing window insufficient.
+Do not increase the 320 KiB limit again or change `IO.SYS` without a new link
+map, a complete low-memory overlap audit, and IDE/SCSI boot regression tests.
 
 ### 4.2 Product source subset
 
@@ -1334,36 +1336,216 @@ still creates a fresh VM per invocation.
 
 ### M16 — Remacs compatibility and integration
 
-Do not implement or ship EDIT.NCT. Remacs is an independently maintained Noct
-program and supplies the editor demonstration. Inventory the generic
-Screen/Keyboard/File/Directory/environment services it uses, fill only generic
-NAPI gaps, and keep Remacs-specific policy in the application. Do not vendor
-Remacs until its repository URL, license, pinned revision, and release
-packaging mode are reviewed.
+Repository: `https://github.com/awemorris/remacs`, initially inspected at
+`78f99f6d82edc9a7404ae49578c2b47baa6447da`. Remacs replaces the previously
+planned in-tree editor demo. The Boots shell command is `emacs [FILE]`.
 
-Acceptance, after Remacs is approved for import: it loads from the BOOT FAT16
-partition, opens/edits/saves/reopens a file, exits with a visible Boots cursor,
-and requires no editor-specific native helper.
+The dependency is larger than only `Term.*`: the Remacs Noct modules also use
+the Remacs-owned `Editor.*` and `Buf.*` C core, plus `FileUtil.listDirectory`.
+The integration must therefore preserve these boundaries:
+
+1. In NoctLang, introduce a target-neutral, callback-based Term backend API.
+   Keep `noct_register_api_term()` and the POSIX backend compatible, but let
+   an embedding host provide open/close, dimensions, cursor, style, buffered
+   output, flush, key-read, pending-input, and resize callbacks. Push this
+   generic API upstream before advancing the Noct gitlink.
+2. Implement the PC98BE Term backend in linux-pc98. `Term.write()` accepts
+   UTF-8/Unicode; decode it and convert Unicode codepoints to PC-98 JIS kuten
+   codes. The conversion may be ported from StratoHAL `98glyph.c`, retaining
+   its zlib notice and provenance. ASCII and half-width katakana keep the
+   existing Boots console path.
+3. Add a non-POSIX directory-enumeration callback to Noct's File API, because
+   Remacs uses `FileUtil.listDirectory`; the present non-POSIX empty-array
+   fallback is not sufficient. Boots maps it to the selected FAT filesystem.
+4. Add Remacs now as a pinned `third_party/remacs` submodule and monitor it.
+   Do not initialize its nested Noct submodule during a Boots build;
+   linux-pc98's pinned Noct is the single VM implementation.
+5. Do not package the current multi-file Remacs sources or its C implementation
+   in release images. The Remacs author is removing that C code and will make
+   the repository produce one distributable Noct bytecode file. Periodically
+   inspect the pinned upstream; only after both changes land, update the
+   submodule, verify the artifact from source, and copy that artifact alone to
+   the BOOT image. Do not recreate the removed C core inside Boots.
+6. `emacs [FILE]` creates one profiled Noct VM, registers safe Boots APIs and
+   Term, runs the single Remacs bytecode artifact, then destroys the VM and restores the
+   text console/cursor on every exit path. Remacs is not required to fit the
+   5 MiB profile; establish and document its measured minimum separately.
+
+Acceptance: Remacs starts through `emacs`, displays Unicode/Japanese text with
+correct PC-98 glyph codes, opens/edits/saves/reopens a FAT16 file, handles its
+documented special keys and Ctrl-key chords, and exits to a usable Boots shell
+without retained arena allocations. Linux/POSIX Remacs regression tests and
+the PC98BE QEMU test must both pass.
+
+Implementation status on 2026-08-08: the target-neutral Noct `Term` and
+directory callback backends are upstream at NoctLang `887bf89`; Boots provides
+the PC-98 terminal, UTF-8/JIS, keyboard, and FAT16 directory adapters. Remacs
+is pinned at `0084533`, builds reproducibly as a 187,612-byte `REMACS.NB`, and
+is installed as `CMD/REMACS.NB`. FAT16 path handling supports subdirectories,
+the `emacs [FILE]` command creates and destroys one profiled VM, and the QEMU
+test launches the editor at 5 MiB, edits and saves a FAT16 file, exits, and
+verifies both the screen and saved bytes. `M-x shell` and GUD intentionally
+remain unavailable: they require the host-process `Process.*` API, which has
+no meaningful or safe implementation in a pre-boot environment and is not
+needed for editing. See `BOOTS-M16-REMACS.md`.
+
+The BOOT filesystem keeps ordinary utility applications under `CMD/`. Package
+`CMD/LS.NCT`, `CMD/CP.NCT`, and later reviewed tools such as `CMD/DD.NCT`; the
+shell's app resolver searches `CMD/` while retaining compatibility with files
+already placed at the BOOT root. Remacs is intentionally separate because its
+single bytecode artifact will be much larger than these utilities.
 
 ### M17 — TINY and 5 MiB optimization
 
-1. First make the complete Boots + Noct path work with 5 MiB of installed RAM;
-   this is the non-negotiable minimum profile.
-2. Measure SMALL peaks, add upstream `NOCT_MEMORY_TINY`, and reduce buffers,
-   GC working sets, and JIT capacity based on data.
-3. Detect installed memory once and select a runtime profile for 5, 8, 16,
-   32, 64, or more than 64 MiB. Keep one code path and vary bounded arena,
-   GC, source-buffer, and JIT limits rather than building incompatible Boots
-   binaries.
-4. Clamp safely to the next smaller profile when the detected usable region
-   is fragmented or reserved; never let profile selection overlap a loaded
-   kernel or Boots resident memory.
-5. Run the full TINY/SMALL corpus and lifecycle tests at every boundary.
+Status at the start of M17: the existing SMALL build already passes both a
+file-script/environment lifecycle test and the interactive REPL at 5 MiB on
+QEMU `pc9801,-cpu 386`. Optimization must preserve this known-good baseline.
+
+1. Detect memory from the PC-98 BIOS work area once: memory below the 15--16
+   MiB hole comes from `0:0401h`, and memory above 16 MiB comes from
+   `0:0594h`. Use the low contiguous arena for 5/8/16 MiB systems and the high
+   arena beginning at 16 MiB when high memory exists. Leave a guard and never
+   cross the hole.
+2. Select one of six runtime profiles: 5, 8, 16, 32, 64, and greater-than-64
+   MiB. A single Boots binary varies the allocator arena, source limit, REPL
+   accumulation limit, GC nursery/graduate/tenure sizes, and JIT code limit.
+3. First add pure host-tested profile selection. Test exact boundaries and
+   just-below/just-above values, malformed BIOS reports, arithmetic overflow,
+   and the rule that insufficient/fragmented space falls back or rejects
+   cleanly.
+4. Add upstream Noct runtime configuration for any limits that are currently
+   compile-time only. `NOCT_MEMORY_TINY` may provide 5 MiB defaults, but larger
+   Boots profiles must be able to grow without another binary. Push generic
+   changes to NoctLang before updating the linux-pc98 gitlink.
+5. Keep JIT enabled on the 5 MiB profile. The JIT produces i386 instructions;
+   its binary opcode audit need not be repeated beyond the existing Noct/Boots
+   audit, but allocation, release and profile-cap tests remain mandatory.
+6. Run file script, imports, utilities, environment, REPL, OOM, repeated VM
+   lifecycle, and kernel handoff at 5 MiB. Run profile selection and allocator
+   boundaries for 8/16/32/64/>64 MiB, and at least one QEMU execution per
+   distinct arena placement (below and above the PC-98 memory hole).
 
 Acceptance: the required 5 MiB QEMU case passes, every boundary selects the
 documented profile, larger machines receive larger useful Noct/JIT arenas,
 and all exit paths return arena use to baseline. Do not silently raise the
 5 MiB minimum.
+
+### G1 — BeUI execution and repository boundary
+
+BeUI is opt-in. Starting any Noct VM must not initialize graphics, sound, or
+the bus mouse. A script enters the graphical environment only by calling
+`BeUI.init(options)` and must call, or be cleanup-equivalent to, `BeUI.close()`.
+
+1. Use StratoHAL (`https://github.com/awemorris/StratoHAL`) as the hardware
+   provenance, initially inspected at
+   `76e909577bdf4629f11e473539b446a948fef830`. Preserve its zlib notices.
+2. Keep BeUI's generic NAPI and widget policy in linux-pc98. Hardware access
+   is hidden behind display, glyph, pointer, clock, and audio HAL interfaces;
+   NoctLang must not acquire PC-98 register knowledge.
+3. Either pin StratoHAL as a submodule and move reusable register-level code
+   upstream, or import an audited snapshot plus a reproducible patch. Decide
+   before implementation; do not silently copy the DOS/4G main loop or C
+   runtime dependencies.
+4. The event loop is cooperative and single-threaded. It polls input/audio,
+   dispatches events, and flushes dirty display regions. It does not adopt
+   StratoHAL's game-oriented unconditional full-frame redraw.
+
+Acceptance: an empty `BeUI.init(); BeUI.close();` round trip restores the
+original text mode and cursor, leaks no arena allocation, and leaves ordinary
+Noct scripts and the text boot menu unchanged.
+
+G1 implementation status (2026-08-08): the lifecycle, five-part HAL ABI,
+Noct module, reverse-order/error cleanup, dedicated C host test, and Noct VM
+host tests are implemented. The host backend verifies one enter/leave pair,
+pointer unwind, idempotent init/close, explicit close, omitted close, and
+runtime-error close with the arena returning to zero. The PC-98 target does not
+bind a graphical backend yet, so `BeUI.init()` intentionally reports
+unavailable there until G2 supplies an audited display backend. StratoHAL will
+be pinned as a submodule for G2; no register-level source was copied in G1.
+
+### G2 — PC-98 graphical and input HAL
+
+1. Port and isolate the register-level parts of `98disp_cirrus.c`,
+   `98disp_trident.c`, `98disp_gdc.c`, `98glyph.c`, and `98sound_wss.c`.
+   Cirrus and Trident are accelerated/color backends; GDC 4bpp is the required
+   safe-mode fallback. WSS must not block the first visible GUI milestone but
+   remains part of G2 completion.
+2. Detect adapters without destructive writes. Select Cirrus, then Trident,
+   then GDC unless the script requests a supported backend explicitly.
+3. Use a retained logical surface only when required by the selected backend.
+   The widget tree produces dirty rectangles; HAL flushes only those regions.
+   A permanent full-screen backing image is not a design requirement.
+4. Implement the PC-98 bus mouse as a polled pointer backend first. Clamp and
+   accumulate relative motion, expose buttons, and avoid claiming an IRQ until
+   a separately tested interrupt path is needed.
+5. Decode UTF-8 once, share the Unicode-to-JIS mapping with the PC98 Term
+   backend, and fetch/draw PC-98 font-ROM glyphs through one glyph service.
+
+Acceptance: QEMU Cirrus and GDC safe mode draw the same test scene, adapter
+absence falls back deterministically, mouse events update a pointer without
+blocking keyboard input, and real-hardware-only Trident/WSS paths have static
+and register-sequence tests plus an explicit pending-hardware-test label.
+
+### G3 — BeUI widget toolkit
+
+Implement a small retained component tree with bounds, visibility, enabled
+state, focus, parent/children, invalidation, event dispatch, and draw methods.
+Initial public components are Window/Panel, Label, Button, TextBox, DropDown,
+CheckBox, RadioButton/RadioGroup, and a simple List. Layout starts with explicit
+rectangles plus minimal row/column helpers; do not add a general constraint
+solver.
+
+Redraw flows upward as invalidation and downward as clipped painting. Changing
+one widget invalidates its old/new rectangle; overlapping siblings are painted
+in tree order. Keyboard focus, tab order, activation, mouse capture, and modal
+dialogs need deterministic rules. BeUI handles UTF-8 strings and delegates
+glyph conversion to G2.
+
+Acceptance: host tests cover tree mutation, clipping, focus, hit testing,
+radio exclusivity, text editing, dropdown selection, and dirty propagation;
+QEMU tests cover keyboard-only and mouse operation on Cirrus and GDC.
+
+### G4 — Graphical boot menu and AUTOEXEC.NCT
+
+1. The first BOOT partition discovered becomes the script origin. Record it
+   during probing; do not run a VM while BIOS probing owns transient buffers.
+2. If the startup timeout was not cancelled by a key and `AUTOEXEC.NCT`
+   exists on that BOOT partition, run it after probe state is stable. If the
+   key cancelled the timeout, skip AUTOEXEC and use the text menu/shell.
+3. AUTOEXEC may call BeUI and build the graphical boot menu. Selection writes
+   the next Boots command string to a bounded environment variable
+   (`BOOT_ACTION`) and returns normally.
+4. Destroy the Noct VM, close BeUI, restore a known console state, validate
+   `BOOT_ACTION` as one bounded shell command line, then execute it through the
+   existing command parser. An absent/empty/invalid action falls back to the
+   text menu; the kernel jump remains non-returning.
+5. If `AUTOEXEC.NCT` is absent, BeUI initialization fails, or the script
+   raises an error, display a concise diagnostic and retain the existing text
+   boot path.
+
+Acceptance: graphical IDE/SCSI device and partition selection reaches the
+same existing boot commands as the text menu; timeout cancellation is
+race-free; missing/broken AUTOEXEC falls back; and scripted return cannot leave
+graphics, mouse, sound, a VM, or an unvalidated command active.
+
+### Dependency and review order
+
+| Order | Deliverable | Depends on | Upstream/push destination |
+|---:|---|---|---|
+| 1 | M17 5/8/16/32/64/>64 profiles | M15, M14 | NoctLang for generic runtime limits; linux-pc98 for BIOS memory policy |
+| 2 | Noct callback Term and directory backends | M17 allocator contract | NoctLang |
+| 3 | PC98 Term UTF-8/JIS backend | Noct backend ABI, StratoHAL glyph provenance | linux-pc98 |
+| 4 | Remacs embeddable core and license/pin | Noct Term/File backend | remacs, then linux-pc98 gitlink |
+| 5 | `emacs` command and Remacs QEMU test | Remacs core, PC98 Term | linux-pc98 |
+| 6 | G1 BeUI lifecycle/HAL ABI | M17 lifecycle, safe NAPI | linux-pc98 |
+| 7 | G2 displays/glyph/mouse/WSS | G1, StratoHAL audit | StratoHAL if genericized; linux-pc98 adapter |
+| 8 | G3 widgets | G2 display/input contracts | linux-pc98 Noct application/NAPI |
+| 9 | G4 graphical AUTOEXEC boot menu | G3, M14 environment, stable probe | linux-pc98 |
+| 10 | M18 license/name audit | all new imported sources known | linux-pc98 |
+| 11 | M19 tests/docs/release | M17, Remacs, G1--G4, M18 | linux-pc98 release |
+
+Each row is a review gate. Do not start G2 by copying thousands of lines of
+StratoHAL before G1's narrow HAL interfaces and provenance choice are reviewed.
 
 ### M18 — Boots naming and zlib license conversion
 
@@ -1382,14 +1564,18 @@ relicensed by inference.
 
 ### M19 — Documentation and release integration
 
-Update design/readme, root README, build help, release scripts, license
-inventory, and release notes. Include pinned Noct/Remacs revisions and measured
-memory requirements.
+After M17, Remacs, and G1--G4 pass their review gates, run the complete Boots,
+kernel-handoff, IDE/SCSI, Noct, Remacs, Term, display, widget, AUTOEXEC fallback,
+and release-image matrix. Update design/readme, root README, build help,
+release scripts, license inventory, and release notes. Include pinned
+Noct/Remacs/StratoHAL revisions, per-feature memory requirements, verified
+display/input backends, and real-hardware test status.
 
 Acceptance: `./build.sh release` reproduces artifacts offline after explicit
-submodule initialization, runs mandatory host/opcode tests, and includes the
-approved `.NCT` applications in the BOOT partition without breaking existing
-image profiles.
+submodule initialization, runs mandatory host/opcode tests, includes Remacs and
+the approved graphical AUTOEXEC application in the BOOT partition, and does
+not break text-only or existing image profiles. Release only after the 5 MiB
+text/Noct minimum and the separately documented Remacs/GUI minimums pass.
 
 ## 19. Review checklist for every milestone
 
@@ -1437,6 +1623,14 @@ Never:
 | Boots zlib conversion drops a third-party notice | complete license manifest/header check | relicense only audited sole-author files and preserve Noct/GCC/musl terms |
 | Unsafe NAPI destroys the VM/BE | separate namespace and review | defer until safe APIs and recovery are stable |
 | Remacs demands application-specific native helpers | API inventory/review | extend only generic Screen/Keyboard/File services; keep editor policy in Remacs |
+| Remacs is packaged before its pure-Noct/single-bytecode conversion lands | dependency inventory or missing globals | keep only the pinned submodule, periodically inspect upstream, and package nothing until the upstream artifact is self-contained |
+| Non-POSIX `FileUtil.listDirectory` silently returns empty | Remacs file-dialog test | add a generic upstream directory backend and map it to Boots FAT enumeration |
+| Unicode is treated as SJIS or raw JIS | Japanese Term/glyph corpus | decode UTF-8, map Unicode to JIS kuten through one audited StratoHAL-derived table |
+| StratoHAL DOS/game loop is copied wholesale | source/provenance review | isolate register-level code behind G1 HAL; retain zlib notices and remove DOS/4G policy |
+| GUI damages unsupported hardware during detection | QEMU traces and real-hardware gate | use read-only/signature probes first; require explicit backend override for experimental paths |
+| Dirty-rectangle logic leaves stale pixels | overlap/clipping scene tests | centralize invalidation and repaint intersecting siblings in deterministic tree order |
+| AUTOEXEC starts while probing owns transient state | probe/timeout stress test | record first BOOT partition, run only after stable handoff, and honor key cancellation |
+| AUTOEXEC leaves graphics or injects an unsafe shell string | error/fuzz lifecycle tests | close BeUI and destroy VM first; bound and validate one `BOOT_ACTION` command line |
 
 ## 21. Definition of done
 
@@ -1454,8 +1648,15 @@ The Noct BE integration is complete only when all statements are true:
 - The Linux Noct REPL has robust multiline input and exits cleanly on Ctrl-C.
 - The Boots `noct` command provides a session VM that is fully destroyed on
   exit and can read/write bounded Boots environment variables.
-- Remacs, after its source and packaging review, edits and saves a file using
-  only public generic APIs; no in-tree EDIT.NCT is implemented.
+- Remacs is pinned, its upstream single-bytecode artifact is reproducible,
+  `emacs` edits and saves a FAT16 file, and the PC98 Term backend correctly
+  renders Unicode through JIS glyph codes. OS-process-only commands are
+  explicitly reported as unavailable in Boots rather than emulated unsafely.
+- BeUI is opt-in and closes cleanly; Cirrus and GDC safe-mode QEMU paths pass,
+  while Trident/WSS real-hardware status is stated honestly.
+- The initial widget set passes host and QEMU interaction/redraw tests.
+- `AUTOEXEC.NCT` can provide a graphical boot menu through bounded
+  `BOOT_ACTION`, and every missing/error/cancel path falls back to text mode.
 - Existing Linux/chain/app/ IPLware boot regressions pass.
 - Boots-owned files are zlib-licensed only after a complete provenance audit;
   all imported license notices remain intact.

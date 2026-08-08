@@ -244,6 +244,32 @@ static void test_existing_allocated_empty_file(void)
 	destroy_disk(&disk);
 }
 
+static void test_create_in_existing_directory(uint16_t logical_bytes)
+{
+	struct memory_disk disk;
+	struct boot98_filesystem filesystem;
+	struct boot98_file file;
+	uint8_t buffer[6] = { 0 };
+	uint8_t *root;
+
+	format_disk(&disk, logical_bytes);
+	root = sector(&disk, disk.root_start);
+	memcpy(root, "CMD        ", 11);
+	root[11] = 0x10;
+	put16(root + 26, 2);
+	set_fat(&disk, 0, 2, 0xffff);
+	set_fat(&disk, 1, 2, 0xffff);
+	mount_disk(&disk, &filesystem);
+	assert(boot98_fs_create_result(&filesystem, "CMD/EDIT.TXT", &file) ==
+	       BOOT98_FS_OK);
+	assert(boot98_file_write_result(&file, 0, "Boots", 5) == BOOT98_FS_OK);
+	assert(boot98_file_flush_result(&file) == BOOT98_FS_OK);
+	reopen_and_read(&filesystem, "/cmd/edit.txt", buffer, 5);
+	assert(!memcmp(buffer, "Boots", 5));
+	assert_fats_equal(&disk);
+	destroy_disk(&disk);
+}
+
 static void test_full_root(void)
 {
 	struct memory_disk disk;
@@ -336,6 +362,8 @@ int main(void)
 {
 	test_create_write_truncate(512);
 	test_create_write_truncate(1024);
+	test_create_in_existing_directory(512);
+	test_create_in_existing_directory(1024);
 	test_existing_allocated_empty_file();
 	test_full_root();
 	test_full_disk();

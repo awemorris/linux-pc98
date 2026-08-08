@@ -37,6 +37,10 @@ void boot98_console_clear_row(unsigned row);
 void boot98_console_clear_to_eol(void);
 int boot98_console_put_sjis_at(unsigned row, unsigned column,
 			       const uint8_t *string, uint8_t attribute);
+int boot98_console_put_utf8_at(unsigned row, unsigned column,
+			       const char *string, unsigned length,
+			       uint8_t attribute);
+int boot98_console_clear_to_eol_at(unsigned row, unsigned column);
 int boot98_console_set_cursor(unsigned row, unsigned column);
 void boot98_console_show_cursor(int visible);
 void boot98_console_save_state(struct boot98_console_state *state);

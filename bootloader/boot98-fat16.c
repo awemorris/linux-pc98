@@ -13,6 +13,11 @@
 #define FAT16_DIRECTORY_ENTRY_SIZE 32U
 #define FAT16_ENTRIES_PER_SECTOR (512U / FAT16_DIRECTORY_ENTRY_SIZE)
 
+struct fat16_directory {
+	/* Cluster zero denotes FAT16's fixed root-directory table. */
+	uint32_t first_cluster;
+};
+
 static void copy_bytes(void *destination, const void *source, uint32_t length)
 {
 	uint8_t *output = destination;
@@ -279,27 +284,89 @@ static enum boot98_fs_result fat16_allocate_cluster(
 	return fat16_set_cluster(filesystem, *cluster, FAT16_END_OF_CHAIN);
 }
 
+static enum boot98_fs_result fat16_directory_entry(
+	struct boot98_filesystem *filesystem,
+	const struct fat16_directory *directory, uint32_t index,
+	uint32_t *entry_lba, uint16_t *entry_offset, const uint8_t **raw)
+{
+	struct boot98_fat_state *fat = boot98_fat_state(filesystem);
+	uint32_t lba;
+	uint16_t offset;
+	const uint8_t *sector;
+	enum boot98_fs_result result;
+
+	if (directory->first_cluster == 0) {
+		if (index >= fat->root_entries)
+			return BOOT98_FS_NOT_FOUND;
+		lba = fat->root_start + index / FAT16_ENTRIES_PER_SECTOR;
+		offset = (uint16_t)((index % FAT16_ENTRIES_PER_SECTOR) *
+				    FAT16_DIRECTORY_ENTRY_SIZE);
+	} else {
+		uint32_t entries_per_cluster =
+			(uint32_t)fat->sectors_per_cluster *
+			FAT16_ENTRIES_PER_SECTOR;
+		uint32_t cluster = directory->first_cluster;
+		uint32_t cluster_index;
+		uint32_t sector_index;
+
+		if (!fat16_valid_cluster(fat, cluster) || !entries_per_cluster)
+			return BOOT98_FS_CORRUPT;
+		cluster_index = index / entries_per_cluster;
+		index %= entries_per_cluster;
+		while (cluster_index--) {
+			uint32_t next;
+
+			result = fat16_next_cluster(filesystem, cluster, &next);
+			if (result != BOOT98_FS_OK)
+				return result;
+			if (fat16_is_end(next))
+				return BOOT98_FS_NOT_FOUND;
+			if (!fat16_valid_cluster(fat, next))
+				return BOOT98_FS_CORRUPT;
+			cluster = next;
+		}
+		sector_index = index / FAT16_ENTRIES_PER_SECTOR;
+		result = boot98_fat_cluster_lba(filesystem, cluster,
+					       sector_index, &lba);
+		if (result != BOOT98_FS_OK)
+			return result;
+		offset = (uint16_t)((index % FAT16_ENTRIES_PER_SECTOR) *
+				    FAT16_DIRECTORY_ENTRY_SIZE);
+	}
+	result = boot98_fat_read_sector_result(filesystem, lba, &sector);
+	if (result != BOOT98_FS_OK)
+		return result;
+	*entry_lba = lba;
+	*entry_offset = offset;
+	*raw = sector + offset;
+	return BOOT98_FS_OK;
+}
+
 static enum boot98_fs_result fat16_find_entry(
-	struct boot98_filesystem *filesystem, const char canonical[11],
+	struct boot98_filesystem *filesystem,
+	const struct fat16_directory *directory, const char canonical[11],
 	uint32_t *entry_lba, uint16_t *entry_offset,
 	uint32_t *free_lba, uint16_t *free_offset)
 {
 	struct boot98_fat_state *fat = boot98_fat_state(filesystem);
+	uint32_t limit = directory->first_cluster == 0 ? fat->root_entries :
+		fat->cluster_count * (uint32_t)fat->sectors_per_cluster *
+		FAT16_ENTRIES_PER_SECTOR;
 	uint32_t index;
 	int have_free = 0;
 
-	for (index = 0; index < fat->root_entries; index++) {
-		uint32_t lba = fat->root_start + index / FAT16_ENTRIES_PER_SECTOR;
-		uint16_t offset = (uint16_t)((index % FAT16_ENTRIES_PER_SECTOR) *
-					     FAT16_DIRECTORY_ENTRY_SIZE);
-		const uint8_t *sector;
+	for (index = 0; index < limit; index++) {
+		uint32_t lba;
+		uint16_t offset;
 		const uint8_t *raw;
 		enum boot98_fs_result result;
 
-		result = boot98_fat_read_sector_result(filesystem, lba, &sector);
+		result = fat16_directory_entry(filesystem, directory, index,
+					       &lba, &offset, &raw);
+		if (result == BOOT98_FS_NOT_FOUND)
+			break;
 		if (result != BOOT98_FS_OK)
 			return result;
-		raw = sector + offset;
 		if ((raw[0] == 0 || raw[0] == 0xe5) && !have_free) {
 			*free_lba = lba;
 			*free_offset = offset;
@@ -307,7 +374,7 @@ static enum boot98_fs_result fat16_find_entry(
 		}
 		if (!raw[0])
 			break;
-		if (raw[0] == 0xe5 || raw[11] == 0x0f || raw[11] & 0x18)
+		if (raw[0] == 0xe5 || raw[11] == 0x0f || (raw[11] & 0x08U))
 			continue;
 		if (boot98_fat_name_matches(raw, canonical)) {
 			*entry_lba = lba;
@@ -316,6 +383,83 @@ static enum boot98_fs_result fat16_find_entry(
 		}
 	}
 	return have_free ? BOOT98_FS_NOT_FOUND : BOOT98_FS_NO_SPACE;
+}
+
+static enum boot98_fs_result fat16_resolve_parent(
+	struct boot98_filesystem *filesystem, const char *path,
+	struct fat16_directory *parent, char canonical[11])
+{
+	const char *cursor = path;
+
+	parent->first_cluster = 0;
+	if (*cursor == '/')
+		cursor++;
+	if (!*cursor)
+		return BOOT98_FS_INVALID_PATH;
+	for (;;) {
+		char component[13];
+		unsigned length = 0;
+		const char *separator;
+		uint32_t lba = 0, free_lba = 0;
+		uint16_t offset = 0, free_offset = 0;
+		const uint8_t *sector;
+		enum boot98_fs_result result;
+
+		separator = cursor;
+		while (*separator && *separator != '/')
+			separator++;
+		length = (unsigned)(separator - cursor);
+		if (!length || length >= sizeof(component))
+			return BOOT98_FS_INVALID_PATH;
+		copy_bytes(component, cursor, length);
+		component[length] = '\0';
+		if (!boot98_fat_short_name(component, canonical))
+			return BOOT98_FS_INVALID_PATH;
+		if (!*separator)
+			return BOOT98_FS_OK;
+		cursor = separator + 1;
+		if (!*cursor)
+			return BOOT98_FS_INVALID_PATH;
+		result = fat16_find_entry(filesystem, parent, canonical, &lba,
+					  &offset, &free_lba, &free_offset);
+		if (result != BOOT98_FS_OK)
+			return result == BOOT98_FS_NO_SPACE ?
+				BOOT98_FS_NOT_FOUND : result;
+		result = boot98_fat_read_sector_result(filesystem, lba, &sector);
+		if (result != BOOT98_FS_OK)
+			return result;
+		if (!(sector[offset + 11] & 0x10U))
+			return BOOT98_FS_NOT_FOUND;
+		parent->first_cluster = boot98_fat_get16(sector + offset + 26);
+		if (!fat16_valid_cluster(boot98_fat_state(filesystem),
+					 parent->first_cluster))
+			return BOOT98_FS_CORRUPT;
+	}
+}
+
+static enum boot98_fs_result fat16_resolve_entry(
+	struct boot98_filesystem *filesystem, const char *path,
+	uint32_t *lba, uint16_t *offset, const uint8_t **raw)
+{
+	struct fat16_directory parent;
+	char canonical[11];
+	uint32_t free_lba = 0;
+	uint16_t free_offset = 0;
+	const uint8_t *sector;
+	enum boot98_fs_result result;
+
+	result = fat16_resolve_parent(filesystem, path, &parent, canonical);
+	if (result != BOOT98_FS_OK)
+		return result;
+	result = fat16_find_entry(filesystem, &parent, canonical, lba, offset,
+				  &free_lba, &free_offset);
+	if (result != BOOT98_FS_OK)
+		return result == BOOT98_FS_NO_SPACE ? BOOT98_FS_NOT_FOUND : result;
+	result = boot98_fat_read_sector_result(filesystem, *lba, &sector);
+	if (result != BOOT98_FS_OK)
+		return result;
+	*raw = sector + *offset;
+	return BOOT98_FS_OK;
 }
 
 static enum boot98_fs_result fat16_populate_file(
@@ -340,22 +484,17 @@ static enum boot98_fs_result fat16_open(
 	struct boot98_filesystem *filesystem, const char *path,
 	struct boot98_file *file)
 {
-	char canonical[11];
-	uint32_t lba = 0, free_lba = 0;
-	uint16_t offset = 0, free_offset = 0;
-	const uint8_t *sector;
+	uint32_t lba = 0;
+	uint16_t offset = 0;
+	const uint8_t *raw;
 	enum boot98_fs_result result;
 
-	if (!boot98_fat_short_name(path, canonical))
-		return BOOT98_FS_INVALID_PATH;
-	result = fat16_find_entry(filesystem, canonical, &lba, &offset,
-				  &free_lba, &free_offset);
-	if (result != BOOT98_FS_OK)
-		return result == BOOT98_FS_NO_SPACE ? BOOT98_FS_NOT_FOUND : result;
-	result = boot98_fat_read_sector_result(filesystem, lba, &sector);
+	result = fat16_resolve_entry(filesystem, path, &lba, &offset, &raw);
 	if (result != BOOT98_FS_OK)
 		return result;
-	return fat16_populate_file(file, lba, offset, sector + offset);
+	if (raw[11] & 0x10U)
+		return BOOT98_FS_INVALID_PATH;
+	return fat16_populate_file(file, lba, offset, raw);
 }
 
 static enum boot98_fs_result fat16_flush_file(struct boot98_file *file)
@@ -596,6 +735,7 @@ static enum boot98_fs_result fat16_create(
 	struct boot98_filesystem *filesystem, const char *path,
 	struct boot98_file *file)
 {
+	struct fat16_directory parent;
 	char canonical[11];
 	uint32_t lba = 0, free_lba = 0;
 	uint16_t offset = 0, free_offset = 0;
@@ -604,9 +744,10 @@ static enum boot98_fs_result fat16_create(
 
 	if (!filesystem->volume.write)
 		return BOOT98_FS_READ_ONLY;
-	if (!boot98_fat_short_name(path, canonical))
-		return BOOT98_FS_INVALID_PATH;
-	result = fat16_find_entry(filesystem, canonical, &lba, &offset,
+	result = fat16_resolve_parent(filesystem, path, &parent, canonical);
+	if (result != BOOT98_FS_OK)
+		return result;
+	result = fat16_find_entry(filesystem, &parent, canonical, &lba, &offset,
 				  &free_lba, &free_offset);
 	if (result == BOOT98_FS_OK) {
 		const uint8_t *read_sector;
@@ -615,6 +756,8 @@ static enum boot98_fs_result fat16_create(
 						       &read_sector);
 		if (result != BOOT98_FS_OK)
 			return result;
+		if (read_sector[offset + 11] & 0x10U)
+			return BOOT98_FS_INVALID_PATH;
 		result = fat16_populate_file(file, lba, offset,
 					     read_sector + offset);
 		if (result != BOOT98_FS_OK)
@@ -652,25 +795,45 @@ static enum boot98_fs_result fat16_readdir(
 	struct boot98_dirent *entry)
 {
 	struct boot98_fat_state *fat = boot98_fat_state(filesystem);
+	struct fat16_directory directory = { 0 };
+	uint32_t limit;
 	unsigned visible = 0;
 	uint32_t index;
 
-	if (*path && !(path[0] == '/' && !path[1]))
-		return BOOT98_FS_INVALID_PATH;
-	for (index = 0; index < fat->root_entries; index++) {
-		uint32_t lba = fat->root_start + index / FAT16_ENTRIES_PER_SECTOR;
-		uint16_t offset = (uint16_t)((index % FAT16_ENTRIES_PER_SECTOR) * 32U);
-		const uint8_t *sector;
+	if (*path && !(path[0] == '/' && !path[1])) {
+		uint32_t lba;
+		uint16_t offset;
+		const uint8_t *raw;
+		enum boot98_fs_result result = fat16_resolve_entry(
+			filesystem, path, &lba, &offset, &raw);
+
+		if (result != BOOT98_FS_OK)
+			return result;
+		if (!(raw[11] & 0x10U))
+			return BOOT98_FS_INVALID_PATH;
+		directory.first_cluster = boot98_fat_get16(raw + 26);
+		if (!fat16_valid_cluster(fat, directory.first_cluster))
+			return BOOT98_FS_CORRUPT;
+	}
+	limit = directory.first_cluster == 0 ? fat->root_entries :
+		fat->cluster_count * (uint32_t)fat->sectors_per_cluster *
+		FAT16_ENTRIES_PER_SECTOR;
+	for (index = 0; index < limit; index++) {
+		uint32_t lba;
+		uint16_t offset;
 		const uint8_t *raw;
 		enum boot98_fs_result result;
 
-		result = boot98_fat_read_sector_result(filesystem, lba, &sector);
+		result = fat16_directory_entry(filesystem, &directory, index,
+					       &lba, &offset, &raw);
+		if (result == BOOT98_FS_NOT_FOUND)
+			return result;
 		if (result != BOOT98_FS_OK)
 			return result;
-		raw = sector + offset;
 		if (!raw[0])
 			return BOOT98_FS_NOT_FOUND;
-		if (raw[0] == 0xe5 || raw[11] == 0x0f)
+		if (raw[0] == 0xe5 || raw[11] == 0x0f ||
+		    (raw[11] & 0x08U) || raw[0] == '.')
 			continue;
 		if (visible++ != wanted)
 			continue;
@@ -684,22 +847,15 @@ static enum boot98_fs_result fat16_stat(
 	struct boot98_filesystem *filesystem, const char *path,
 	struct boot98_dirent *entry)
 {
-	char canonical[11];
-	uint32_t lba = 0, free_lba = 0;
-	uint16_t offset = 0, free_offset = 0;
-	const uint8_t *sector;
+	uint32_t lba = 0;
+	uint16_t offset = 0;
+	const uint8_t *raw;
 	enum boot98_fs_result result;
 
-	if (!boot98_fat_short_name(path, canonical))
-		return BOOT98_FS_INVALID_PATH;
-	result = fat16_find_entry(filesystem, canonical, &lba, &offset,
-				  &free_lba, &free_offset);
-	if (result != BOOT98_FS_OK)
-		return result == BOOT98_FS_NO_SPACE ? BOOT98_FS_NOT_FOUND : result;
-	result = boot98_fat_read_sector_result(filesystem, lba, &sector);
+	result = fat16_resolve_entry(filesystem, path, &lba, &offset, &raw);
 	if (result != BOOT98_FS_OK)
 		return result;
-	boot98_fat_decode_dirent(sector + offset, entry);
+	boot98_fat_decode_dirent(raw, entry);
 	return BOOT98_FS_OK;
 }
 

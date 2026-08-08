@@ -145,6 +145,81 @@ static int is_sjis_trail(uint8_t byte)
 	return byte >= 0x40 && byte <= 0xfc && byte != 0x7f;
 }
 
+/* JIS X 0208 rows 1-84, generated and maintained by NoctLang. */
+extern const uint16_t noct_jisx0208_to_ucs[7896];
+
+static uint32_t utf8_codepoint(const char **input, const char *end)
+{
+	const uint8_t *p = (const uint8_t *)*input;
+	uint32_t codepoint;
+	unsigned count;
+
+	if ((const char *)p >= end)
+		return 0;
+	if (p[0] < 0x80U) {
+		*input = (const char *)(p + 1);
+		return p[0];
+	}
+	if ((p[0] & 0xe0U) == 0xc0U) {
+		codepoint = p[0] & 0x1fU;
+		count = 2;
+		if (codepoint < 2U)
+			count = 0;
+	} else if ((p[0] & 0xf0U) == 0xe0U) {
+		codepoint = p[0] & 0x0fU;
+		count = 3;
+	} else if ((p[0] & 0xf8U) == 0xf0U) {
+		codepoint = p[0] & 0x07U;
+		count = 4;
+		if (codepoint > 4U)
+			count = 0;
+	} else {
+		codepoint = 0;
+		count = 0;
+	}
+	if (count == 0 || end - (const char *)p < (int)count) {
+		*input = (const char *)(p + 1);
+		return '?';
+	}
+	for (unsigned index = 1; index < count; index++) {
+		if ((p[index] & 0xc0U) != 0x80U) {
+			*input = (const char *)(p + 1);
+			return '?';
+		}
+		codepoint = (codepoint << 6) | (p[index] & 0x3fU);
+	}
+	*input = (const char *)(p + count);
+	if ((count == 2 && codepoint < 0x80U) ||
+	    (count == 3 && codepoint < 0x800U) ||
+	    (count == 4 && codepoint < 0x10000U) || codepoint > 0x10ffffU ||
+	    (codepoint >= 0xd800U && codepoint <= 0xdfffU))
+		return '?';
+	return codepoint;
+}
+
+static uint16_t unicode_to_pc98(uint32_t codepoint, unsigned *width)
+{
+	if (codepoint < 0x80U) {
+		*width = 1;
+		return (uint16_t)codepoint;
+	}
+	if (codepoint >= 0xff61U && codepoint <= 0xff9fU) {
+		*width = 1;
+		return (uint16_t)(0xa1U + codepoint - 0xff61U);
+	}
+	if (codepoint <= 0xffffU)
+		for (unsigned index = 0; index < 7896U; index++)
+			if (noct_jisx0208_to_ucs[index] == codepoint) {
+				uint16_t ku = (uint16_t)(0x21U + index / 94U);
+				uint16_t ten = (uint16_t)(0x21U + index % 94U);
+
+				*width = 2;
+				return (uint16_t)((ten << 8) | ku);
+			}
+	*width = 1;
+	return '?';
+}
+
 /* Convert one Shift-JIS double-byte character to the PC-98 text VRAM code. */
 static uint16_t sjis_to_pc98(uint8_t lead, uint8_t trail)
 {
@@ -242,6 +317,60 @@ int boot98_console_put_sjis_at(unsigned row, unsigned column,
 	cursor_column = column < BOOT98_CONSOLE_COLUMNS ? column :
 		BOOT98_CONSOLE_COLUMNS - 1U;
 	return (int)(column - start);
+}
+
+/* Positional UTF-8 output used by the Noct Term backend. */
+int boot98_console_put_utf8_at(unsigned row, unsigned column,
+			       const char *string, unsigned length,
+			       uint8_t attribute)
+{
+	const char *position = string;
+	const char *end = string + length;
+	unsigned changed = 0;
+
+	if (row >= BOOT98_CONSOLE_ROWS || column >= BOOT98_CONSOLE_COLUMNS ||
+	    string == 0)
+		return -1;
+	while (position < end && row < BOOT98_CONSOLE_ROWS) {
+		uint32_t codepoint = utf8_codepoint(&position, end);
+		unsigned width;
+		uint16_t code;
+
+		if (codepoint == '\r') {
+			column = 0;
+			continue;
+		}
+		if (codepoint == '\n') {
+			column = 0;
+			row++;
+			continue;
+		}
+		code = unicode_to_pc98(codepoint, &width);
+		if (column + width > BOOT98_CONSOLE_COLUMNS)
+			break;
+		write_cell(row, column++, code, attribute);
+		changed++;
+		if (width == 2U) {
+			write_cell(row, column++, code | 0x8000U, attribute);
+			changed++;
+		}
+	}
+	cursor_row = row < BOOT98_CONSOLE_ROWS ? row : BOOT98_CONSOLE_ROWS - 1U;
+	cursor_column = column < BOOT98_CONSOLE_COLUMNS ? column :
+		BOOT98_CONSOLE_COLUMNS - 1U;
+	return (int)changed;
+}
+
+int boot98_console_clear_to_eol_at(unsigned row, unsigned column)
+{
+	if (row >= BOOT98_CONSOLE_ROWS || column >= BOOT98_CONSOLE_COLUMNS)
+		return 0;
+	for (unsigned current = column; current < BOOT98_CONSOLE_COLUMNS;
+	     current++)
+		write_cell(row, current, ' ', BOOT98_CONSOLE_NORMAL_ATTRIBUTE);
+	cursor_row = row;
+	cursor_column = column;
+	return 1;
 }
 
 int boot98_console_set_cursor(unsigned row, unsigned column)

@@ -14,6 +14,7 @@ cfg="$work/BOOT.CFG"
 monitor="$work/monitor.sock"
 screenshot="$work/m15.ppm"
 shift_test="${BOOT98_REPL_SHIFT_TEST:-0}"
+memory_mib="${BOOT98_TEST_MEMORY_MIB:-6}"
 
 test -x "$qemu" || { echo "QEMU not found: $qemu" >&2; exit 1; }
 test -d "$bios_dir" || {
@@ -59,7 +60,7 @@ PY
 )"
 
 rm -f -- "$monitor"
-"$qemu" -M pc9801 -cpu 386 -m 6 -accel tcg -L "$bios_dir" \
+"$qemu" -M pc9801 -cpu 386 -m "$memory_mib" -accel tcg -L "$bios_dir" \
 	-nic none -drive "if=ide,bus=0,unit=0,format=raw,file=$image" \
 	-display none -serial none \
 	-qmp "unix:$monitor,server=on,wait=off" -no-reboot \
@@ -199,7 +200,20 @@ stream.close()
 client.close()
 PY
 
-wait "$qemu_pid"
+for _ in $(seq 1 50); do
+	if ! kill -0 "$qemu_pid" 2>/dev/null; then
+		break
+	fi
+	sleep 0.1
+done
+if kill -0 "$qemu_pid" 2>/dev/null; then
+	# A guest halted by the final BOOT.CFG command can stop servicing the
+	# asynchronous QMP quit request. The FAT marker below is the authoritative
+	# completion check, so terminate only this test-owned QEMU after the grace
+	# period.
+	kill "$qemu_pid"
+fi
+wait "$qemu_pid" 2>/dev/null || true
 trap - EXIT INT TERM
 rm -f -- "$monitor"
 

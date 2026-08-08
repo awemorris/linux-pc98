@@ -5,7 +5,9 @@
  */
 
 #include "boot98-noct.h"
+#include "boot98-noct-memory.h"
 #include "boot98-noct-napi.h"
+#include "boot98-noct-target.h"
 #include "libc/boot98-heap.h"
 #include "libc/boot98-stdio-fs.h"
 
@@ -24,6 +26,7 @@ struct active_console {
 struct jit_observation {
 	void *region;
 	size_t size;
+	size_t expected_size;
 	int released;
 };
 
@@ -37,7 +40,7 @@ observe_heap(void *context, void *pointer, size_t size,
 	struct jit_observation *jit = context;
 
 	if (event == BOOT98_HEAP_ALLOCATED &&
-	    size == BOOT98_NOCT_JIT_CODE_MAX && jit->region == NULL) {
+	    size == jit->expected_size && jit->region == NULL) {
 		jit->region = pointer;
 		jit->size = size;
 	} else if (event == BOOT98_HEAP_FREED && pointer == jit->region) {
@@ -81,11 +84,11 @@ emit_noct_error(NoctEnv *env, const char *kind)
 	emit_string("\n");
 }
 
-int
-boot98_noct_run_args(const char *source_name, const char *source,
-		    int argc, char *const argv[],
-		    const struct boot98_noct_options *options,
-		    struct boot98_noct_result *result)
+static int
+run_program_args(const char *program_name, void *program, uint32_t program_size,
+		 int bytecode, int argc, char *const argv[],
+		 const struct boot98_noct_options *options,
+		 struct boot98_noct_result *result)
 {
 	NoctConfig config;
 	NoctVM *vm = NULL;
@@ -112,9 +115,12 @@ boot98_noct_run_args(const char *source_name, const char *source,
 	memset(&arguments, 0, sizeof(arguments));
 	memset(&argument_value, 0, sizeof(argument_value));
 	memset(&jit, 0, sizeof(jit));
+	jit.expected_size = options != NULL && options->memory != NULL ?
+		options->memory->jit_code_size : BOOT98_NOCT_JIT_CODE_MAX;
 	if (result != NULL)
 		memset(result, 0, sizeof(*result));
-	if (source_name == NULL || source == NULL || argc < 0 ||
+	if (program_name == NULL || program == NULL ||
+	    (bytecode && program_size == 0) || argc < 0 ||
 	    argc > NOCT_ARG_MAX || (argc != 0 && argv == NULL) ||
 	    options == NULL ||
 	    options->arena == NULL || options->arena_size < 4096U ||
@@ -135,6 +141,12 @@ boot98_noct_run_args(const char *source_name, const char *source,
 		boot98_heap_set_failure_after(options->fail_after);
 
 	noct_set_default_config(&config);
+	if (options->memory != NULL) {
+		config.jit_code_size = options->memory->jit_code_size;
+		config.gc_nursery_size = options->memory->gc_nursery_size;
+		config.gc_graduate_size = options->memory->gc_graduate_size;
+		config.gc_tenure_size = options->memory->gc_tenure_size;
+	}
 	config.jit_enable = options->jit_enable != 0;
 	config.jit_threshold = options->jit_threshold;
 	if (!noct_create_vm(&vm, &env, &config)) {
@@ -148,14 +160,16 @@ boot98_noct_run_args(const char *source_name, const char *source,
 		emit_noct_error(env, "Noct API error");
 		goto cleanup;
 	}
-	if (!noct_register_api_file(env)) {
+	if (!boot98_noct_target_register(env, options->services)) {
 		status = BOOT98_NOCT_API_ERROR;
-		emit_noct_error(env, "Noct File API error");
+		emit_noct_error(env, "Noct target API error");
 		goto cleanup;
 	}
-	if (!noct_register_source(env, source_name, source)) {
+	if (!(bytecode ? noct_register_bytecode(env, program, program_size) :
+	      noct_register_source(env, program_name, program))) {
 		status = BOOT98_NOCT_SOURCE_ERROR;
-		emit_noct_error(env, "Noct source error");
+		emit_noct_error(env, bytecode ? "Noct bytecode error" :
+					      "Noct source error");
 		goto cleanup;
 	}
 	if (!noct_get_global(env, "main", &main_value) ||
@@ -226,6 +240,7 @@ cleanup:
 	if (boot98_stdio_close_all() != 0 && status == BOOT98_NOCT_OK)
 		status = BOOT98_NOCT_CLEANUP_ERROR;
 	boot98_stdio_set_filesystem(NULL);
+	boot98_noct_target_cleanup();
 	boot98_noct_napi_cleanup();
 	peak = boot98_heap_peak();
 	before_reset = boot98_heap_current();
@@ -251,6 +266,27 @@ finish_without_heap:
 		result->script_status = script_status;
 	}
 	return status == BOOT98_NOCT_OK;
+}
+
+int
+boot98_noct_run_args(const char *source_name, const char *source,
+		    int argc, char *const argv[],
+		    const struct boot98_noct_options *options,
+		    struct boot98_noct_result *result)
+{
+	return run_program_args(source_name, (void *)source, 0, 0, argc, argv,
+				options, result);
+}
+
+int
+boot98_noct_run_bytecode_args(const char *program_name, uint8_t *bytecode,
+			      uint32_t bytecode_size, int argc,
+			      char *const argv[],
+			      const struct boot98_noct_options *options,
+			      struct boot98_noct_result *result)
+{
+	return run_program_args(program_name, bytecode, bytecode_size, 1, argc,
+				argv, options, result);
 }
 
 int
@@ -282,6 +318,8 @@ boot98_noct_repl(const struct boot98_noct_options *options,
 	size_t errors = 0;
 
 	memset(&jit, 0, sizeof(jit));
+	jit.expected_size = options != NULL && options->memory != NULL ?
+		options->memory->jit_code_size : BOOT98_NOCT_JIT_CODE_MAX;
 	if (result != NULL)
 		memset(result, 0, sizeof(*result));
 	if (options == NULL || options->arena == NULL ||
@@ -303,6 +341,12 @@ boot98_noct_repl(const struct boot98_noct_options *options,
 		boot98_heap_set_failure_after(options->fail_after);
 
 	noct_set_default_config(&config);
+	if (options->memory != NULL) {
+		config.jit_code_size = options->memory->jit_code_size;
+		config.gc_nursery_size = options->memory->gc_nursery_size;
+		config.gc_graduate_size = options->memory->gc_graduate_size;
+		config.gc_tenure_size = options->memory->gc_tenure_size;
+	}
 	config.jit_enable = options->jit_enable != 0;
 	config.jit_threshold = options->jit_threshold;
 	if (!noct_create_vm(&vm, &env, &config)) {
@@ -316,12 +360,13 @@ boot98_noct_repl(const struct boot98_noct_options *options,
 		emit_noct_error(env, "Noct API error");
 		goto cleanup;
 	}
-	if (!noct_register_api_file(env)) {
+	if (!boot98_noct_target_register(env, options->services)) {
 		status = BOOT98_NOCT_API_ERROR;
-		emit_noct_error(env, "Noct File API error");
+		emit_noct_error(env, "Noct target API error");
 		goto cleanup;
 	}
-	session = noct_repl_create(env, BOOT98_NOCT_REPL_SOURCE_MAX);
+	session = noct_repl_create(env, options->memory != NULL ?
+		options->memory->repl_source_max : BOOT98_NOCT_REPL_SOURCE_MAX);
 	if (session == NULL) {
 		status = BOOT98_NOCT_VM_ERROR;
 		emit_noct_error(env, "Noct REPL error");
@@ -378,6 +423,7 @@ cleanup:
 	if (boot98_stdio_close_all() != 0 && status == BOOT98_NOCT_OK)
 		status = BOOT98_NOCT_CLEANUP_ERROR;
 	boot98_stdio_set_filesystem(NULL);
+	boot98_noct_target_cleanup();
 	boot98_noct_napi_cleanup();
 	peak = boot98_heap_peak();
 	before_reset = boot98_heap_current();

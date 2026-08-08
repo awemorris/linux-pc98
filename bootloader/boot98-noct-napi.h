@@ -48,6 +48,8 @@ struct boot98_noct_dirent {
 	uint8_t attributes;
 };
 
+struct boot98_beui_hal;
+
 /*
  * The core NAPI only knows this injectable interface.  The boot target maps it
  * to the GDC, BIOS keyboard gateway, and the selected filesystem.  Host tests
@@ -55,14 +57,23 @@ struct boot98_noct_dirent {
  */
 struct boot98_noct_services {
 	void *context;
+	/* Optional.  Binding this pointer does not touch graphical hardware. */
+	const struct boot98_beui_hal *beui;
 	int (*screen_clear)(void *context);
 	int (*screen_clear_row)(void *context, unsigned row);
 	int (*screen_put)(void *context, unsigned row, unsigned column,
 			  const char *text, uint8_t attribute);
+	int (*screen_put_utf8)(void *context, unsigned row, unsigned column,
+			       const char *text, unsigned length,
+			       uint8_t attribute);
+	int (*screen_clear_to_eol)(void *context, unsigned row,
+				   unsigned column);
 	int (*screen_set_cursor)(void *context, unsigned row, unsigned column);
 	int (*screen_show_cursor)(void *context, int visible);
 	int (*keyboard_poll)(void *context);
 	int (*keyboard_read)(void *context);
+	/* Seconds in the current minute (0..59), or -1 if unavailable. */
+	int (*clock_second)(void *context);
 	int (*file_size)(void *context, const char *path, uint32_t *size);
 	int (*file_read)(void *context, const char *path, uint32_t offset,
 			 void *buffer, uint32_t length);

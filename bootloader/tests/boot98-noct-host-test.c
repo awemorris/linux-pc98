@@ -5,6 +5,8 @@
  */
 
 #include "boot98-noct.h"
+#include "boot98-beui.h"
+#include "boot98-noct-memory.h"
 #include "boot98-noct-napi.h"
 #include "boot98-noct-m6-script.h"
 #include "boot98-env.h"
@@ -27,6 +29,11 @@
 #define OPEN_MODE 0644
 
 static unsigned char arena[ARENA_SIZE] __attribute__((aligned(4096)));
+static const struct boot98_noct_memory_profile test_memory = {
+	BOOT98_NOCT_MEMORY_5, "5M", 5, 0, ARENA_SIZE,
+	64U * 1024U, 8U * 1024U,
+	128U * 1024U, 32U * 1024U, 512U * 1024U, 96U * 1024U,
+};
 static unsigned char jit_capture[BOOT98_NOCT_JIT_CODE_MAX];
 static size_t jit_capture_length;
 static char output[OUTPUT_SIZE];
@@ -219,6 +226,7 @@ static int volume_read(const void *context, uint32_t lba, void *buffer)
 struct mock_platform {
 	int clear_count;
 	int clear_row;
+	int clear_column;
 	int put_row;
 	int put_column;
 	int put_attribute;
@@ -228,6 +236,16 @@ struct mock_platform {
 	int cursor_visible;
 	const char *keyboard_input;
 	size_t keyboard_position;
+	int keyboard_bios_key;
+	int keyboard_bios_queue[4];
+	size_t keyboard_bios_count;
+	size_t keyboard_bios_position;
+	int beui_enter_count;
+	int beui_leave_count;
+	int beui_pointer_start_count;
+	int beui_pointer_stop_count;
+	int beui_pointer_poll_count;
+	int beui_flush_count;
 };
 
 static struct mock_platform mock;
@@ -262,6 +280,37 @@ static int mock_screen_put(void *context, unsigned row, unsigned column,
 	return (int)length;
 }
 
+static int mock_screen_put_utf8(void *context, unsigned row, unsigned column,
+				const char *text, unsigned length,
+				uint8_t attribute)
+{
+	struct mock_platform *platform = context;
+	unsigned offset;
+	int cells = 0;
+
+	if (length >= sizeof(platform->put_text))
+		return -1;
+	platform->put_row = (int)row;
+	platform->put_column = (int)column;
+	platform->put_attribute = attribute;
+	memcpy(platform->put_text, text, length);
+	platform->put_text[length] = '\0';
+	for (offset = 0; offset < length; offset++)
+		if (((unsigned char)text[offset] & 0xc0U) != 0x80U)
+			cells++;
+	return cells;
+}
+
+static int mock_screen_clear_to_eol(void *context, unsigned row,
+				    unsigned column)
+{
+	struct mock_platform *platform = context;
+
+	platform->clear_row = (int)row;
+	platform->clear_column = (int)column;
+	return 1;
+}
+
 static int mock_screen_set_cursor(void *context, unsigned row,
 				  unsigned column)
 {
@@ -280,13 +329,29 @@ static int mock_screen_show_cursor(void *context, int visible)
 
 static int mock_keyboard_poll(void *context)
 {
-	(void)context;
+	struct mock_platform *platform = context;
+
+	if (platform->keyboard_bios_position < platform->keyboard_bios_count)
+		return platform->keyboard_bios_queue[
+			platform->keyboard_bios_position];
+	if (platform->keyboard_bios_key != 0)
+		return platform->keyboard_bios_key;
 	return BOOT98_KEY_LEFT;
 }
 
 static int mock_keyboard_read(void *context)
 {
 	struct mock_platform *platform = context;
+	int key;
+
+	if (platform->keyboard_bios_position < platform->keyboard_bios_count)
+		return platform->keyboard_bios_queue[
+			platform->keyboard_bios_position++];
+	if (platform->keyboard_bios_key != 0) {
+		key = platform->keyboard_bios_key;
+		platform->keyboard_bios_key = 0;
+		return key;
+	}
 
 	if (platform->keyboard_input != NULL &&
 	    platform->keyboard_input[platform->keyboard_position] != '\0')
@@ -333,18 +398,95 @@ static int mock_directory_read(void *context, const char *path, unsigned index,
 	return 1;
 }
 
+static int
+mock_beui_enter(void *context, struct boot98_beui_display_info *info)
+{
+	struct mock_platform *platform = context;
+
+	platform->beui_enter_count++;
+	info->width = 640;
+	info->height = 400;
+	info->bits_per_pixel = 4;
+	info->stride = 80;
+	return 1;
+}
+
+static void
+mock_beui_leave(void *context)
+{
+	((struct mock_platform *)context)->beui_leave_count++;
+}
+
+static int
+mock_beui_flush(void *context,
+		 const struct boot98_beui_rect *rectangles,
+		 size_t rectangle_count)
+{
+	struct mock_platform *platform = context;
+
+	if (rectangles != NULL || rectangle_count != 0)
+		return 0;
+	platform->beui_flush_count++;
+	return 1;
+}
+
+static int
+mock_beui_pointer_start(void *context,
+			 const struct boot98_beui_display_info *display)
+{
+	struct mock_platform *platform = context;
+
+	platform->beui_pointer_start_count++;
+	return display->width == 640 && display->height == 400;
+}
+
+static void
+mock_beui_pointer_stop(void *context)
+{
+	((struct mock_platform *)context)->beui_pointer_stop_count++;
+}
+
+static int
+mock_beui_pointer_poll(void *context,
+			struct boot98_beui_pointer_event *event)
+{
+	struct mock_platform *platform = context;
+
+	platform->beui_pointer_poll_count++;
+	memset(event, 0, sizeof(*event));
+	return 0;
+}
+
+static const struct boot98_beui_hal mock_beui = {
+	.display = {
+		.context = &mock,
+		.enter = mock_beui_enter,
+		.leave = mock_beui_leave,
+		.flush = mock_beui_flush,
+	},
+	.pointer = {
+		.context = &mock,
+		.start = mock_beui_pointer_start,
+		.stop = mock_beui_pointer_stop,
+		.poll = mock_beui_pointer_poll,
+	},
+};
+
 static const struct boot98_noct_services mock_services = {
-	&mock,
-	mock_screen_clear,
-	mock_screen_clear_row,
-	mock_screen_put,
-	mock_screen_set_cursor,
-	mock_screen_show_cursor,
-	mock_keyboard_poll,
-	mock_keyboard_read,
-	mock_file_size,
-	mock_file_read,
-	mock_directory_read,
+	.context = &mock,
+	.beui = &mock_beui,
+	.screen_clear = mock_screen_clear,
+	.screen_clear_row = mock_screen_clear_row,
+	.screen_put = mock_screen_put,
+	.screen_put_utf8 = mock_screen_put_utf8,
+	.screen_clear_to_eol = mock_screen_clear_to_eol,
+	.screen_set_cursor = mock_screen_set_cursor,
+	.screen_show_cursor = mock_screen_show_cursor,
+	.keyboard_poll = mock_keyboard_poll,
+	.keyboard_read = mock_keyboard_read,
+	.file_size = mock_file_size,
+	.file_read = mock_file_read,
+	.directory_read = mock_directory_read,
 };
 
 static long
@@ -497,6 +639,7 @@ run_case_args(const char *source, int argc, char *const argv[], int jit_enable,
 	options.services = &mock_services;
 	options.filesystem = test_filesystem;
 	options.environment = &test_environment;
+	options.memory = &test_memory;
 	success = boot98_noct_run_args("noct-test.nct", source, argc, argv,
 				       &options, &result);
 	if (success != (expected == BOOT98_NOCT_OK) ||
@@ -523,11 +666,11 @@ run_case_args(const char *source, int argc, char *const argv[], int jit_enable,
 	if (expected_output == NULL && output_length == 0)
 		return 31;
 	if (jit_enable) {
-		if (result.jit_code_size != BOOT98_NOCT_JIT_CODE_MAX)
+		if (result.jit_code_size != test_memory.jit_code_size)
 			return 32;
 		if (!result.jit_region_released)
 			return 34;
-		if (jit_capture_length != BOOT98_NOCT_JIT_CODE_MAX)
+		if (jit_capture_length != test_memory.jit_code_size)
 			return 35;
 	} else if (result.jit_code_size != 0 || result.jit_region_released) {
 		return 33;
@@ -586,6 +729,7 @@ run_repl_case(int jit_enable)
 	options.services = &mock_services;
 	options.filesystem = test_filesystem;
 	options.environment = &test_environment;
+	options.memory = &test_memory;
 	success = boot98_noct_repl(&options, read_repl_input, &input, &result);
 	if (!success || result.status != BOOT98_NOCT_OK)
 		return 1;
@@ -604,9 +748,9 @@ run_repl_case(int jit_enable)
 	    result.heap_errors != 0 || !boot98_heap_validate())
 		return 5;
 	if (jit_enable) {
-		if (result.jit_code_size != BOOT98_NOCT_JIT_CODE_MAX ||
+		if (result.jit_code_size != test_memory.jit_code_size ||
 		    !result.jit_region_released ||
-		    jit_capture_length != BOOT98_NOCT_JIT_CODE_MAX)
+		    jit_capture_length != test_memory.jit_code_size)
 			return 6;
 	} else if (result.jit_code_size != 0 || result.jit_region_released) {
 		return 7;
@@ -658,6 +802,23 @@ main(int argc, char **argv)
 		"func main() { print(System.getEnv(\"MODE\")); "
 		"System.unsetEnv(\"MODE\"); print(System.getEnv(\"MODE\")); "
 		"return 0; }";
+	static const char term_script[] =
+		"func main() { "
+		"if (Term.isTTY() != 1 || Term.open() != 1) { return 1; } "
+		"var size = Term.size(); "
+		"if (size.rows != 25 || size.cols != 80) { return 2; } "
+		"if (Term.setStyle({fg: 2, reverse: 1}) != 1 || "
+		"Term.moveTo(2, 3) != 1 || "
+		"Term.write(\"日本語\") != 1) { return 3; } "
+		"if (Term.clearToEol() != 1 || Term.showCursor(1) != 1 || "
+		"Term.flush() != 1) { return 4; } "
+		"if (Term.readKey(10) != (Term.META | 0x78)) { return 5; } "
+		"if (Term.readKey(10) != (Term.CTRL | 0x63)) { return 7; } "
+		"if (Term.readKey(10) != Term.KEY_LEFT) { return 8; } "
+		"var entries = FileUtil.listDirectory(\"/\"); "
+		"if (Array.size(entries) != 3 || entries[0] != \"BOOT.CFG\" || "
+		"entries[1] != \"LIB.NCT\" || entries[2] != \"SCRIPTS/\") "
+		"{ return 6; } Term.close(); return 0; }";
 	static const char napi_output[] =
 		"{answer: 42, items: [\"x\", 2]}\n"
 		"raw\n2\n315\n65\n1\n315\nBOOT.CFG\n7\nPC98BE\n"
@@ -676,6 +837,16 @@ main(int argc, char **argv)
 	static const char finalizer_script[] =
 		"func main() { var f = File.open(\"/FINAL.TXT\", \"w\"); "
 		"return 0; }";
+	static const char beui_script[] =
+		"func main() { print(BeUI.isOpen()); print(BeUI.init()); "
+		"print(BeUI.init()); print(BeUI.getWidth()); "
+		"print(BeUI.getHeight()); print(BeUI.poll()); "
+		"print(BeUI.flush()); print(BeUI.close()); "
+		"print(BeUI.isOpen()); return 0; }";
+	static const char beui_cleanup_script[] =
+		"func main() { BeUI.init(); return 0; }";
+	static const char beui_error_script[] =
+		"func main() { BeUI.init(); Console.write(1); }";
 	char *script_arguments[] = { "alpha", "beta" };
 	char *ls_bad_arguments[] = { "one", "two" };
 	char *cp_arguments[] = { "/SOURCE.BIN", "/COPY.BIN" };
@@ -780,6 +951,55 @@ main(int argc, char **argv)
 			  "safe\n\n", &result);
 	if (status != 0 || boot98_env_get(&test_environment, "MODE") != NULL)
 		return 246 + status;
+	/* VM/API registration alone must never probe or enter graphics. */
+	if (mock.beui_enter_count != 0 || mock.beui_pointer_start_count != 0)
+		return 247;
+	memset(&mock, 0, sizeof(mock));
+	status = run_case(beui_script, 0, BOOT98_NOCT_OK,
+			  "0\n1\n1\n640\n400\n1\n1\n1\n0\n", &result);
+	if (status != 0 || mock.beui_enter_count != 1 ||
+	    mock.beui_leave_count != 1 ||
+	    mock.beui_pointer_start_count != 1 ||
+	    mock.beui_pointer_stop_count != 1 ||
+	    mock.beui_pointer_poll_count != 1 || mock.beui_flush_count != 1)
+		return 248 + status;
+	memset(&mock, 0, sizeof(mock));
+	status = run_case(beui_cleanup_script, 1, BOOT98_NOCT_OK, "", &result);
+	if (status != 0 || mock.beui_enter_count != 1 ||
+	    mock.beui_leave_count != 1 ||
+	    mock.beui_pointer_start_count != 1 ||
+	    mock.beui_pointer_stop_count != 1)
+		return 249 + status;
+	memset(&mock, 0, sizeof(mock));
+	status = run_case(beui_error_script, 0, BOOT98_NOCT_RUNTIME_ERROR,
+			  NULL, &result);
+	if (status != 0 || mock.beui_enter_count != 1 ||
+	    mock.beui_leave_count != 1 ||
+	    mock.beui_pointer_start_count != 1 ||
+	    mock.beui_pointer_stop_count != 1)
+		return 250 + status;
+	memset(&mock, 0, sizeof(mock));
+	mock.keyboard_bios_key = 0x3b00;
+	mock.keyboard_bios_queue[0] = 0x001b;
+	mock.keyboard_bios_queue[1] = 0x0078;
+	mock.keyboard_bios_queue[2] = 0x0003;
+	mock.keyboard_bios_count = 3;
+	status = run_case_args(term_script, 0, NULL, 0, BOOT98_NOCT_OK, 0,
+			       "", &result);
+	if (status != 0)
+		return 230 + status;
+	if (mock.clear_count != 1)
+		return 231;
+	if (mock.put_row != 1 || mock.put_column != 2)
+		return 232;
+	if (strcmp(mock.put_text, "日本語") != 0)
+		return 233;
+	if (mock.put_attribute != 0x45)
+		return 234;
+	if (mock.clear_row != 1 || mock.clear_column != 5)
+		return 235;
+	if (mock.cursor_visible != 1)
+		return 236;
 	for (iteration = 0; iteration < 20U; iteration++) {
 		status = run_case_args(ls_source, 0, NULL, 1, BOOT98_NOCT_OK,
 				       0, ls_output, &result);

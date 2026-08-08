@@ -42,7 +42,7 @@
 	.set ATTR_SEG,            0xa200
 	.set STACK_SEG,           0x9000
 	.set STAGE2_SEG,          0x2000
-	.set STAGE2_MAX_SIZE,     0x40000
+	.set STAGE2_MAX_SIZE,     0x50000
 
 	.set DEV_CLASS_IDE,       2
 	.set DEV_CLASS_SCSI,      3

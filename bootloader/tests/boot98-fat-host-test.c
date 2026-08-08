@@ -13,7 +13,7 @@ struct test_disk {
 	uint8_t bpb[512];
 	uint8_t fat[512];
 	uint8_t root[512];
-	uint8_t data[512];
+	uint8_t data[8][512];
 	uint32_t fat_lba;
 	uint32_t root_lba;
 	uint32_t data_lba;
@@ -49,8 +49,8 @@ static int test_read(const void *context, uint32_t absolute_lba, void *buffer)
 		memcpy(buffer, disk->fat, 512);
 	else if (lba == disk->root_lba)
 		memcpy(buffer, disk->root, 512);
-	else if (lba == disk->data_lba)
-		memcpy(buffer, disk->data, 512);
+	else if (lba >= disk->data_lba && lba < disk->data_lba + 8)
+		memcpy(buffer, disk->data[lba - disk->data_lba], 512);
 	return 1;
 }
 
@@ -70,8 +70,8 @@ static int test_write(void *context, uint32_t absolute_lba,
 		destination = disk->fat;
 	else if (lba == disk->root_lba)
 		destination = disk->root;
-	else if (lba == disk->data_lba)
-		destination = disk->data;
+	else if (lba >= disk->data_lba && lba < disk->data_lba + 8)
+		destination = disk->data[lba - disk->data_lba];
 	else
 		return 0;
 	memcpy(destination, buffer, 512);
@@ -96,11 +96,26 @@ static void make_disk(struct test_disk *disk, uint16_t logical_sector_size)
 	disk->root_lba = scale + fat_logical_sectors * scale;
 	disk->data_lba = disk->root_lba + 1;
 	put16(disk->fat + 4, 0xffff);
+	put16(disk->fat + 6, 0xffff);
+	put16(disk->fat + 8, 0xffff);
 	memcpy(disk->root, "KERNEL  BIN", 11);
 	disk->root[11] = 0x20;
 	put16(disk->root + 26, 2);
 	put32(disk->root + 28, 5);
-	memcpy(disk->data, "hello", 5);
+	memcpy(disk->data[0], "hello", 5);
+	memcpy(disk->root + 32, "CMD        ", 11);
+	disk->root[32 + 11] = 0x10;
+	put16(disk->root + 32 + 26, 3);
+	memcpy(disk->data[scale], ".          ", 11);
+	disk->data[scale][11] = 0x10;
+	put16(disk->data[scale] + 26, 3);
+	memcpy(disk->data[scale] + 32, "..         ", 11);
+	disk->data[scale][32 + 11] = 0x10;
+	memcpy(disk->data[scale] + 64, "REMACS  NB ", 11);
+	disk->data[scale][64 + 11] = 0x20;
+	put16(disk->data[scale] + 64 + 26, 4);
+	put32(disk->data[scale] + 64 + 28, 5);
+	memcpy(disk->data[2U * scale], "remac", 5);
 }
 
 static void test_fat16(uint16_t logical_sector_size)
@@ -115,6 +130,7 @@ static void test_fat16(uint16_t logical_sector_size)
 	struct boot98_dirent entry;
 	uint32_t lba = 0;
 	char buffer[6] = { 0 };
+	uint8_t scale = logical_sector_size / 512;
 
 	make_disk(&disk, logical_sector_size);
 	volume.context = &disk;
@@ -129,28 +145,35 @@ static void test_fat16(uint16_t logical_sector_size)
 	assert(boot98_fs_open_result(&filesystem, "/missing.bin", &file) ==
 	       BOOT98_FS_NOT_FOUND);
 	assert(boot98_fs_open_result(&filesystem, "/bad/path", &file) ==
-	       BOOT98_FS_INVALID_PATH);
+	       BOOT98_FS_NOT_FOUND);
 	assert(boot98_fs_create_result(&filesystem, "/new.bin", &file) ==
 	       BOOT98_FS_READ_ONLY);
 	assert(boot98_fs_open(&filesystem, "/kernel.bin", &file));
 	assert(file.size == 5);
 	assert(boot98_file_read(&file, 0, buffer, 5));
 	assert(!strcmp(buffer, "hello"));
+	memset(buffer, 0, sizeof(buffer));
+	assert(boot98_fs_open(&filesystem, "/cmd/remacs.nb", &file));
+	assert(file.size == 5);
+	assert(boot98_file_read(&file, 0, buffer, 5));
+	assert(!strcmp(buffer, "remac"));
 	assert(boot98_fs_readdir(&filesystem, "/", 0, &entry));
 	assert(!strcmp(entry.name, "KERNEL.BIN"));
 	assert(entry.size == 5 && entry.attributes == 0x20);
+	assert(boot98_fs_readdir(&filesystem, "/cmd", 0, &entry));
+	assert(!strcmp(entry.name, "REMACS.NB"));
 	assert(!boot98_fs_readdir(&filesystem, "/subdir", 0, &entry));
 	assert(boot98_fs_readdir_result(&filesystem, "/subdir", 0, &entry) ==
-	       BOOT98_FS_INVALID_PATH);
+	       BOOT98_FS_NOT_FOUND);
 	assert(boot98_file_write_result(&file, 0, "x", 1) ==
 	       BOOT98_FS_READ_ONLY);
 	assert(boot98_file_truncate_result(&file, 0) == BOOT98_FS_READ_ONLY);
 	assert(boot98_file_flush_result(&file) == BOOT98_FS_READ_ONLY);
-	assert(boot98_fs_stat_result(&filesystem, "/kernel.bin", &entry) ==
+	assert(boot98_fs_stat_result(&filesystem, "/cmd/remacs.nb", &entry) ==
 	       BOOT98_FS_OK);
-	assert(!strcmp(entry.name, "KERNEL.BIN") && entry.size == 5);
+	assert(!strcmp(entry.name, "REMACS.NB") && entry.size == 5);
 	assert(boot98_file_contiguous_lba(&file, &lba));
-	assert(lba == TEST_BASE_LBA + disk.data_lba);
+	assert(lba == TEST_BASE_LBA + disk.data_lba + 2U * scale);
 }
 
 static void test_volume_write_contract(void)
@@ -160,7 +183,7 @@ static void test_volume_write_contract(void)
 	uint8_t original[512], replacement[512], observed[512];
 
 	make_disk(&disk, 512);
-	memcpy(original, disk.data, sizeof(original));
+	memcpy(original, disk.data[0], sizeof(original));
 	memset(replacement, 0xa5, sizeof(replacement));
 	volume.context = &disk;
 	volume.start_lba = TEST_BASE_LBA;
@@ -174,7 +197,7 @@ static void test_volume_write_contract(void)
 	       BOOT98_FS_OK);
 	assert(!memcmp(observed, replacement, sizeof(observed)));
 	assert(boot98_volume_write(&volume, disk.data_lba, original));
-	assert(!memcmp(disk.data, original, sizeof(original)));
+	assert(!memcmp(disk.data[0], original, sizeof(original)));
 
 	volume.write = 0;
 	assert(boot98_volume_write_result(&volume, disk.data_lba,

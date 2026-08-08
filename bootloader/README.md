@@ -45,9 +45,21 @@ migration is in
 Noct is now pinned as the `third_party/noct` submodule; initialization and
 update rules are documented in
 [`../third_party/NOCT-SUBMODULE.md`](../third_party/NOCT-SUBMODULE.md).
-The planned in-tree EDIT.NCT has been removed: the separately maintained Noct
-application Remacs will supply the editor after its source, license, generic
-NAPI requirements, and packaging mode are reviewed.
+The planned in-tree EDIT.NCT has been removed. The separately maintained Noct
+application Remacs is pinned at `third_party/remacs`, compiled into one
+`CMD/REMACS.NB` bytecode file, and launched as `emacs [FILE]`. The generic
+Noct Term and directory backends and the Boots FAT16/PC-98 adapters required
+by the editor are implemented. See
+[`BOOTS-M16-REMACS.md`](BOOTS-M16-REMACS.md) for the exact revisions,
+build/test commands, and optional OS-only features that are unavailable in a
+pre-boot environment.
+
+The first BeUI review gate fixes the opt-in graphical lifecycle and hardware
+abstraction boundary without importing display-register code. Noct exposes
+`BeUI.init`, `close`, `isOpen`, `getWidth`, `getHeight`, `poll`, and `flush`.
+All VM exit paths force a close, while ordinary scripts never probe or change
+graphics. The PC-98 Cirrus/GDC/Trident, glyph, bus-mouse, and WSS backends are
+the next review gate. See [`BOOTS-G1-BEUI.md`](BOOTS-G1-BEUI.md).
 
 `noct-test [1..100]` runs a built-in constant Noct program from the BOOT.SYS
 shell. It verifies VM creation, forced i386 JIT execution, integer/container
@@ -57,9 +69,16 @@ Native API, JIT-region release, and complete arena reset before file-backed
 
 `noct FILE.NCT [args...]` executes an explicit source file from the selected
 BOOT filesystem.  An unknown unqualified shell command is also resolved as
-an uppercased `.NCT` filename after all C built-ins, so `hello a b` invokes
-`HELLO.NCT` with `main(args)`.  Sources are limited to 256 KiB, and `main`
+an uppercased `CMD/NAME.NCT` filename, with a BOOT-root compatibility fallback,
+after all C built-ins. Thus `hello a b` invokes `CMD/HELLO.NCT` with
+`main(args)`. Bytecode files use the same VM lifecycle. Sources and bytecode
+are limited to 256 KiB, and `main`
 may accept either zero arguments or one argument array.
+
+Build the pinned Remacs bytecode with `./build.sh remacs`; it is written to
+`build/bootloader/remacs/REMACS.NB`. `./build.sh remacs-test` performs a
+headless QEMU launch/edit/save/exit test and verifies the saved FAT16 file.
+Set `BOOT98_TEST_MEMORY_MIB=5` to exercise the minimum memory profile.
 
 M8 scripts can use bounded `Console` serialization, the 80 by 25 positional
 `Screen` API, normalized `Keyboard` and `Key` values, read-only root
@@ -111,8 +130,8 @@ to `BOOT.SYS`; `IO.SYS` retains only fatal diagnostics. It does not program
 ATA or SCSI registers and is therefore independent of the controller used by
 the BIOS.
 
-`BOOT.SYS` may occupy up to 256 KiB at physical addresses `0x20000` through
-`0x5ffff`. `IO.SYS` advances the destination segment after every 64 KiB while
+`BOOT.SYS` may occupy up to 320 KiB at physical addresses `0x20000` through
+`0x6ffff`. `IO.SYS` advances the destination segment after every 64 KiB while
 loading and while verifying the payload checksum, so its loader is not
 limited by a 16-bit offset.
 
@@ -238,11 +257,11 @@ as the kernel starts and unregisters when the normal PC-98 console is ready.
 | `0x00000700`     | Versioned PBR-to-`IO.SYS` bootstrap handoff        |
 | `0x00000800`     | `IO.SYS` device descriptor and BIOS gateway data   |
 | `0x00010000`     | Complete `IO.SYS`                                  |
-| `0x00020000`     | `BOOT.SYS` load image (maximum 256 KiB)             |
-| `0x00060000`     | Reserved end of `BOOT.SYS` image/BSS area           |
-| `0x00070000`     | 4096-byte Linux `boot_params` structure             |
-| `0x00071000`     | Kernel command line                                 |
-| `0x00072000`     | `SETUP_PC98_DISK` setup-data node                    |
+| `0x00020000`     | `BOOT.SYS` load image (maximum 320 KiB)             |
+| `0x00070000`     | Reserved end of `BOOT.SYS` load image               |
+| `0x00080000`     | 4096-byte Linux `boot_params` structure             |
+| `0x00081000`     | Kernel command line                                 |
+| `0x00082000`     | `SETUP_PC98_DISK` setup-data node                    |
 | `0x00100000`     | First ELF `PT_LOAD` segment                          |
 
 The partition IPL obtains the memory sizes used for the e820 map from the

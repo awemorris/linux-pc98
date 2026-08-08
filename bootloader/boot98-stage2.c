@@ -17,9 +17,9 @@
 #define MAX_PARTS 16
 #define CFG_MAX 8192
 #define LINE_MAX 256
-#define BP_ADDR 0x70000U
-#define CMD_ADDR 0x71000U
-#define PC98_ADDR 0x72000U
+#define BP_ADDR 0x80000U
+#define CMD_ADDR 0x81000U
+#define PC98_ADDR 0x82000U
 #define PC98_SETUP_NODE_SIZE 32U
 #define STARTUP_TIMEOUT_SECONDS 3
 #define MAX_FIXED_DEVICES 12
@@ -357,6 +357,12 @@ static int clock_second(void)
 	if (second > 59)
 		return -1;
 	return (int)second;
+}
+
+static int noct_clock_second(void *context)
+{
+	(void)context;
+	return clock_second();
 }
 
 static int line(char *b)
@@ -920,6 +926,48 @@ static int m9_write_test(uint32_t lba)
 #endif
 
 /* Execute one already-tokenized shell command against the current state. */
+static int run_noct_application(const char *name, const char *extension,
+				int argc, char *const argv[])
+{
+	char path[BOOT98_PATH_MAX];
+	struct boot98_file file;
+	unsigned base_length = 0;
+	unsigned extension_length = 0;
+	unsigned position = 4;
+
+	path[0] = 'C';
+	path[1] = 'M';
+	path[2] = 'D';
+	path[3] = '/';
+	while (name[base_length] != '\0') {
+		char ch = name[base_length++];
+
+		if (ch == '.' || ch == '/' || ch == '\\' ||
+		    position + 1U >= sizeof(path))
+			return 0;
+		path[position++] = ch >= 'a' && ch <= 'z' ?
+			(char)(ch - 'a' + 'A') : ch;
+	}
+	if (!base_length)
+		return 0;
+	while (extension[extension_length] != '\0') {
+		if (position + 1U >= sizeof(path))
+			return 0;
+		path[position++] = extension[extension_length++];
+	}
+	path[position] = '\0';
+	if (!boot98_fs_open(&mounted_fs, path, &file)) {
+		/* Preserve compatibility with pre-CMD BOOT volumes. */
+		for (unsigned index = 4; index <= position; index++)
+			path[index - 4] = path[index];
+		if (!boot98_fs_open(&mounted_fs, path, &file))
+			return 0;
+	}
+	return boot98_noct_run_file(&mounted_fs, &boot_environment, path,
+				    argc, argv, noct_key_read, noct_key_poll,
+				    noct_clock_second, 0);
+}
+
 static int command(char *s)
 {
 	char *v[20];
@@ -936,7 +984,7 @@ static int command(char *s)
 	if (streq(v[0], "help")) {
 		puts("help echo env set unset pause wait devalias probe-ide probe-scsi "
 		     "disk part ls cat source kernel arg boot linux "
-		     "run iplware noct noct-test reboot halt\n");
+		     "run iplware noct emacs noct-test reboot halt\n");
 		return 1;
 	}
 	if (streq(v[0], "env")) {
@@ -1124,11 +1172,15 @@ static int command(char *s)
 		if (n == 1)
 			return boot98_noct_run_repl(&mounted_fs,
 						    &boot_environment, noct_key_read,
-						    noct_key_poll, 0);
+						    noct_key_poll,
+						    noct_clock_second, 0);
 		return boot98_noct_run_file(&mounted_fs, &boot_environment,
 					    v[1], n - 2, &v[2],
-					    noct_key_read, noct_key_poll, 0);
+					    noct_key_read, noct_key_poll,
+					    noct_clock_second, 0);
 	}
+	if (streq(v[0], "emacs"))
+		return run_noct_application("REMACS", ".NB", n - 1, &v[1]);
 	if (streq(v[0], "noct-test")) {
 		int repeat;
 
@@ -1142,34 +1194,7 @@ static int command(char *s)
 	/* Unknown unqualified names resolve to NAME.NCT on the selected BOOT
 	 * filesystem.  C built-ins above always retain precedence, including
 	 * their argument-validation failures. */
-	{
-		char script_name[BOOT98_PATH_MAX];
-		unsigned length = 0;
-		const char *name = v[0];
-
-		while (name[length] != '\0') {
-			char ch = name[length];
-
-			if (ch == '.' || ch == '/' || ch == '\\' ||
-			    length + 5U >= sizeof(script_name))
-				return 0;
-			script_name[length] = ch >= 'a' && ch <= 'z' ?
-				(char)(ch - 'a' + 'A') : ch;
-			length++;
-		}
-		if (length == 0)
-			return 0;
-		script_name[length++] = '.';
-		script_name[length++] = 'N';
-		script_name[length++] = 'C';
-		script_name[length++] = 'T';
-		script_name[length] = '\0';
-		return boot98_noct_run_file(&mounted_fs, &boot_environment,
-					    script_name,
-					    n - 1, &v[1], noct_key_read,
-					    noct_key_poll, 0);
-	}
-	return 0;
+	return run_noct_application(v[0], ".NCT", n - 1, &v[1]);
 }
 
 /* Prefer a BOOT partition on the original boot device, then scan the rest. */

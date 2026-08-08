@@ -8,17 +8,16 @@
 #include "boot98-env.h"
 #include "boot98-fs.h"
 #include "boot98-noct.h"
+#include "boot98-noct-memory.h"
 #include "boot98-noct-napi.h"
 #include "boot98-noct-m6-script.h"
 #include "boot98-noct-platform.h"
 
+#include <noct/noct.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
-#define SCRIPT_ARENA_BASE 0x00100000U
-#define SCRIPT_ARENA_LIMIT 0x00f00000U
-#define SCRIPT_ARENA_GUARD 0x00010000U
 #define SCRIPT_HEAP_MIN (2U * 1024U * 1024U)
 
 static const char embedded_source[] = BOOT98_NOCT_M6_SOURCE;
@@ -27,6 +26,7 @@ struct target_context {
 	struct boot98_filesystem *filesystem;
 	boot98_noct_key_fn key_read;
 	boot98_noct_key_fn key_poll;
+	boot98_noct_clock_fn clock_second;
 	void *key_context;
 };
 
@@ -140,6 +140,21 @@ target_screen_put(void *context, unsigned row, unsigned column,
 }
 
 static int
+target_screen_put_utf8(void *context, unsigned row, unsigned column,
+		       const char *text, unsigned length, uint8_t attribute)
+{
+	(void)context;
+	return boot98_console_put_utf8_at(row, column, text, length, attribute);
+}
+
+static int
+target_screen_clear_to_eol(void *context, unsigned row, unsigned column)
+{
+	(void)context;
+	return boot98_console_clear_to_eol_at(row, column);
+}
+
+static int
 target_screen_set_cursor(void *context, unsigned row, unsigned column)
 {
 	(void)context;
@@ -170,6 +185,15 @@ target_keyboard_poll(void *context)
 
 	return target->key_poll != NULL ? target->key_poll(target->key_context) :
 		-1;
+}
+
+static int
+target_clock_second(void *context)
+{
+	struct target_context *target = context;
+
+	return target->clock_second != NULL ?
+		target->clock_second(target->key_context) : -1;
 }
 
 static int
@@ -206,8 +230,7 @@ target_directory_read(void *context, const char *path, unsigned index,
 	struct boot98_dirent filesystem_entry;
 	size_t length;
 
-	if (target->filesystem == NULL || entry == NULL || path == NULL ||
-	    (path[0] != '\0' && !(path[0] == '/' && path[1] == '\0')))
+	if (target->filesystem == NULL || entry == NULL || path == NULL)
 		return -1;
 	if (!boot98_fs_readdir(target->filesystem, path, index,
 				 &filesystem_entry))
@@ -230,10 +253,13 @@ make_services(struct boot98_noct_services *services,
 	services->screen_clear = target_screen_clear;
 	services->screen_clear_row = target_screen_clear_row;
 	services->screen_put = target_screen_put;
+	services->screen_put_utf8 = target_screen_put_utf8;
+	services->screen_clear_to_eol = target_screen_clear_to_eol;
 	services->screen_set_cursor = target_screen_set_cursor;
 	services->screen_show_cursor = target_screen_show_cursor;
 	services->keyboard_poll = target_keyboard_poll;
 	services->keyboard_read = target_keyboard_read;
+	services->clock_second = target_clock_second;
 	services->file_size = target_file_size;
 	services->file_read = target_file_read;
 	services->directory_read = target_directory_read;
@@ -276,17 +302,22 @@ read_low_byte(uint32_t address)
 	return value;
 }
 
-static size_t
-script_arena_size(void)
+static uint16_t
+read_low_word(uint32_t address)
 {
-	uint32_t extended = (uint32_t)read_low_byte(0x401U) << 17;
-	uint32_t end = SCRIPT_ARENA_BASE + extended;
+	uint16_t value;
 
-	if (end < SCRIPT_ARENA_BASE || end > SCRIPT_ARENA_LIMIT)
-		end = SCRIPT_ARENA_LIMIT;
-	if (end <= SCRIPT_ARENA_BASE + SCRIPT_ARENA_GUARD)
-		return 0;
-	return end - SCRIPT_ARENA_BASE - SCRIPT_ARENA_GUARD;
+	__asm__ volatile ("movw (%1),%0" : "=r"(value) : "r"(address));
+	return value;
+}
+
+static int
+select_memory(struct boot98_noct_memory_profile *profile)
+{
+	uint32_t low_extended = (uint32_t)read_low_byte(0x401U) << 17;
+	uint32_t high_mib = read_low_word(0x594U);
+
+	return boot98_noct_select_memory(low_extended, high_mib, profile);
 }
 
 int
@@ -297,21 +328,20 @@ boot98_noct_run_embedded(unsigned repeat_count)
 	struct target_context target = { 0 };
 	struct boot98_console_state console_state;
 	struct boot98_noct_result result;
-	size_t arena_size;
+	struct boot98_noct_memory_profile memory;
 	unsigned iteration;
 
 	if (repeat_count == 0 || repeat_count > 100U)
 		return 0;
 	enable_high_memory();
 	make_services(&services, &target);
-	arena_size = script_arena_size();
-	if (arena_size < 2U * 1024U * 1024U) {
+	if (!select_memory(&memory)) {
 		console_string("Noct: insufficient script arena\n");
 		boot98_console_update_cursor();
 		return 0;
 	}
-	options.arena = (void *)SCRIPT_ARENA_BASE;
-	options.arena_size = arena_size;
+	options.arena = (void *)memory.arena_base;
+	options.arena_size = memory.arena_size;
 	options.fail_after = BOOT98_NOCT_NO_FAILURE;
 	options.jit_enable = 1;
 	options.jit_threshold = 1;
@@ -322,6 +352,7 @@ boot98_noct_run_embedded(unsigned repeat_count)
 	options.services = &services;
 	options.filesystem = NULL;
 	options.environment = NULL;
+	options.memory = &memory;
 	boot98_console_save_state(&console_state);
 	for (iteration = 0; iteration < repeat_count; iteration++) {
 		if (!boot98_noct_run("<embedded>", embedded_source, &options,
@@ -334,7 +365,7 @@ boot98_noct_run_embedded(unsigned repeat_count)
 			return 0;
 		}
 		if (result.current_after_reset != 0 ||
-		    result.jit_code_size != BOOT98_NOCT_JIT_CODE_MAX ||
+		    result.jit_code_size != memory.jit_code_size ||
 		    !result.jit_region_released) {
 			console_string("Noct M6 cleanup/JIT check failed\n");
 			boot98_console_update_cursor();
@@ -356,7 +387,8 @@ int
 boot98_noct_run_file(struct boot98_filesystem *filesystem,
 		     struct boot98_environment *environment, const char *path,
 		     int argc, char *const argv[], boot98_noct_key_fn key_read,
-		     boot98_noct_key_fn key_poll, void *key_context)
+		     boot98_noct_key_fn key_poll,
+		     boot98_noct_clock_fn clock_second, void *key_context)
 {
 	struct boot98_noct_options options;
 	struct boot98_noct_services services;
@@ -364,7 +396,7 @@ boot98_noct_run_file(struct boot98_filesystem *filesystem,
 	struct boot98_console_state console_state;
 	struct boot98_noct_result result;
 	struct boot98_file file;
-	size_t arena_size;
+	struct boot98_noct_memory_profile memory;
 	size_t source_area;
 	char *source;
 	int ok;
@@ -378,28 +410,32 @@ boot98_noct_run_file(struct boot98_filesystem *filesystem,
 		boot98_console_update_cursor();
 		return 0;
 	}
-	if (file.size > BOOT98_NOCT_SOURCE_MAX) {
-		console_string("Noct: source exceeds 256 KiB: ");
+	enable_high_memory();
+	target.filesystem = filesystem;
+	target.key_read = key_read;
+	target.key_poll = key_poll;
+	target.clock_second = clock_second;
+	target.key_context = key_context;
+	make_services(&services, &target);
+	if (!select_memory(&memory)) {
+		console_string("Noct: insufficient script arena\n");
+		boot98_console_update_cursor();
+		return 0;
+	}
+	if (file.size > memory.source_max) {
+		console_string("Noct: source exceeds memory profile limit: ");
 		console_string(path);
 		console_string("\n");
 		boot98_console_update_cursor();
 		return 0;
 	}
-
-	enable_high_memory();
-	target.filesystem = filesystem;
-	target.key_read = key_read;
-	target.key_poll = key_poll;
-	target.key_context = key_context;
-	make_services(&services, &target);
-	arena_size = script_arena_size();
 	source_area = ((size_t)file.size + 1U + 15U) & ~(size_t)15U;
-	if (arena_size < source_area + SCRIPT_HEAP_MIN) {
+	if (memory.arena_size < source_area + SCRIPT_HEAP_MIN) {
 		console_string("Noct: insufficient script arena\n");
 		boot98_console_update_cursor();
 		return 0;
 	}
-	source = (char *)(SCRIPT_ARENA_BASE + arena_size - source_area);
+	source = (char *)(memory.arena_base + memory.arena_size - source_area);
 	if (file.size != 0 &&
 	    !boot98_file_read(&file, 0, source, (uint32_t)file.size)) {
 		console_string("Noct: cannot read source: ");
@@ -410,8 +446,8 @@ boot98_noct_run_file(struct boot98_filesystem *filesystem,
 	}
 	source[(size_t)file.size] = '\0';
 
-	options.arena = (void *)SCRIPT_ARENA_BASE;
-	options.arena_size = arena_size - source_area;
+	options.arena = (void *)memory.arena_base;
+	options.arena_size = memory.arena_size - source_area;
 	options.fail_after = BOOT98_NOCT_NO_FAILURE;
 	options.jit_enable = 1;
 	options.jit_threshold = 1;
@@ -422,8 +458,17 @@ boot98_noct_run_file(struct boot98_filesystem *filesystem,
 	options.services = &services;
 	options.filesystem = filesystem;
 	options.environment = environment;
+	options.memory = &memory;
 	boot98_console_save_state(&console_state);
-	ok = boot98_noct_run_args(path, source, argc, argv, &options, &result);
+	if (file.size >= sizeof(NOCT_BYTECODE_HEADER) - 1U &&
+	    memcmp(source, NOCT_BYTECODE_HEADER,
+		   sizeof(NOCT_BYTECODE_HEADER) - 1U) == 0)
+		ok = boot98_noct_run_bytecode_args(path, (uint8_t *)source,
+						 (uint32_t)file.size, argc, argv,
+						 &options, &result);
+	else
+		ok = boot98_noct_run_args(path, source, argc, argv, &options,
+					  &result);
 	if (!ok) {
 		console_string("Noct: ");
 		console_string(boot98_noct_status_string(result.status));
@@ -440,14 +485,14 @@ int
 boot98_noct_run_repl(struct boot98_filesystem *filesystem,
 		     struct boot98_environment *environment,
 		     boot98_noct_key_fn key_read, boot98_noct_key_fn key_poll,
-		     void *key_context)
+		     boot98_noct_clock_fn clock_second, void *key_context)
 {
 	struct boot98_noct_options options;
 	struct boot98_noct_services services;
 	struct target_context target;
 	struct boot98_console_state console_state;
 	struct boot98_noct_result result;
-	size_t arena_size;
+	struct boot98_noct_memory_profile memory;
 	int ok;
 
 	if (key_read == NULL)
@@ -456,17 +501,17 @@ boot98_noct_run_repl(struct boot98_filesystem *filesystem,
 	target.filesystem = filesystem;
 	target.key_read = key_read;
 	target.key_poll = key_poll;
+	target.clock_second = clock_second;
 	target.key_context = key_context;
 	make_services(&services, &target);
-	arena_size = script_arena_size();
-	if (arena_size < SCRIPT_HEAP_MIN) {
+	if (!select_memory(&memory)) {
 		console_string("Noct: insufficient script arena\n");
 		boot98_console_update_cursor();
 		return 0;
 	}
 
-	options.arena = (void *)SCRIPT_ARENA_BASE;
-	options.arena_size = arena_size;
+	options.arena = (void *)memory.arena_base;
+	options.arena_size = memory.arena_size;
 	options.fail_after = BOOT98_NOCT_NO_FAILURE;
 	options.jit_enable = 1;
 	options.jit_threshold = 1;
@@ -477,6 +522,7 @@ boot98_noct_run_repl(struct boot98_filesystem *filesystem,
 	options.services = &services;
 	options.filesystem = filesystem;
 	options.environment = environment;
+	options.memory = &memory;
 	boot98_console_save_state(&console_state);
 	ok = boot98_noct_repl(&options, repl_read_line, &target, &result);
 	if (!ok) {

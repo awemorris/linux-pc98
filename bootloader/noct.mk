@@ -8,7 +8,9 @@
 
 NOCT_ROOT ?= ../third_party/noct
 NOCT_ENABLE_JIT ?= 1
-NOCT_JIT_CODE_MAX ?= 196608
+# Compile every PC98BE build with the largest supported reservation.  The
+# installed-RAM profile selects a smaller per-VM reservation at runtime.
+NOCT_JIT_CODE_MAX ?= 2097152
 NOCT_PROFILE := $(if $(filter 1,$(NOCT_ENABLE_JIT)),jit-$(NOCT_JIT_CODE_MAX),nojit)
 NOCT_BUILD_DIR ?= ../build/bootloader/noct-$(NOCT_PROFILE)
 NOCT_CC ?= $(CC)
@@ -33,7 +35,9 @@ NOCT_SOURCE_REL := \
 	src/core/regex.c \
 	src/core/objectmodel-st.c \
 	src/repl/repl.c \
-	src/api/api-file.c
+	src/api/api-file.c \
+	src/api/api-term-backend.c \
+	src/api/jisx0208.c
 
 NOCT_SOURCES := $(addprefix $(NOCT_ROOT)/,$(NOCT_SOURCE_REL))
 NOCT_CORE_SOURCES := $(filter $(NOCT_ROOT)/src/core/%,$(NOCT_SOURCES))
@@ -94,6 +98,11 @@ $(NOCT_BUILD_DIR)/%.o: $(NOCT_ROOT)/src/core/%.c
 		$(NOCT_WARNING_EXCEPTIONS) -c $< -o $@
 
 $(NOCT_BUILD_DIR)/api-%.o: $(NOCT_ROOT)/src/api/api-%.c
+	@mkdir -p $(NOCT_BUILD_DIR)
+	$(NOCT_CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) \
+		$(NOCT_WARNING_EXCEPTIONS) -c $< -o $@
+
+$(NOCT_BUILD_DIR)/jisx0208.o: $(NOCT_ROOT)/src/api/jisx0208.c
 	@mkdir -p $(NOCT_BUILD_DIR)
 	$(NOCT_CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) \
 		$(NOCT_WARNING_EXCEPTIONS) -c $< -o $@

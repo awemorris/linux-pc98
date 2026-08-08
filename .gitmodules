@@ -16,3 +16,6 @@
 [submodule "third_party/noct"]
 	path = third_party/noct
 	url = https://github.com/awemorris/NoctLang.git
+[submodule "third_party/remacs"]
+	path = third_party/remacs
+	url = https://github.com/awemorris/remacs.git

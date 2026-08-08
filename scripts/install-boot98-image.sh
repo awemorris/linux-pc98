@@ -42,7 +42,7 @@ case "$install_disk_stubs" in
 	0 | 1) ;;
 	*) echo "INSTALL_DISK_STUBS must be 0 or 1" >&2; exit 2 ;;
 esac
-for command in dd mattrib mcopy mformat python3; do
+for command in dd mattrib mcopy mformat mmd python3; do
 	command -v "$command" >/dev/null || { echo "$command is required" >&2; exit 1; }
 done
 
@@ -170,14 +170,24 @@ mcopy -o -i "$image@@$offset" "$bootloader/IO.SYS" ::IO.SYS
 mattrib -i "$image@@$offset" +r +h +s ::IO.SYS
 mcopy -o -i "$image@@$offset" "$stage2_image" ::BOOT.SYS
 mattrib -i "$image@@$offset" +r +h +s ::BOOT.SYS
+mmd -i "$image@@$offset" ::CMD 2>/dev/null || true
 if test -f "$bootloader/HELLO.NCT"; then
 	mcopy -o -i "$image@@$offset" "$bootloader/HELLO.NCT" ::HELLO.NCT
 fi
 for utility in LS.NCT CP.NCT; do
 	if test -f "$bootloader/$utility"; then
-		mcopy -o -i "$image@@$offset" "$bootloader/$utility" ::"$utility"
+		mcopy -o -i "$image@@$offset" "$bootloader/$utility" ::CMD/"$utility"
 	fi
 done
+remacs_nb="${REMACS_NB:-$repo/build/bootloader/remacs/REMACS.NB}"
+if test ! -s "$remacs_nb"; then
+	"$repo/scripts/build-remacs-bytecode.sh"
+fi
+test -s "$remacs_nb" || {
+	echo "Remacs bytecode not found: $remacs_nb" >&2
+	exit 1
+}
+mcopy -o -i "$image@@$offset" "$remacs_nb" ::CMD/REMACS.NB
 if test -n "$kernel"; then
 	mcopy -o -i "$image@@$offset" "$kernel" ::VMLINUX
 fi

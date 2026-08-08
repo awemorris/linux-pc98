@@ -5,7 +5,9 @@
  */
 
 #include "boot98-noct-napi.h"
+#include "boot98-beui.h"
 #include "boot98-noct.h"
+#include "boot98-noct-memory.h"
 #include "boot98-env.h"
 #include "libc/boot98-heap.h"
 
@@ -33,6 +35,7 @@ struct active_napi {
 	boot98_noct_write_fn write;
 	void *write_context;
 	size_t arena_size;
+	size_t source_max;
 	struct imported_source *imports;
 	struct boot98_environment *environment;
 };
@@ -568,6 +571,73 @@ out:
 }
 
 static bool
+cfunc_beui_init(NoctEnv *env)
+{
+	if (!boot98_beui_init()) {
+		noct_error(env, "BeUI.init is unavailable.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_beui_close(NoctEnv *env)
+{
+	boot98_beui_close();
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_beui_is_open(NoctEnv *env)
+{
+	return return_int(env, boot98_beui_is_open());
+}
+
+static bool
+cfunc_beui_get_width(NoctEnv *env)
+{
+	struct boot98_beui_display_info info;
+
+	if (!boot98_beui_get_display_info(&info)) {
+		noct_error(env, "BeUI is not initialized.");
+		return false;
+	}
+	return return_int(env, (int)info.width);
+}
+
+static bool
+cfunc_beui_get_height(NoctEnv *env)
+{
+	struct boot98_beui_display_info info;
+
+	if (!boot98_beui_get_display_info(&info)) {
+		noct_error(env, "BeUI is not initialized.");
+		return false;
+	}
+	return return_int(env, (int)info.height);
+}
+
+static bool
+cfunc_beui_poll(NoctEnv *env)
+{
+	if (!boot98_beui_poll()) {
+		noct_error(env, "BeUI.poll failed.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_beui_flush(NoctEnv *env)
+{
+	if (!boot98_beui_flush()) {
+		noct_error(env, "BeUI.flush failed.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
 make_directory_entry(NoctEnv *env, NoctValue *dictionary,
 		     NoctValue *scratch, const struct boot98_noct_dirent *entry)
 {
@@ -855,7 +925,7 @@ cfunc_system_import(NoctEnv *env)
 	    !services_ready() || active.services->file_size == NULL ||
 	    active.services->file_read == NULL ||
 	    !active.services->file_size(active.services->context, path, &size) ||
-	    size > BOOT98_NOCT_SOURCE_MAX)
+	    size > active.source_max)
 		goto error;
 	path_length = strlen(path);
 	if (path_length >= BOOT98_NOCT_PATH_MAX ||
@@ -981,6 +1051,17 @@ boot98_noct_napi_register(NoctEnv *env,
 		{ "Keyboard.isPrintable", "isPrintable", 1, { "code" },
 		  cfunc_keyboard_is_printable },
 	};
+	static struct api_item beui[] = {
+		{ "BeUI.init", "init", 0, { NULL }, cfunc_beui_init },
+		{ "BeUI.close", "close", 0, { NULL }, cfunc_beui_close },
+		{ "BeUI.isOpen", "isOpen", 0, { NULL }, cfunc_beui_is_open },
+		{ "BeUI.getWidth", "getWidth", 0, { NULL },
+		  cfunc_beui_get_width },
+		{ "BeUI.getHeight", "getHeight", 0, { NULL },
+		  cfunc_beui_get_height },
+		{ "BeUI.poll", "poll", 0, { NULL }, cfunc_beui_poll },
+		{ "BeUI.flush", "flush", 0, { NULL }, cfunc_beui_flush },
+	};
 	static struct api_item directory[] = {
 		{ "Directory.list", "list", 1, { "path" },
 		  cfunc_directory_list },
@@ -1011,9 +1092,13 @@ boot98_noct_napi_register(NoctEnv *env,
 	active.write = options->write;
 	active.write_context = options->write_context;
 	active.arena_size = options->arena_size;
+	active.source_max = options->memory != NULL ?
+		options->memory->source_max : BOOT98_NOCT_SOURCE_MAX;
 	active.imports = NULL;
 	active.environment = options->environment;
-	if (!register_intrinsics(env, intrinsics,
+	if (!boot98_beui_bind(options->services != NULL ?
+				options->services->beui : NULL) ||
+	    !register_intrinsics(env, intrinsics,
 				 sizeof(intrinsics) / sizeof(intrinsics[0])) ||
 	    !register_module(env, "Console", console,
 			     sizeof(console) / sizeof(console[0])) ||
@@ -1021,6 +1106,8 @@ boot98_noct_napi_register(NoctEnv *env,
 			     sizeof(screen) / sizeof(screen[0])) ||
 	    !register_module(env, "Keyboard", keyboard,
 			     sizeof(keyboard) / sizeof(keyboard[0])) ||
+	    !register_module(env, "BeUI", beui,
+			     sizeof(beui) / sizeof(beui[0])) ||
 	    !register_key_dictionary(env) ||
 	    !register_module(env, "Directory", directory,
 			     sizeof(directory) / sizeof(directory[0])) ||
@@ -1036,6 +1123,9 @@ void
 boot98_noct_napi_cleanup(void)
 {
 	struct imported_source *source = active.imports;
+
+	/* Restores text mode even when a script raises or omits BeUI.close(). */
+	boot98_beui_cleanup();
 
 	while (source != NULL) {
 		struct imported_source *next = source->next;

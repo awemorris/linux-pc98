@@ -7,13 +7,13 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 image = bytearray(path.read_bytes())
-max_image_size = 256 * 1024
+max_image_size = 320 * 1024
 
 if len(image) < 20 or image[:4] != b"B98S":
     raise SystemExit("invalid BOOT98 Stage 2 image")
 
 if len(image) > max_image_size:
-    raise SystemExit("BOOT98 Stage 2 image exceeds 256 KiB")
+    raise SystemExit("BOOT98 Stage 2 image exceeds 320 KiB")
 
 version, header_size = struct.unpack_from("<HH", image, 4)
 image_size, entry_offset = struct.unpack_from("<II", image, 8)

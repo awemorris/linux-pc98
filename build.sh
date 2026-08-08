@@ -12,6 +12,8 @@ Primary commands:
   setup [options]             install Debian 13 host build/test dependencies
   bootloader                  build IPL and BOOT98 binaries
   bootloader-dist             build build/releases/bootloader.zip
+  remacs                      build CMD/REMACS.NB with the pinned Noct compiler
+  remacs-test                 run the bytecode editor under headless QEMU
   noct COMMAND                build or verify the imported Noct core
   boot-install [options]      destructively create a BOOT partition environment
   dos-loader                  rebuild LINUX98.EXE and INST.EXE (OpenWatcom)
@@ -204,6 +206,8 @@ case "$command" in
 	setup) "$repo/scripts/setup.sh" "$@" ;;
 	bootloader) make -C "$repo/bootloader" "$@" ;;
 	bootloader-dist) "$repo/scripts/build-bootloader-dist.sh" "$@" ;;
+	remacs) "$repo/scripts/build-remacs-bytecode.sh" "$@" ;;
+	remacs-test) "$repo/scripts/test-boot98-remacs.sh" "$@" ;;
 	noct) build_noct "$@" ;;
 	boot-install) "$repo/scripts/install-boot98-image.sh" "$@" ;;
 	dos-loader) make -C "$repo/bootloader/dos" "$@" ;;

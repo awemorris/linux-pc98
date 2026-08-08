@@ -11,8 +11,8 @@ SECTIONS
 	__bss_start = .;
 	.bss : { *(.bss*) *(COMMON) }
 	__bss_end = .;
-	ASSERT(__image_end - 0x00020000 <= 0x00040000,
-	       "BOOT.SYS load image exceeds 256 KiB")
-	ASSERT(__bss_end <= 0x00070000,
+	ASSERT(__image_end - 0x00020000 <= 0x00050000,
+	       "BOOT.SYS load image exceeds 320 KiB")
+	ASSERT(__bss_end <= 0x00080000,
 	       "BOOT.SYS image and BSS overlap boot parameters")
 }

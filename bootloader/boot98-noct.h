@@ -12,6 +12,7 @@
 
 struct boot98_filesystem;
 struct boot98_environment;
+struct boot98_noct_memory_profile;
 
 #define BOOT98_NOCT_NO_FAILURE ((size_t)-1)
 #define BOOT98_NOCT_REPL_LINE_MAX 256U
@@ -61,6 +62,7 @@ struct boot98_noct_options {
 	const struct boot98_noct_services *services;
 	struct boot98_filesystem *filesystem;
 	struct boot98_environment *environment;
+	const struct boot98_noct_memory_profile *memory;
 };
 
 struct boot98_noct_result {
@@ -78,6 +80,11 @@ int boot98_noct_run_args(const char *source_name, const char *source,
 			 int argc, char *const argv[],
 			 const struct boot98_noct_options *options,
 			 struct boot98_noct_result *result);
+int boot98_noct_run_bytecode_args(const char *program_name, uint8_t *bytecode,
+				  uint32_t bytecode_size, int argc,
+				  char *const argv[],
+				  const struct boot98_noct_options *options,
+				  struct boot98_noct_result *result);
 int boot98_noct_run(const char *source_name, const char *source,
 		    const struct boot98_noct_options *options,
 		    struct boot98_noct_result *result);

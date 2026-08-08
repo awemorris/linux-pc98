@@ -30,6 +30,7 @@ NOCT_SOURCE_REL := \
 	src/core/execution.c \
 	src/core/gc.c \
 	src/core/intrinsics.c \
+	src/core/regex.c \
 	src/core/objectmodel-st.c \
 	src/repl/repl.c \
 	src/api/api-file.c

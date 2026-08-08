@@ -231,6 +231,11 @@ static int translate_key(int bios_key)
 	unsigned shift = ((unsigned)bios_key >> 16) & 0xffU;
 	int key = boot98_key_normalize_bios_ax((uint16_t)bios_key);
 
+	/* INT 18h returns modifier make events as ordinary extended keys on
+	 * PC-98.  They describe keyboard state; they are not editor input. */
+	if (key == 0x170 || key == 0x173 || key == 0x174) /* Shift, Graph, Ctrl */
+		return -1;
+
 	switch (key) {
 	case BOOT98_KEY_BACKSPACE:
 		return 0x7f;
@@ -315,25 +320,40 @@ static int read_meta_suffix(struct target_term *term)
 static int term_read_key(void *context, int timeout_ms)
 {
 	struct target_term *term = context;
-	int key = -1;
-	int translated;
+	int allow_blocking = timeout_ms >= 1000;
 
 	if (term->services == NULL || term->services->keyboard_read == NULL)
 		return -1;
-	if (term->services->keyboard_poll != NULL &&
-	    term->services->keyboard_poll(term->services->context) >= 0)
-		key = term->services->keyboard_read(term->services->context);
-	else if (timeout_ms != 0)
-		key = term->services->keyboard_read(term->services->context);
-	if (key < 0)
-		return -1;
-	translated = translate_key(key);
-	if (translated == 0x1b) {
-		key = read_meta_suffix(term);
-		if (key >= 0)
-			return NOCT_TERM_MOD_META | translate_key(key);
+	for (;;) {
+		int key = -1;
+		int translated;
+
+		if (term->services->keyboard_poll != NULL &&
+		    term->services->keyboard_poll(term->services->context) >= 0)
+			key = term->services->keyboard_read(term->services->context);
+		/* The PC-98 BIOS offers a blocking read and a poll, but no
+		 * millisecond timeout. Remacs uses a 20 ms grace read after each
+		 * human keystroke to coalesce pasted input. Turning that grace read
+		 * into a blocking BIOS call leaves every typed character waiting for
+		 * the next one. Preserve blocking behavior only for the normal
+		 * one-second event-loop wait. */
+		else if (allow_blocking)
+			key = term->services->keyboard_read(term->services->context);
+		if (key < 0)
+			return -1;
+		translated = translate_key(key);
+		if (translated < 0) {
+			/* A modifier-only event may precede the printable key in the
+			 * same BIOS queue. Consume it and keep looking. */
+			continue;
+		}
+		if (translated == 0x1b) {
+			key = read_meta_suffix(term);
+			if (key >= 0)
+				return NOCT_TERM_MOD_META | translate_key(key);
+		}
+		return translated;
 	}
-	return translated;
 }
 
 static int term_pending_input(void *context)

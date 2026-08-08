@@ -487,6 +487,29 @@ build_deps()
     log "Target dependency prefix is ready: $ROOT_DIR"
 }
 
+sync_pc98_bios_blobs()
+{
+    local bios_dir="$QEMU_SOURCE_DIR/roms/pc98bios"
+    local pc_bios_dir="$QEMU_SOURCE_DIR/pc-bios"
+    local name
+
+    [[ -f "$bios_dir/Makefile" ]] ||
+        die "PC-98 compatible BIOS source not found: $bios_dir"
+    log "Rebuilding and synchronizing PC-98 compatible BIOS blobs"
+    make -C "$bios_dir" all
+    for name in pc98itf.bin pc98ide.bin pc98scsi.bin pc98pci.bin \
+                pc98bios.bin pc98basic.bin; do
+        cp -p "$bios_dir/$name" "$pc_bios_dir/$name"
+    done
+    # pc98font.bin is a tracked generated asset.  Its upstream BDF is not
+    # shipped in the source tree, so do not make an ordinary QEMU build depend
+    # on regenerating the font from the absent source archive.
+    [[ -f "$bios_dir/pc98font.bin" ]] ||
+        die "tracked PC-98 font blob not found: $bios_dir/pc98font.bin"
+    cp -p "$bios_dir/pc98font.bin" "$pc_bios_dir/pc98font.bin"
+    rm -f -- "$bios_dir"/*.o "$bios_dir"/*.img
+}
+
 build_qemu()
 {
     local arch
@@ -499,6 +522,10 @@ build_qemu()
         die "QEMU source tree not found at $QEMU_SOURCE_DIR"
     [[ -f "$ROOT_DIR/lib/pkgconfig/glib-2.0.pc" ]] ||
         die "target dependencies are not built (run: $0 deps)"
+    # QEMU installs ROMs from pc-bios/.  Keep that directory synchronized
+    # with the authoritative assembly sources before every Windows build so
+    # a stale compatible BIOS cannot silently enter a release archive.
+    sync_pc98_bios_blobs
     prepare_qemu_subprojects
 
     log "Configuring QEMU for Windows x86-64"

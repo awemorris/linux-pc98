@@ -237,7 +237,7 @@ struct mock_platform {
 	const char *keyboard_input;
 	size_t keyboard_position;
 	int keyboard_bios_key;
-	int keyboard_bios_queue[4];
+	int keyboard_bios_queue[7];
 	size_t keyboard_bios_count;
 	size_t keyboard_bios_position;
 	int beui_enter_count;
@@ -1037,12 +1037,16 @@ main(int argc, char **argv)
 		return 250 + status;
 	memset(&mock, 0, sizeof(mock));
 	mock.keyboard_bios_key = 0x3b00;
-	mock.keyboard_bios_queue[0] = 0x001b;
-	mock.keyboard_bios_queue[1] = 0x0078;
-	mock.keyboard_bios_queue[2] = 0x0003;
+	/* Modifier-only BIOS make events must not reach Term.readKey(). */
+	mock.keyboard_bios_queue[0] = 0x7000; /* Shift */
+	mock.keyboard_bios_queue[1] = 0x7300; /* Graph (PC/AT Alt) */
+	mock.keyboard_bios_queue[2] = 0x7400; /* Ctrl */
+	mock.keyboard_bios_queue[3] = 0x001b;
+	mock.keyboard_bios_queue[4] = 0x0078;
+	mock.keyboard_bios_queue[5] = 0x0003;
 	/* BL shift-state bit 4 is packed into bits 23:16 by Stage 1. */
-	mock.keyboard_bios_queue[3] = 0x00100020;
-	mock.keyboard_bios_count = 4;
+	mock.keyboard_bios_queue[6] = 0x00100020;
+	mock.keyboard_bios_count = 7;
 	status = run_case_args(term_script, 0, NULL, 0, BOOT98_NOCT_OK, 0,
 			       "", &result);
 	if (status != 0)

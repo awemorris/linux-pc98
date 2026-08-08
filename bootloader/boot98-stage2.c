@@ -25,6 +25,10 @@
 #define PC98_SETUP_NODE_SIZE 32U
 #define STARTUP_TIMEOUT_SECONDS 1
 #define MAX_FIXED_DEVICES 12
+#define PC98_WA_SCSI_TARGETS 0x0482U
+#define PC98_WA_SCSI_ROM0 0x04b2U
+#define PC98_WA_SCSI_ROM1 0x04baU
+#define PC98_WA_SCSI_ROM2 0x04bcU
 
 /*
  * Stage 2 runs without a C library or operating-system services.  The request
@@ -635,6 +639,44 @@ static int device_is_known(uint8_t device_class, uint8_t bios_id)
 	return 0;
 }
 
+static uint8_t bios_workarea_byte(uint32_t address)
+{
+	uint8_t value;
+
+	asm volatile("movb (%1),%0" : "=q"(value) : "r"(address) : "memory");
+	return value;
+}
+
+/*
+ * 0:0482 is only a target-presence bitmap after a SCSI disk ROM has
+ * registered itself.  On machines without a SCSI BIOS the byte is ordinary
+ * BIOS work RAM and may contain stale nonzero bits.  Calling INT 1Bh/AH=84h
+ * on that basis can enter an absent extension and never return, leaving the
+ * keyboard unusable while the startup probe appears stuck at SCSI 8.
+ *
+ * The NEC disk-ROM registration bytes contain the option-ROM segment high
+ * byte.  A SCSI device handed to us by the preceding boot stages is also
+ * sufficient evidence: the firmware has already serviced that device.
+ */
+static int scsi_bios_available(void)
+{
+	static const uint32_t registration[] = {
+		PC98_WA_SCSI_ROM0, PC98_WA_SCSI_ROM1, PC98_WA_SCSI_ROM2,
+	};
+
+	for (unsigned i = 0; i < device_count; i++)
+		if (devs[i].device_class == BOOT98_DEV_SCSI)
+			return 1;
+	for (unsigned i = 0; i < sizeof(registration) / sizeof(registration[0]);
+	     i++) {
+		uint8_t segment_high = bios_workarea_byte(registration[i]);
+
+		if (segment_high != 0x00 && segment_high != 0xff)
+			return 1;
+	}
+	return 0;
+}
+
 /* Probe exactly one BIOS unit.  A nonnegative result is the new list index. */
 static int probe_fixed_device(uint8_t device_class, uint8_t bios_id)
 {
@@ -645,7 +687,9 @@ static int probe_fixed_device(uint8_t device_class, uint8_t bios_id)
 	    device_is_known(device_class, bios_id))
 		return -1;
 	if (device_class == BOOT98_DEV_SCSI) {
-		asm volatile("movb 0x0482,%0" : "=q"(scsi_bitmap));
+		if (!scsi_bios_available())
+			return -1;
+		scsi_bitmap = bios_workarea_byte(PC98_WA_SCSI_TARGETS);
 		if (!(scsi_bitmap & (1U << (bios_id - 0xa0))))
 			return -1;
 	}

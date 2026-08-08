@@ -16,6 +16,8 @@ monitor="$work/monitor.sock"
 menu_screenshot="$work/autoexec-emacs-menu.ppm"
 emacs_screenshot="$work/autoexec-remacs.ppm"
 text_vram="$work/autoexec-remacs-text-vram.bin"
+single_key_vram="$work/autoexec-remacs-single-key.bin"
+wide_cursor_attr="$work/autoexec-remacs-wide-cursor-attr.bin"
 qemu_debug="$work/qemu-debug.log"
 
 test -x "$qemu" || { echo "QEMU not found: $qemu" >&2; exit 1; }
@@ -52,7 +54,8 @@ else:
 PY
 )"
 
-rm -f -- "$monitor" "$menu_screenshot" "$emacs_screenshot" "$text_vram" "$qemu_debug"
+rm -f -- "$monitor" "$menu_screenshot" "$emacs_screenshot" "$text_vram" \
+	"$single_key_vram" "$wide_cursor_attr" "$qemu_debug"
 "$qemu" -M pc9821 -cpu "$cpu" -m 16 -accel tcg -L "$bios_dir" \
 	-nic none -drive "if=ide,bus=0,unit=0,format=raw,file=$image" \
 	-display none -serial none -qmp "unix:$monitor,server=on,wait=off" \
@@ -68,13 +71,14 @@ cleanup()
 }
 trap cleanup EXIT INT TERM
 
-if ! python3 - "$monitor" "$menu_screenshot" "$emacs_screenshot" "$text_vram" <<'PY'
+if ! python3 - "$monitor" "$menu_screenshot" "$emacs_screenshot" \
+	"$text_vram" "$single_key_vram" "$wide_cursor_attr" <<'PY'
 import json
 import socket
 import sys
 import time
 
-monitor, menu_screenshot, emacs_screenshot, text_vram = sys.argv[1:]
+monitor, menu_screenshot, emacs_screenshot, text_vram, single_key_vram, wide_cursor_attr = sys.argv[1:]
 client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 deadline = time.monotonic() + 20
 while True:
@@ -144,7 +148,25 @@ press("ret")
 # AUTOEXEC returns, BOOT_ACTION is consumed, and the 386 JIT initializes the
 # complete Remacs bytecode.  Keep this generous enough for TCG and real 386s.
 time.sleep(45)
-type_text("boots")
+# One ordinary key must be redrawn without waiting indefinitely for a second
+# key.  This catches a finite Term.readKey(20) being mapped to BIOS blocking
+# input, which made interactive Remacs appear several seconds behind.
+# Modifier-only make/break events must not become editor input.
+press("shift")
+press("ctrl")
+press("alt")
+# Exercise the compatible BIOS IRQ-path Shift conversion, not only the
+# modifier filtering in the 32-bit Term adapter.
+press("b", modifier="shift")
+time.sleep(.5)
+qmp("pmemsave", {"val": 0xa0000, "size": 2,
+                  "filename": single_key_vram})
+type_text("oots")
+time.sleep(.5)
+# The cursor now precedes the first Japanese glyph at row 0, column 5.  PC-98
+# hardware cursor width is one cell, so Boots must reverse both attribute cells.
+qmp("pmemsave", {"val": 0xa2000 + 5 * 2, "size": 4,
+                  "filename": wide_cursor_attr})
 emacs_command("save-buffer")
 time.sleep(1)
 qmp("screendump", {"filename": emacs_screenshot})
@@ -172,12 +194,19 @@ rm -f -- "$monitor"
 
 rm -f -- "$work/EDIT-SAVED.TXT"
 mcopy -i "$image@@$offset" ::EDIT.TXT "$work/EDIT-SAVED.TXT"
-python3 - "$work/EDIT-SAVED.TXT" "$menu_screenshot" "$emacs_screenshot" <<'PY'
+python3 - "$work/EDIT-SAVED.TXT" "$menu_screenshot" "$emacs_screenshot" \
+	"$single_key_vram" "$wide_cursor_attr" <<'PY'
 import sys
 
 saved = open(sys.argv[1], "rb").read()
-if b"boots" not in saved or "日本語表示テスト".encode() not in saved:
-    raise SystemExit("Remacs did not preserve Japanese text and the edit")
+expected = "Boots日本語表示テスト\n".encode()
+if saved != expected:
+    raise SystemExit(f"Remacs modifier/input mismatch: {saved.hex()}")
+if open(sys.argv[4], "rb").read(2) != b"B\0":
+    raise SystemExit("Remacs did not redraw a single key promptly")
+attributes = open(sys.argv[5], "rb").read()
+if len(attributes) != 4 or not (attributes[0] & 4 and attributes[2] & 4):
+    raise SystemExit(f"Japanese cursor did not cover both cells: {attributes.hex()}")
 
 def ppm(path):
     data = open(path, "rb").read()

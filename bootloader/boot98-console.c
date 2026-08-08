@@ -17,6 +17,9 @@ static enum boot98_console_mode console_mode;
 static unsigned cursor_row;
 static unsigned cursor_column;
 static int cursor_visible;
+static int software_cursor_drawn;
+static unsigned software_cursor_offset;
+static uint8_t software_cursor_attribute[2];
 
 static uint8_t port_in8(uint16_t port)
 {
@@ -45,11 +48,24 @@ static int gdc_write(uint16_t port, uint8_t value)
 	return 1;
 }
 
+static void software_cursor_remove(void)
+{
+	if (!software_cursor_drawn)
+		return;
+	attribute_vram[software_cursor_offset * 2U] =
+		software_cursor_attribute[0];
+	attribute_vram[(software_cursor_offset + 1U) * 2U] =
+		software_cursor_attribute[1];
+	software_cursor_drawn = 0;
+}
+
 static void write_cell(unsigned row, unsigned column, uint16_t code,
 		       uint8_t attribute)
 {
 	unsigned offset = row * BOOT98_CONSOLE_COLUMNS + column;
 
+	/* A double-cell software cursor may cover the cell being rewritten. */
+	software_cursor_remove();
 	text_vram[offset] = code;
 	attribute_vram[offset * 2] = attribute;
 }
@@ -443,11 +459,37 @@ void boot98_console_set_mode(enum boot98_console_mode mode)
 void boot98_console_update_cursor(void)
 {
 	unsigned address = cursor_row * BOOT98_CONSOLE_COLUMNS + cursor_column;
+	int wide = 0;
+
+	software_cursor_remove();
+	if (cursor_visible && cursor_column + 1U < BOOT98_CONSOLE_COLUMNS) {
+		uint16_t left = text_vram[address];
+		uint16_t right = text_vram[address + 1U];
+
+		wide = !(left & 0x8000U) && (right & 0x8000U) &&
+			((left & 0x7fffU) == (right & 0x7fffU));
+	}
 
 	if (!gdc_write(0x62, 0x4b) ||
-	    !gdc_write(0x60, cursor_visible ? 0x8f : 0x0f) ||
+	    !gdc_write(0x60, cursor_visible && !wide ? 0x8f : 0x0f) ||
 	    !gdc_write(0x60, 0x20) ||
-	    !gdc_write(0x60, 0x7b) ||
+	    !gdc_write(0x60, 0x7b))
+		return;
+	/* The uPD7220 cursor form controls only vertical raster shape.  Render a
+	 * full-width Japanese cursor by reversing both text cells while leaving
+	 * the one-cell hardware cursor hidden. */
+	if (wide) {
+		software_cursor_offset = address;
+		software_cursor_attribute[0] = attribute_vram[address * 2U];
+		software_cursor_attribute[1] = attribute_vram[(address + 1U) * 2U];
+		attribute_vram[address * 2U] =
+			software_cursor_attribute[0] ^ 0x04U;
+		attribute_vram[(address + 1U) * 2U] =
+			software_cursor_attribute[1] ^ 0x04U;
+		software_cursor_drawn = 1;
+		return;
+	}
+	if (!cursor_visible ||
 	    !gdc_write(0x62, 0x49) ||
 	    !gdc_write(0x60, (uint8_t)address))
 		return;

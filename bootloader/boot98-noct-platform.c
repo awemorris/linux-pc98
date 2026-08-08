@@ -5,6 +5,7 @@
  */
 
 #include "boot98-console.h"
+#include "boot98-env.h"
 #include "boot98-fs.h"
 #include "boot98-noct.h"
 #include "boot98-noct-napi.h"
@@ -320,6 +321,7 @@ boot98_noct_run_embedded(unsigned repeat_count)
 	options.jit_context = NULL;
 	options.services = &services;
 	options.filesystem = NULL;
+	options.environment = NULL;
 	boot98_console_save_state(&console_state);
 	for (iteration = 0; iteration < repeat_count; iteration++) {
 		if (!boot98_noct_run("<embedded>", embedded_source, &options,
@@ -351,7 +353,8 @@ boot98_noct_run_embedded(unsigned repeat_count)
 }
 
 int
-boot98_noct_run_file(struct boot98_filesystem *filesystem, const char *path,
+boot98_noct_run_file(struct boot98_filesystem *filesystem,
+		     struct boot98_environment *environment, const char *path,
 		     int argc, char *const argv[], boot98_noct_key_fn key_read,
 		     boot98_noct_key_fn key_poll, void *key_context)
 {
@@ -418,6 +421,7 @@ boot98_noct_run_file(struct boot98_filesystem *filesystem, const char *path,
 	options.jit_context = NULL;
 	options.services = &services;
 	options.filesystem = filesystem;
+	options.environment = environment;
 	boot98_console_save_state(&console_state);
 	ok = boot98_noct_run_args(path, source, argc, argv, &options, &result);
 	if (!ok) {
@@ -434,6 +438,7 @@ boot98_noct_run_file(struct boot98_filesystem *filesystem, const char *path,
 
 int
 boot98_noct_run_repl(struct boot98_filesystem *filesystem,
+		     struct boot98_environment *environment,
 		     boot98_noct_key_fn key_read, boot98_noct_key_fn key_poll,
 		     void *key_context)
 {
@@ -471,6 +476,7 @@ boot98_noct_run_repl(struct boot98_filesystem *filesystem,
 	options.jit_context = NULL;
 	options.services = &services;
 	options.filesystem = filesystem;
+	options.environment = environment;
 	boot98_console_save_state(&console_state);
 	ok = boot98_noct_repl(&options, repl_read_line, &target, &result);
 	if (!ok) {

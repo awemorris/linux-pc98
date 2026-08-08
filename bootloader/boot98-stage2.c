@@ -7,6 +7,7 @@
 
 #include "boot98-abi.h"
 #include "boot98-console.h"
+#include "boot98-env.h"
 #include "boot98-fat16.h"
 #include "boot98-fs.h"
 #include "boot98-image.h"
@@ -74,6 +75,7 @@ struct startup_state {
 	unsigned timeout_budget;
 };
 static struct boot98_filesystem mounted_fs;
+static struct boot98_environment boot_environment;
 static struct part parts[MAX_PARTS];
 static int curdev = -1, curpart = -1;
 static char kernel_name[BOOT98_PATH_MAX], kernel_arg[256];
@@ -932,9 +934,35 @@ static int command(char *s)
 	}
 #endif
 	if (streq(v[0], "help")) {
-		puts("help echo pause wait devalias probe-ide probe-scsi "
+		puts("help echo env set unset pause wait devalias probe-ide probe-scsi "
 		     "disk part ls cat source kernel arg boot linux "
 		     "run iplware noct noct-test reboot halt\n");
+		return 1;
+	}
+	if (streq(v[0], "env")) {
+		if (n != 1)
+			return 0;
+		for (size_t index = 0;
+		     index < boot98_env_count(&boot_environment); index++) {
+			const char *name;
+			const char *value;
+
+			if (!boot98_env_at(&boot_environment, index, &name, &value))
+				return 0;
+			puts(name);
+			putc('=');
+			puts(value);
+			putc('\n');
+		}
+		return 1;
+	}
+	if (streq(v[0], "set"))
+		return n == 3 &&
+		       boot98_env_set(&boot_environment, v[1], v[2]);
+	if (streq(v[0], "unset")) {
+		if (n != 2 || !boot98_env_name_valid(v[1]))
+			return 0;
+		(void)boot98_env_unset(&boot_environment, v[1]);
 		return 1;
 	}
 	if (streq(v[0], "echo")) {
@@ -1094,9 +1122,11 @@ static int command(char *s)
 		return n >= 2 && run_applet(v[1], n - 2, &v[2]);
 	if (streq(v[0], "noct")) {
 		if (n == 1)
-			return boot98_noct_run_repl(&mounted_fs, noct_key_read,
+			return boot98_noct_run_repl(&mounted_fs,
+						    &boot_environment, noct_key_read,
 						    noct_key_poll, 0);
-		return boot98_noct_run_file(&mounted_fs, v[1], n - 2, &v[2],
+		return boot98_noct_run_file(&mounted_fs, &boot_environment,
+					    v[1], n - 2, &v[2],
 					    noct_key_read, noct_key_poll, 0);
 	}
 	if (streq(v[0], "noct-test")) {
@@ -1134,7 +1164,8 @@ static int command(char *s)
 		script_name[length++] = 'C';
 		script_name[length++] = 'T';
 		script_name[length] = '\0';
-		return boot98_noct_run_file(&mounted_fs, script_name,
+		return boot98_noct_run_file(&mounted_fs, &boot_environment,
+					    script_name,
 					    n - 1, &v[1], noct_key_read,
 					    noct_key_poll, 0);
 	}
@@ -1488,6 +1519,7 @@ void boot98_main(const struct boot98_handoff *h)
 	}
 	devs = discovered_devices;
 	gw = (boot98_bios_gateway_t)h->bios_gateway;
+	boot98_env_init(&boot_environment);
 	for (;;) {
 		struct startup_state startup;
 

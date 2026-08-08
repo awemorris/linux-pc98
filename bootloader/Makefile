@@ -12,8 +12,13 @@ include libc/libc.mk
 include softfloat/softfloat.mk
 include noct.mk
 
+# Milestone verification nests QEMU tests.  Keep those chains ordered even
+# when the caller requests a highly parallel compile.
+.NOTPARALLEL: noct-m9-verify noct-m10-verify noct-m11-verify \
+	noct-m14-verify noct-m15-verify
+
 STAGE2_OBJS := boot98-stage2-entry.o boot98-stage2.o boot98-console.o \
-	boot98-fs.o \
+	boot98-env.o boot98-fs.o \
 	boot98-fat.o boot98-fat16.o boot98-image.o \
 	boot98-noct.o boot98-noct-napi.o boot98-noct-platform.o \
 	$(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) $(BOOT98_SOFTFLOAT_OBJECTS)
@@ -141,6 +146,9 @@ boot98-stage2-m9-test.o: boot98-stage2.c boot98-abi.h boot98-console.h \
 boot98-console.o: boot98-console.c boot98-console.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
+boot98-env.o: boot98-env.c boot98-env.h
+	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
+
 boot98-fs.o: boot98-fs.c boot98-fs.h
 	$(CC) $(STAGE2_CFLAGS) -c $< -o $@
 
@@ -158,12 +166,12 @@ boot98-noct.o: boot98-noct.c boot98-noct.h boot98-noct-napi.h \
 	$(CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) -c $< -o $@
 
 boot98-noct-napi.o: boot98-noct-napi.c boot98-noct-napi.h boot98-noct.h \
-	libc/boot98-heap.h
+	boot98-env.h libc/boot98-heap.h
 	$(CC) $(NOCT_CPPFLAGS) $(NOCT_CFLAGS) -c $< -o $@
 
 boot98-noct-platform.o: boot98-noct-platform.c boot98-noct-platform.h \
 	boot98-noct.h boot98-noct-napi.h boot98-noct-m6-script.h \
-	boot98-console.h boot98-fs.h
+	boot98-console.h boot98-env.h boot98-fs.h
 	$(CC) $(BOOT98_LIBC_CPPFLAGS) -I. $(BOOT98_LIBC_CFLAGS) -c $< -o $@
 
 boot98-stage2.elf: $(STAGE2_OBJS) boot98-stage2.ld
@@ -232,16 +240,20 @@ boot98-stdio-fs-host-test: $(BOOT98_STDIO_FS_TEST)
 
 BOOT98_NOCT_TEST := ../build/bootloader/tests/boot98-noct-host-test
 
+tests/boot98-env-host-test: tests/boot98-env-host-test.c boot98-env.c \
+	boot98-env.h
+	$(HOSTCC) -Wall -Wextra -Werror -I. boot98-env.c $< -o $@
+
 $(BOOT98_NOCT_TEST): tests/boot98-noct-host-test.c \
 	LS.NCT CP.NCT \
 	boot98-noct-m6-script.h boot98-noct.o boot98-noct-napi.o \
-	boot98-fs.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
+	boot98-env.o boot98-fs.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
 	$(BOOT98_SOFTFLOAT_OBJECTS)
 	@mkdir -p $(dir $@)
 	$(HOSTCC) -m32 -no-pie -fno-builtin -fno-stack-protector -Wall -Wextra \
 		-Werror -I. -Ilibc/include -Ilibc -I$(NOCT_ROOT)/include \
 	tests/boot98-noct-host-test.c boot98-noct.o boot98-noct-napi.o \
-		boot98-fs.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
+		boot98-env.o boot98-fs.o $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
 		$(BOOT98_SOFTFLOAT_OBJECTS) -o $@
 
 NOCT_M6_JIT_CODE := ../build/logs/boot98-m6-jit-code.bin
@@ -315,23 +327,32 @@ noct-m11-verify: noct-m10-verify check BOOT.SYS \
 	noct-m5-final-opcode-check boot98-noct-utilities-qemu-test
 	@echo "PC98BE M11 safe utilities verification: PASS (LS.NCT and CP.NCT)"
 
+boot98-noct-env-qemu-test: BOOT.SYS
+	$(SCRIPTS_DIR)/test-boot98-noct-env.sh
+
+noct-m14-verify: noct-m11-verify check BOOT.SYS \
+	noct-m5-final-opcode-check boot98-noct-env-qemu-test
+	@echo "Boots M14 verification: PASS (environment and intrinsic APIs)"
+
 boot98-noct-repl-qemu-test: BOOT.SYS
 	$(SCRIPTS_DIR)/test-boot98-noct-repl.sh
 
-noct-m15-verify: noct-m11-verify check BOOT.SYS \
+noct-m15-verify: noct-m14-verify check BOOT.SYS \
 	noct-m5-final-opcode-check boot98-noct-repl-qemu-test
 	@echo "Boots M15 REPL verification: PASS (keyboard/error/Ctrl-C on i386)"
 
 check: tests/boot98-fat-host-test tests/boot98-fat-write-host-test \
+	tests/boot98-env-host-test \
 	boot98-stdio-fs-host-test \
 	boot98-libc-host-test \
 	boot98-softfloat-host-test boot98-noct-host-test
 	./tests/boot98-fat-host-test
 	./tests/boot98-fat-write-host-test
+	./tests/boot98-env-host-test
 
 clean: noct-clean boot98-libc-clean boot98-softfloat-clean
 	rm -f *.o *.elf *.bin *.com *.BIN *.SYS tests/boot98-fat-host-test \
-		tests/boot98-fat-write-host-test \
+		tests/boot98-fat-write-host-test tests/boot98-env-host-test \
 		$(BOOT98_STDIO_FS_TEST) \
 		$(BOOT98_NOCT_TEST) $(NOCT_M5_DISASSEMBLY) $(NOCT_M5_REJECTED) \
 		$(NOCT_M6_JIT_CODE)
@@ -345,4 +366,5 @@ clean: noct-clean boot98-libc-clean boot98-softfloat-clean
 
 .PHONY: boot98-noct-file-qemu-test noct-m10-verify \
 	boot98-noct-utilities-qemu-test noct-m11-verify \
+	boot98-noct-env-qemu-test noct-m14-verify \
 	boot98-noct-repl-qemu-test noct-m15-verify

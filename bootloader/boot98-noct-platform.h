@@ -8,14 +8,17 @@
 #define BOOT98_NOCT_PLATFORM_H
 
 struct boot98_filesystem;
+struct boot98_environment;
 typedef int (*boot98_noct_key_fn)(void *context);
 
 int boot98_noct_run_embedded(unsigned repeat_count);
 int boot98_noct_run_file(struct boot98_filesystem *filesystem,
+			 struct boot98_environment *environment,
 			 const char *path, int argc, char *const argv[],
 			 boot98_noct_key_fn key_read,
 			 boot98_noct_key_fn key_poll, void *key_context);
 int boot98_noct_run_repl(struct boot98_filesystem *filesystem,
+			 struct boot98_environment *environment,
 			 boot98_noct_key_fn key_read,
 			 boot98_noct_key_fn key_poll, void *key_context);
 

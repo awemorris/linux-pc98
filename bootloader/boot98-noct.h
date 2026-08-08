@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 struct boot98_filesystem;
+struct boot98_environment;
 
 #define BOOT98_NOCT_NO_FAILURE ((size_t)-1)
 #define BOOT98_NOCT_REPL_LINE_MAX 256U
@@ -59,6 +60,7 @@ struct boot98_noct_options {
 	void *jit_context;
 	const struct boot98_noct_services *services;
 	struct boot98_filesystem *filesystem;
+	struct boot98_environment *environment;
 };
 
 struct boot98_noct_result {

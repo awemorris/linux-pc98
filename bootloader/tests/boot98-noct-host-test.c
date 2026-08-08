@@ -7,6 +7,7 @@
 #include "boot98-noct.h"
 #include "boot98-noct-napi.h"
 #include "boot98-noct-m6-script.h"
+#include "boot98-env.h"
 #include "boot98-fs.h"
 #include "boot98-heap.h"
 
@@ -33,6 +34,7 @@ static size_t output_length;
 static struct boot98_filesystem *test_filesystem;
 static char ls_source[SCRIPT_SIZE];
 static char cp_source[SCRIPT_SIZE];
+static struct boot98_environment test_environment;
 
 struct memory_record {
 	char name[16];
@@ -224,6 +226,8 @@ struct mock_platform {
 	int cursor_row;
 	int cursor_column;
 	int cursor_visible;
+	const char *keyboard_input;
+	size_t keyboard_position;
 };
 
 static struct mock_platform mock;
@@ -282,7 +286,12 @@ static int mock_keyboard_poll(void *context)
 
 static int mock_keyboard_read(void *context)
 {
-	(void)context;
+	struct mock_platform *platform = context;
+
+	if (platform->keyboard_input != NULL &&
+	    platform->keyboard_input[platform->keyboard_position] != '\0')
+		return (unsigned char)
+			platform->keyboard_input[platform->keyboard_position++];
 	return 'A';
 }
 
@@ -487,6 +496,7 @@ run_case_args(const char *source, int argc, char *const argv[], int jit_enable,
 	options.jit_context = NULL;
 	options.services = &mock_services;
 	options.filesystem = test_filesystem;
+	options.environment = &test_environment;
 	success = boot98_noct_run_args("noct-test.nct", source, argc, argv,
 				       &options, &result);
 	if (success != (expected == BOOT98_NOCT_OK) ||
@@ -547,9 +557,10 @@ run_repl_case(int jit_enable)
 		"Console.print(keep())",
 		"var = 1",
 		"Console.print(\"M15_RECOVERED\")",
+		"System.setEnv(\"REPL\", \"yes\")",
 	};
 	static const int expected_continuation[] = {
-		0, 1, 1, 1, 0, 0, 0, 0,
+		0, 1, 1, 1, 0, 0, 0, 0, 0,
 	};
 	struct boot98_noct_options options;
 	struct boot98_noct_result result;
@@ -574,6 +585,7 @@ run_repl_case(int jit_enable)
 	options.jit_context = NULL;
 	options.services = &mock_services;
 	options.filesystem = test_filesystem;
+	options.environment = &test_environment;
 	success = boot98_noct_repl(&options, read_repl_input, &input, &result);
 	if (!success || result.status != BOOT98_NOCT_OK)
 		return 1;
@@ -636,6 +648,16 @@ main(int argc, char **argv)
 		"System.import(\"LIB.NCT\"); Console.print(imported()); "
 		"var usage = System.memoryUsage(); "
 		"Console.print(usage.arenaSize); return 0; }";
+	static const char intrinsic_script[] =
+		"func main() { var line = gets(); print(line); return 0; }";
+	static const char environment_set_script[] =
+		"func main() { System.setEnv(\"MODE\", \"safe\"); "
+		"print(System.getEnv(\"MODE\")); var all = System.listEnv(); "
+		"print(all.MODE); return 0; }";
+	static const char environment_persist_script[] =
+		"func main() { print(System.getEnv(\"MODE\")); "
+		"System.unsetEnv(\"MODE\"); print(System.getEnv(\"MODE\")); "
+		"return 0; }";
 	static const char napi_output[] =
 		"{answer: 42, items: [\"x\", 2]}\n"
 		"raw\n2\n315\n65\n1\n315\nBOOT.CFG\n7\nPC98BE\n"
@@ -679,6 +701,7 @@ main(int argc, char **argv)
 	    host_syscall3(SYS_MPROTECT, (long)(uintptr_t)arena,
 			  sizeof(arena), 7) != 0)
 		return 1;
+	boot98_env_init(&test_environment);
 	status = run_case(BOOT98_NOCT_M6_SOURCE, 0, BOOT98_NOCT_OK,
 			  BOOT98_NOCT_M6_OUTPUT, &result);
 	if (status != 0)
@@ -715,13 +738,16 @@ main(int argc, char **argv)
 	if (status != 0)
 		return 180 + status;
 	status = run_repl_case(0);
-	if (status != 0)
+	if (status != 0 ||
+	    strcmp(boot98_env_get(&test_environment, "REPL"), "yes") != 0)
 		return 185 + status;
 	for (iteration = 0; iteration < 20U; iteration++) {
 		status = run_repl_case(1);
 		if (status != 0)
 			return 190 + status;
 	}
+	if (!boot98_env_unset(&test_environment, "REPL"))
+		return 191;
 	if (boot98_key_normalize_bios_ax(0x1c0d) != BOOT98_KEY_ENTER ||
 	    boot98_key_normalize_bios_ax(0x3b00) != BOOT98_KEY_LEFT ||
 	    boot98_key_normalize_bios_ax(0x3900) != BOOT98_KEY_DELETE ||
@@ -737,6 +763,23 @@ main(int argc, char **argv)
 	    mock.cursor_row != 4 || mock.cursor_column != 5 ||
 	    mock.cursor_visible != 0)
 		return 240;
+	for (iteration = 0; iteration < 2U; iteration++) {
+		mock.keyboard_input = "OK\r";
+		mock.keyboard_position = 0;
+		status = run_case(intrinsic_script, iteration != 0,
+				  BOOT98_NOCT_OK, "OK\nOK\n", &result);
+		mock.keyboard_input = NULL;
+		if (status != 0 || mock.cursor_visible != 1)
+			return 242 + status;
+	}
+	status = run_case(environment_set_script, 0, BOOT98_NOCT_OK,
+			  "safe\nsafe\n", &result);
+	if (status != 0)
+		return 244 + status;
+	status = run_case(environment_persist_script, 0, BOOT98_NOCT_OK,
+			  "safe\n\n", &result);
+	if (status != 0 || boot98_env_get(&test_environment, "MODE") != NULL)
+		return 246 + status;
 	for (iteration = 0; iteration < 20U; iteration++) {
 		status = run_case_args(ls_source, 0, NULL, 1, BOOT98_NOCT_OK,
 				       0, ls_output, &result);

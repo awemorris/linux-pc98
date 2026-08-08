@@ -783,6 +783,9 @@ Provide a small BE implementation rather than linking upstream
 ```text
 Console.print(value)       serialized value plus newline
 Console.write(text)        no implicit newline
+Console.gets()             bounded echoed ASCII line input
+print(value)               global alias of Console.print
+gets()                     global alias of Console.gets
 ```
 
 Serialization must be bounded and iterative or depth-limited. Never allocate
@@ -836,7 +839,7 @@ Do not link host `api-system.c`. Provide only:
 System.getOSName()     -> "PC98BE"
 System.import(path)    -> register another source in the current VM
 System.memoryUsage()   -> { current, peak, arenaSize }
-System.getEnv(name)    -> value or null
+System.getEnv(name)    -> copied value, or an empty string when absent
 System.setEnv(name, value) -> 0
 System.unsetEnv(name)  -> 0
 System.listEnv()       -> dictionary copied into the current VM
@@ -1292,12 +1295,18 @@ once, and existing CLI behavior outside the REPL is unchanged.
 
 ### M14 — Boots environment variables
 
+Status: **IMPLEMENTED AND VERIFIED — AWAITING USER REVIEW**. See
+`BOOTS-M14-ENVIRONMENT.md` for the API contract and test evidence.
+
 1. Add a bounded Boots-owned environment store outside the Noct arena.
 2. Add shell/BOOT.CFG commands `env`, `set NAME VALUE`, and `unset NAME`.
 3. Export `System.getEnv`, `System.setEnv`, `System.unsetEnv`, and
    `System.listEnv` through safe NAPI with copied strings only.
 4. Start with a 4 KiB packed store, at most 32 entries, names up to 31 bytes,
    and values up to 255 bytes; reject overflow without changing the old value.
+5. Register convenience globals from one auditable intrinsic table. `print()`
+   delegates to `Console.print()` and bounded `gets()` delegates to
+   `Console.gets()`.
 
 Acceptance: variables persist across ordinary scripts and REPL sessions until
 boot/reset, no pointer into a destroyed VM survives, full-store and invalid

@@ -6,6 +6,7 @@
 
 #include "boot98-noct-napi.h"
 #include "boot98-noct.h"
+#include "boot98-env.h"
 #include "libc/boot98-heap.h"
 
 #include <noct/noct.h>
@@ -33,6 +34,7 @@ struct active_napi {
 	void *write_context;
 	size_t arena_size;
 	struct imported_source *imports;
+	struct boot98_environment *environment;
 };
 
 struct api_item {
@@ -49,6 +51,8 @@ struct serializer {
 };
 
 static struct active_napi active;
+
+static int services_ready(void);
 
 static void
 write_bytes(const char *bytes, size_t length)
@@ -123,6 +127,24 @@ register_module(NoctEnv *env, const char *module,
 out:
 	(void)noct_unpin_local(env, 2, &dictionary, &function);
 	return ok;
+}
+
+/* Intrinsic-like global conveniences are declared in one auditable table. */
+static bool
+register_intrinsics(NoctEnv *env, struct api_item *items,
+		    size_t item_count)
+{
+	size_t index;
+
+	for (index = 0; index < item_count; index++) {
+		struct api_item *item = &items[index];
+
+		if (!noct_register_cfunc(env, item->global_name,
+					 item->parameter_count, item->parameters,
+					 item->function, NULL))
+			return false;
+	}
+	return true;
 }
 
 static void
@@ -318,6 +340,52 @@ cfunc_console_print(NoctEnv *env)
 	}
 	(void)noct_unpin_local(env, 1, &value);
 	return ok;
+}
+
+/* Bounded, ASCII line input.  Unlike C gets(), this can never overflow. */
+static bool
+cfunc_console_gets(NoctEnv *env)
+{
+	char line[256];
+	size_t length = 0;
+
+	if (!services_ready() || active.services->keyboard_read == NULL) {
+		noct_error(env, "gets is unavailable.");
+		return false;
+	}
+	if (active.services->screen_show_cursor != NULL)
+		(void)active.services->screen_show_cursor(
+			active.services->context, 1);
+	for (;;) {
+		int key = active.services->keyboard_read(active.services->context);
+
+		if (key < 0) {
+			noct_error(env, "gets failed.");
+			return false;
+		}
+		if (key > 0xff)
+			continue;
+		if (key == '\r' || key == '\n') {
+			write_string("\n");
+			line[length] = '\0';
+			return return_string(env, line);
+		}
+		if (key == 0x03) {
+			write_string("^C\n");
+			return return_string(env, "");
+		}
+		if (key == '\b' || key == 0x7f) {
+			if (length != 0) {
+				length--;
+				write_string("\b");
+			}
+			continue;
+		}
+		if (key >= 32 && key < 127 && length + 1U < sizeof(line)) {
+			line[length++] = (char)key;
+			write_bytes((const char *)&line[length - 1U], 1U);
+		}
+	}
 }
 
 static int
@@ -642,6 +710,110 @@ cfunc_system_get_os_name(NoctEnv *env)
 }
 
 static bool
+cfunc_system_get_env(NoctEnv *env)
+{
+	NoctValue argument;
+	const char *name;
+	const char *value;
+	bool ok = false;
+
+	memset(&argument, 0, sizeof(argument));
+	if (!noct_pin_local(env, 1, &argument))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &argument, &name) ||
+	    active.environment == NULL || !boot98_env_name_valid(name))
+		goto error;
+	value = boot98_env_get(active.environment, name);
+	ok = return_string(env, value != NULL ? value : "");
+	goto out;
+error:
+	noct_error(env, "System.getEnv received an invalid name.");
+out:
+	(void)noct_unpin_local(env, 1, &argument);
+	return ok;
+}
+
+static bool
+cfunc_system_set_env(NoctEnv *env)
+{
+	NoctValue name_value;
+	NoctValue string_value;
+	const char *name;
+	const char *value;
+	bool ok = false;
+
+	memset(&name_value, 0, sizeof(name_value));
+	memset(&string_value, 0, sizeof(string_value));
+	if (!noct_pin_local(env, 2, &name_value, &string_value))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &name_value, &name) ||
+	    !noct_get_arg_check_string(env, 1, &string_value, &value) ||
+	    active.environment == NULL ||
+	    !boot98_env_set(active.environment, name, value))
+		goto error;
+	ok = return_int(env, 0);
+	goto out;
+error:
+	noct_error(env, "System.setEnv rejected the name, value, or full store.");
+out:
+	(void)noct_unpin_local(env, 2, &name_value, &string_value);
+	return ok;
+}
+
+static bool
+cfunc_system_unset_env(NoctEnv *env)
+{
+	NoctValue argument;
+	const char *name;
+	bool ok = false;
+
+	memset(&argument, 0, sizeof(argument));
+	if (!noct_pin_local(env, 1, &argument))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &argument, &name) ||
+	    active.environment == NULL || !boot98_env_name_valid(name))
+		goto error;
+	(void)boot98_env_unset(active.environment, name);
+	ok = return_int(env, 0);
+	goto out;
+error:
+	noct_error(env, "System.unsetEnv received an invalid name.");
+out:
+	(void)noct_unpin_local(env, 1, &argument);
+	return ok;
+}
+
+static bool
+cfunc_system_list_env(NoctEnv *env)
+{
+	NoctValue dictionary;
+	NoctValue scratch;
+	size_t index;
+	bool ok = false;
+
+	memset(&dictionary, 0, sizeof(dictionary));
+	memset(&scratch, 0, sizeof(scratch));
+	if (active.environment == NULL ||
+	    !noct_pin_local(env, 2, &dictionary, &scratch))
+		return false;
+	if (!noct_make_empty_dict(env, &dictionary))
+		goto out;
+	for (index = 0; index < boot98_env_count(active.environment); index++) {
+		const char *name;
+		const char *value;
+
+		if (!boot98_env_at(active.environment, index, &name, &value) ||
+		    !noct_set_dict_elem_make_string(env, &dictionary, name,
+						 &scratch, value))
+			goto out;
+	}
+	ok = noct_set_return(env, &dictionary);
+out:
+	(void)noct_unpin_local(env, 2, &dictionary, &scratch);
+	return ok;
+}
+
+static bool
 cfunc_system_memory_usage(NoctEnv *env)
 {
 	NoctValue dictionary;
@@ -782,6 +954,11 @@ boot98_noct_napi_register(NoctEnv *env,
 	static struct api_item console[] = {
 		{ "Console.print", "print", 1, { "value" }, cfunc_console_print },
 		{ "Console.write", "write", 1, { "text" }, cfunc_console_write },
+		{ "Console.gets", "gets", 0, { NULL }, cfunc_console_gets },
+	};
+	static struct api_item intrinsics[] = {
+		{ "print", NULL, 1, { "value" }, cfunc_console_print },
+		{ "gets", NULL, 0, { NULL }, cfunc_console_gets },
 	};
 	static struct api_item screen[] = {
 		{ "Screen.getWidth", "getWidth", 0, { NULL },
@@ -817,6 +994,14 @@ boot98_noct_napi_register(NoctEnv *env,
 		  cfunc_system_import },
 		{ "System.memoryUsage", "memoryUsage", 0, { NULL },
 		  cfunc_system_memory_usage },
+		{ "System.getEnv", "getEnv", 1, { "name" },
+		  cfunc_system_get_env },
+		{ "System.setEnv", "setEnv", 2, { "name", "value" },
+		  cfunc_system_set_env },
+		{ "System.unsetEnv", "unsetEnv", 1, { "name" },
+		  cfunc_system_unset_env },
+		{ "System.listEnv", "listEnv", 0, { NULL },
+		  cfunc_system_list_env },
 	};
 
 	if (env == NULL || options == NULL || options->write == NULL ||
@@ -827,7 +1012,10 @@ boot98_noct_napi_register(NoctEnv *env,
 	active.write_context = options->write_context;
 	active.arena_size = options->arena_size;
 	active.imports = NULL;
-	if (!register_module(env, "Console", console,
+	active.environment = options->environment;
+	if (!register_intrinsics(env, intrinsics,
+				 sizeof(intrinsics) / sizeof(intrinsics[0])) ||
+	    !register_module(env, "Console", console,
 			     sizeof(console) / sizeof(console[0])) ||
 	    !register_module(env, "Screen", screen,
 			     sizeof(screen) / sizeof(screen[0])) ||

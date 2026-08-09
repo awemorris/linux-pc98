@@ -114,7 +114,6 @@ ensure_rootfs busybox-i386 "$busybox_cache" "$busybox_root" bin/busybox
 ensure_debian_rootfs "$debian_root" "$debian_cache"
 
 echo "Verifying Noct through M14 (v0.9.0 has a documented REPL issue)"
-"$repo/scripts/update-noct.sh" verify
 (
 	. "$repo/scripts/boots-env.sh"
 	"$boots/build.sh" pc98 noct-m14-verify

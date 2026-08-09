@@ -9,7 +9,7 @@ default_image="$repo/build/qemu-pc98-linux-$kernel_version.raw"
 image="${1:-${OUTPUT_IMAGE:-$default_image}}"
 kernel_image="${2:-${KERNEL_IMAGE:-${KERNEL_BUILD:-$default_kernel_build}/vmlinux.boot}}"
 dos_loader="${DOS_LOADER:-$repo/external/boots/platform/pc98/dos/linux98.exe}"
-boot_cfg="${BOOT_CFG:-$repo/releases/boot98.cfg}"
+boot_cfg="${BOOT_CFG:-$repo/configs/boots.cfg}"
 
 if [ ! -f "$image" ]; then
 	echo "Disk image not found: $image" >&2

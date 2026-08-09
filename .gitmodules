@@ -13,12 +13,6 @@
 [submodule "debian-i486"]
 	path = external/debian-i486
 	url = git@github.com:awemorris/debian-i486.git
-[submodule "third_party/noct"]
-	path = third_party/noct
-	url = https://github.com/awemorris/NoctLang.git
-[submodule "third_party/remacs"]
-	path = third_party/remacs
-	url = https://github.com/awemorris/remacs.git
 [submodule "external/boots"]
 	path = external/boots
 	url = git@github.com:awemorris/boots.git

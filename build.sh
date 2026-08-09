@@ -87,7 +87,6 @@ build_noct()
 			"$boots/build.sh" pc98 noct-link-audit "$@"
 			;;
 		verify)
-			"$repo/scripts/update-noct.sh" verify
 			boots_env
 			"$boots/build.sh" pc98 noct-m15-verify "$@"
 			;;
@@ -97,15 +96,6 @@ build_noct()
 		lifecycle-test)
 			"$boots/build.sh" pc98 noct-host-test "$@"
 			;;
-		status)
-			"$repo/scripts/update-noct.sh" status
-			;;
-		init)
-			"$repo/scripts/update-noct.sh" init
-			;;
-		update)
-			"$repo/scripts/update-noct.sh" update "$@"
-			;;
 		clean)
 			"$boots/build.sh" pc98 clean "$@"
 			;;
@@ -113,17 +103,17 @@ build_noct()
 			cat <<'EOF'
 Usage: ./build.sh noct COMMAND
 
+The Noct source itself is a submodule of Boots; update its pinned revision
+in the external/boots repository.
+
 Commands:
-  objects       compile the selected PC98BE Noct core objects (JIT enabled)
+  objects       compile the selected Boots Noct core objects (JIT enabled)
   opcode-check  compile and reject post-i386 instructions
   libc-test     run heap/libc host tests, including allocation failures
   link-audit    relocatably link Noct/libc and audit undefined symbols
   lifecycle-test run the M15 lifecycle, File, utility, native-API, and REPL host test
   softfloat-test run the M5 arithmetic/conversion/math known vectors
   verify        verify M4-M15, static i386 opcodes, and QEMU REPL paths
-  init          initialize the pinned Noct submodule
-  update [REF]  fetch and stage a newer Noct gitlink (default: origin/main)
-  status        print the submodule origin and pinned/current revisions
   clean         remove the Boots pc98 build tree (build/pc98)
 EOF
 			;;

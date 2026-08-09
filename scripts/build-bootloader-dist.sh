@@ -54,8 +54,8 @@ install -m 0644 "$boots/build/remacs/SKKJISYO.DIC" \
 install -m 0644 "$boots/apps/EMACS.RC" "$stage/HOME/.remacs.el"
 install -m 0644 "$boots/apps/EMACS.RC" "$stage/HOME/.emacs"
 # Stage 2 reads BOOTS.CFG and falls back to BOOT.CFG for one release.
-install -m 0644 "$repo/releases/boot98.cfg" "$stage/BOOTS.CFG"
-install -m 0644 "$repo/releases/boot98.cfg" "$stage/BOOT.CFG"
+install -m 0644 "$repo/configs/boots.cfg" "$stage/BOOTS.CFG"
+install -m 0644 "$repo/configs/boots.cfg" "$stage/BOOT.CFG"
 install -m 0644 "$repo/README.md" "$stage/README.md"
 install -m 0644 "$boots/platform/pc98/dos/README.md" "$stage/DOS-README.md"
 install -m 0644 "$repo/external/gcc/COPYING.LIB" \

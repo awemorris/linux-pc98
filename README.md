@@ -49,8 +49,10 @@ run the official Debian userland unchanged with the PC-98 i686 kernel.
 
 The custom i486 package repository is not public yet. Publishing its packages
 is the next distribution milestone. Testing has established that both Debian
-variants require at least 64 MiB of physical RAM for a reliable login; the
-smaller BusyBox systems are the supported choice below that threshold.
+variants require at least 64 MiB of physical RAM for reliable operation; the
+smaller BusyBox systems are the supported choice below that threshold. The
+published i486 image bypasses `/bin/login` and PAM and starts a root `/bin/sh`
+directly, avoiding login timeouts and memory exhaustion on slower machines.
 
 ## Repository layout
 
@@ -304,11 +306,11 @@ silent `ipl-lba0.bin` enters `ipl-lba2.bin`; that selector loads the PBR of
 the FAT16 partition named BOOT. The one 1024-byte reserved logical sector
 contains the PBR/BPB only; it loads contiguous `IO.SYS` as an ordinary FAT
 file, and `IO.SYS` then loads `BOOT.SYS`. NEC MS-DOS can mount the same volume.
-The first 32-bit menu
-selection has a three-second timeout: it executes `Auto`, reads `BOOT.CFG`,
-and boots `VMLINUX`. Select Escape before the timeout to enter the interactive
-shell instead. The `Auto` entry identifies the selected HDD, partition, and
-`BOOT.CFG` source.
+After BIOS-reported disks have been examined, the first 32-bit menu has a
+one-second timeout. `Auto` runs `AUTOEXEC.NCT` when present, otherwise it
+reads `BOOT.CFG` and boots `VMLINUX`. Select Escape before the timeout to enter
+the interactive shell instead. The `Auto` entry identifies the selected HDD,
+partition, and startup file.
 The headless `busybox-i386` smoke test uses this unattended path without
 synthetic keyboard input.
 
@@ -639,7 +641,7 @@ installation on a confirmed Core-Graph machine, loading `pc98cirrusfb`
 selects an 800x600x16 framebuffer by default and fbcon takes over.
 `FRAMEBUFFER_CONSOLE_DETECT_PRIMARY` is disabled because the non-PnP Cirrus
 child is not a conventional PCI VGA function. Japanese glyph support is not
-required to reach the Debian login prompt.
+required to reach the Debian direct shell.
 
 The PC-98 framebuffer drivers are:
 

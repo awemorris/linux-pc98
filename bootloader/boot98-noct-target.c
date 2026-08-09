@@ -228,8 +228,32 @@ static int term_flush(void *context)
 
 static int translate_key(int bios_key)
 {
+	static const unsigned char unshifted_ascii[] = {
+		0x1b, '1', '2', '3', '4', '5', '6', '7',
+		'8', '9', '0', '-', '^', '\\', 0x08, 0x09,
+		'q', 'w', 'e', 'r', 't', 'y', 'u', 'i',
+		'o', 'p', '@', '[', 0x0d,
+		'a', 's', 'd', 'f', 'g', 'h', 'j', 'k',
+		'l', ';', ':', ']',
+		'z', 'x', 'c', 'v', 'b', 'n', 'm', ',',
+		'.', '/', 0x00, 0x20,
+	};
 	unsigned shift = ((unsigned)bios_key >> 16) & 0xffU;
+	unsigned scan = ((unsigned)bios_key >> 8) & 0xffU;
+	int modifiers = 0;
 	int key = boot98_key_normalize_bios_ax((uint16_t)bios_key);
+
+	/* Genuine NEC ROMs translate Graph+printable keys to their PC-98 Graph
+	 * character codes (for example Graph+X is AX=2a81h), whereas Remacs
+	 * needs the ordinary key plus a Meta modifier.  Recover the unmodified
+	 * ASCII character from the common PC-98 scan-code table before applying
+	 * Noct's META bit. */
+	if ((shift & 0x08U) != 0 && scan < sizeof(unshifted_ascii) &&
+	    unshifted_ascii[scan] != 0) {
+		key = unshifted_ascii[scan];
+		if ((shift & 0x01U) != 0 && key >= 'a' && key <= 'z')
+			key -= 'a' - 'A';
+	}
 
 	/* INT 18h returns modifier make events as ordinary extended keys on
 	 * PC-98.  They describe keyboard state; they are not editor input. */
@@ -271,14 +295,20 @@ static int translate_key(int bios_key)
 	}
 	if (key >= BOOT98_KEY_F1 && key <= BOOT98_KEY_F10)
 		return NOCT_TERM_KEY_F1 + key - BOOT98_KEY_F1;
+	/* PC-98 Graph is the PC/AT Alt/Meta equivalent.  AH=07h reports its
+	 * held state in BL bit 3 on the printable key that follows the Graph
+	 * make event.  Preserve that state as Noct's META modifier so Remacs
+	 * receives Graph-x as M-x instead of an ordinary x. */
+	if ((shift & 0x08U) != 0)
+		modifiers |= NOCT_TERM_MOD_META;
 	/* PC-98 INT 18h/AH=07h reports CTRL in shift-state bit 4. */
 	if ((shift & 0x10U) != 0 && key == 0x20)
-		return NOCT_TERM_MOD_CTRL | 0x20;
+		return modifiers | NOCT_TERM_MOD_CTRL | 0x20;
 	if (key > 0 && key <= 0x1a)
-		return NOCT_TERM_MOD_CTRL | (key + 0x60);
+		return modifiers | NOCT_TERM_MOD_CTRL | (key + 0x60);
 	if (key > 0x1a && key < 0x20)
-		return NOCT_TERM_MOD_CTRL | (key + 0x40);
-	return key;
+		return modifiers | NOCT_TERM_MOD_CTRL | (key + 0x40);
+	return modifiers | key;
 }
 
 /*

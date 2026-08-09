@@ -817,14 +817,24 @@ gateway_clock_second:
 
 gateway_key_read:
 	/*
-	 * The extended BIOS service returns the key-data pair in AX and the
-	 * modifier snapshot in BL.  Keep AX intact in bits 15:0 and expose BL
-	 * in bits 23:16 so the 32-bit Term adapter can distinguish C-SPC from
-	 * an ordinary space.  The text menu normalizes AX and ignores BL.
+	 * Use the baseline NEC BIOS calls rather than the AH=07h extended input
+	 * service: some genuine ROM revisions leave AH=07h waiting even though
+	 * their standard BIOS key buffer is non-empty.  AH=00h consumes the
+	 * key-data pair.  The current Shift/Graph/Ctrl byte is read from the
+	 * standard BIOS work area at 0000:053Ah because genuine ROM revisions
+	 * also disagree about the AH=02h return register.  Keep the key in bits
+	 * 15:0 and expose that modifier byte in bits 23:16 so the 32-bit Term
+	 * adapter can distinguish C-SPC and Graph-x.
 	 */
-	movb	$0x07, %ah
+	movb	$0x00, %ah
 	int	$0x18
-	movzbl	%bl, %edx
+	pushw	%ax
+	pushw	%ds
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	movzbl	0x053a, %edx
+	popw	%ds
+	popw	%ax
 	shll	$16, %edx
 	movzwl	%ax, %eax
 	orl	%edx, %eax
@@ -832,17 +842,29 @@ gateway_key_read:
 	jmp	gateway_real_return
 
 gateway_key_poll:
-	movb	$0x08, %ah
-	int	$0x18
-	testw	%ax, %ax
-	jz	1f
-	movzbl	%bl, %edx
-	shll	$16, %edx
-	movzwl	%ax, %eax
-	orl	%edx, %eax
-	movl	%eax, %cs:gateway_result
+	/*
+	 * Poll the standard PC-9800 BIOS key-buffer count at 0000:0528h.  NEC
+	 * ROM revisions do not agree with the compatible BIOS about which
+	 * registers INT 18h/AH=01h preserves or uses to report an empty queue.
+	 * The work-area count is the common ABI and avoids interpreting an
+	 * undocumented return register.  The consuming AH=00h call remains the
+	 * single source of the key-data and modifier snapshot.
+	 *
+	 * BOOT.SYS has no protected-mode IDT and therefore runs with IF clear.
+	 * Do not use STI/HLT here: the compatible BIOS deliberately leaves the
+	 * PIT stopped when no BIOS timer event is active, so an empty queue could
+	 * sleep forever and prevent the menu timeout from advancing.  Returning
+	 * immediately also preserves the poll service's non-blocking contract.
+	 */
+	pushw	%ds
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	cmpb	$0, 0x0528
+	popw	%ds
+	jz	2f
+	movl	$0, %cs:gateway_result
 	jmp	gateway_real_return
-1:
+2:
 	movl	$0xffffffff, %cs:gateway_result
 	jmp	gateway_real_return
 

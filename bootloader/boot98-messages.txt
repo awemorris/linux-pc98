@@ -12,6 +12,7 @@ searching	検索中...
 unavailable	利用できません
 partition	 ﾊﾟｰﾃｨｼｮﾝ 
 run_cfg	 / BOOT.CFG を実行
+run_autoexec	 / AUTOEXEC.NCT を実行
 fixed_disk_prefix	) 固定ﾃﾞｨｽｸ ﾄﾞﾗｲﾌﾞ 
 esc_shell	ESC ｷｰ を押すとｼｪﾙを起動します
 select	選択: 

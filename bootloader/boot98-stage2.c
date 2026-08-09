@@ -25,7 +25,10 @@
 #define PC98_ADDR 0x82000U
 #define PC98_SETUP_NODE_SIZE 32U
 #define STARTUP_TIMEOUT_SECONDS 1
-#define MAX_FIXED_DEVICES 12
+#define MAX_IDE_DEVICES 4
+#define MAX_SCSI_TARGETS 7
+#define MAX_FIXED_DEVICES (MAX_IDE_DEVICES + MAX_SCSI_TARGETS)
+#define PC98_WA_IDE_DRIVES 0x055dU
 #define PC98_WA_SCSI_TARGETS 0x0482U
 #define PC98_WA_SCSI_ROM0 0x04b2U
 #define PC98_WA_SCSI_ROM1 0x04baU
@@ -79,7 +82,11 @@ enum startup_config_kind {
 struct startup_state {
 	enum startup_phase phase;
 	unsigned next_candidate;
+	unsigned probe_total;
+	unsigned probe_done;
 	unsigned fixed_count;
+	uint8_t ide_bitmap;
+	uint8_t scsi_bitmap;
 	int auto_device;
 	int auto_partition;
 	int auto_priority;
@@ -765,6 +772,59 @@ static int scsi_bios_available(void)
 	return 0;
 }
 
+/*
+ * 0:055Dh contains the dense BIOS IDE-drive map in its low nibble.  Unlike
+ * physical-slot bitmap 0:05BAh, bit N corresponds directly to BIOS unit
+ * 80h+N.  Stock ROMs may not return from SENSE for an absent unit, so this
+ * map is authoritative for enumeration.  Preserve a boot unit already
+ * handed to Stage 2 even if unusual firmware failed to publish the bit.
+ */
+static uint8_t ide_reported_drives(void)
+{
+	uint8_t bitmap = bios_workarea_byte(PC98_WA_IDE_DRIVES) &
+			 ((1U << MAX_IDE_DEVICES) - 1U);
+
+	for (unsigned i = 0; i < device_count; i++)
+		if (devs[i].device_class == BOOT98_DEV_IDE &&
+		    devs[i].bios_id >= 0x80 &&
+		    devs[i].bios_id < 0x80 + MAX_IDE_DEVICES)
+			bitmap |= 1U << (devs[i].bios_id - 0x80);
+	return bitmap;
+}
+
+/*
+ * A PC-9801-55/92 host adapter normally owns SCSI ID 7.  Some firmware sets
+ * bit 7 in 0:0482h for the adapter itself; treating it as an eighth disk and
+ * issuing SENSE to A7h can enter firmware that never returns.  Enumerate only
+ * the seven target IDs which the registered SCSI BIOS reports as disks.
+ */
+static uint8_t scsi_reported_targets(void)
+{
+	uint8_t bitmap;
+
+	if (!scsi_bios_available())
+		return 0;
+	bitmap = bios_workarea_byte(PC98_WA_SCSI_TARGETS) &
+		 ((1U << MAX_SCSI_TARGETS) - 1U);
+	for (unsigned i = 0; i < device_count; i++)
+		if (devs[i].device_class == BOOT98_DEV_SCSI &&
+		    devs[i].bios_id >= 0xa0 &&
+		    devs[i].bios_id < 0xa0 + MAX_SCSI_TARGETS)
+			bitmap |= 1U << (devs[i].bios_id - 0xa0);
+	return bitmap;
+}
+
+static unsigned bit_count(uint8_t value)
+{
+	unsigned count = 0;
+
+	while (value) {
+		count += value & 1U;
+		value >>= 1;
+	}
+	return count;
+}
+
 /* Probe exactly one BIOS unit.  A nonnegative result is the new list index. */
 static int probe_fixed_device(uint8_t device_class, uint8_t bios_id)
 {
@@ -774,10 +834,14 @@ static int probe_fixed_device(uint8_t device_class, uint8_t bios_id)
 	if (device_count >= MAX_FIXED_DEVICES ||
 	    device_is_known(device_class, bios_id))
 		return -1;
-	if (device_class == BOOT98_DEV_SCSI) {
-		if (!scsi_bios_available())
+	if (device_class == BOOT98_DEV_IDE) {
+		if (bios_id < 0x80 || bios_id >= 0x80 + MAX_IDE_DEVICES ||
+		    !(ide_reported_drives() & (1U << (bios_id - 0x80))))
 			return -1;
-		scsi_bitmap = bios_workarea_byte(PC98_WA_SCSI_TARGETS);
+	} else if (device_class == BOOT98_DEV_SCSI) {
+		if (bios_id < 0xa0 || bios_id >= 0xa0 + MAX_SCSI_TARGETS)
+			return -1;
+		scsi_bitmap = scsi_reported_targets();
 		if (!(scsi_bitmap & (1U << (bios_id - 0xa0))))
 			return -1;
 	}
@@ -797,7 +861,8 @@ static int probe_fixed_device(uint8_t device_class, uint8_t bios_id)
 static void probe_fixed_class(uint8_t device_class)
 {
 	uint8_t first = device_class == BOOT98_DEV_IDE ? 0x80 : 0xa0;
-	unsigned count = device_class == BOOT98_DEV_IDE ? 4 : 8;
+	unsigned count = device_class == BOOT98_DEV_IDE ? MAX_IDE_DEVICES :
+							MAX_SCSI_TARGETS;
 
 	for (unsigned index = 0; index < count; index++)
 		probe_fixed_device(device_class, first + index);
@@ -1556,27 +1621,15 @@ static void draw_startup_header(void)
 	boot98_console_write_at(5, 0, boot98_msg_probing);
 }
 
-static void draw_probe_progress(unsigned current, uint8_t device_class,
-				uint8_t bios_id)
+static void draw_probe_bar(unsigned current, unsigned total)
 {
 	char filled[BOOT98_CONSOLE_COLUMNS + 1U];
 	char empty[BOOT98_CONSOLE_COLUMNS + 1U];
-	unsigned columns = current * BOOT98_CONSOLE_COLUMNS /
-		MAX_FIXED_DEVICES;
+	unsigned columns = total ? current * BOOT98_CONSOLE_COLUMNS / total : 0;
 	unsigned index;
 
-	boot98_console_clear_row(5);
-	boot98_console_write_at(5, 0, boot98_msg_probing);
-	putc(' ');
-	puts(device_class == BOOT98_DEV_IDE ? "IDE " : "SCSI ");
-	dec((unsigned)bios_id -
-	    (device_class == BOOT98_DEV_IDE ? 0x80U : 0xa0U) + 1U);
-	puts(" (");
-	dec(current);
-	putc('/');
-	dec(MAX_FIXED_DEVICES);
-	putc(')');
-
+	if (columns > BOOT98_CONSOLE_COLUMNS)
+		columns = BOOT98_CONSOLE_COLUMNS;
 	for (index = 0; index < columns; index++)
 		filled[index] = ' ';
 	filled[index] = 0;
@@ -1592,9 +1645,27 @@ static void draw_probe_progress(unsigned current, uint8_t device_class,
 					   BOOT98_CONSOLE_NORMAL_ATTRIBUTE);
 }
 
+static void draw_probe_progress(unsigned current, unsigned total,
+				uint8_t device_class, uint8_t bios_id)
+{
+
+	boot98_console_clear_row(5);
+	boot98_console_write_at(5, 0, boot98_msg_probing);
+	putc(' ');
+	puts(device_class == BOOT98_DEV_IDE ? "IDE " : "SCSI ");
+	dec((unsigned)bios_id -
+	    (device_class == BOOT98_DEV_IDE ? 0x80U : 0xa0U) + 1U);
+	puts(" (");
+	dec(current);
+	putc('/');
+	dec(total);
+	putc(')');
+	draw_probe_bar(current, total);
+}
+
 static void draw_automatic_status(const struct startup_state *state)
 {
-	draw_probe_progress(MAX_FIXED_DEVICES, BOOT98_DEV_SCSI, 0xa7);
+	draw_probe_bar(state->probe_total, state->probe_total);
 	boot98_console_clear_row(5);
 	boot98_console_write_at(5, 0, boot98_msg_automatic_run);
 	if (state->auto_config_kind == STARTUP_CONFIG_AUTOEXEC)
@@ -1619,8 +1690,12 @@ static void draw_startup_menu(const struct startup_state *state)
 		dec(fixed_device_ordinal(state->auto_device));
 		puts((const char *)boot98_msg_partition);
 		dec((unsigned)state->auto_partition + 1);
-		if (state->auto_kind == STARTUP_AUTO_CONFIG)
-			puts((const char *)boot98_msg_run_cfg);
+		if (state->auto_kind == STARTUP_AUTO_CONFIG) {
+			if (state->auto_config_kind == STARTUP_CONFIG_AUTOEXEC)
+				puts((const char *)boot98_msg_run_autoexec);
+			else
+				puts((const char *)boot98_msg_run_cfg);
+		}
 	} else {
 		puts((const char *)boot98_msg_unavailable);
 	}
@@ -1728,19 +1803,31 @@ static int pending_startup_key(void)
 /* Process one stable candidate; at most one invocation reaches INT 1Bh. */
 static void probe_next_startup_device(struct startup_state *state)
 {
-	unsigned candidate = state->next_candidate++;
+	unsigned candidate;
 	uint8_t device_class;
 	uint8_t bios_id;
 	int new_device;
 
-	if (candidate < 4) {
-		device_class = BOOT98_DEV_IDE;
-		bios_id = 0x80 + candidate;
-	} else {
+	for (;;) {
+		if (state->next_candidate >= MAX_FIXED_DEVICES)
+			return;
+		candidate = state->next_candidate++;
+		if (candidate < MAX_IDE_DEVICES) {
+			device_class = BOOT98_DEV_IDE;
+			bios_id = 0x80 + candidate;
+			if (state->ide_bitmap & (1U << candidate))
+				break;
+			continue;
+		}
 		device_class = BOOT98_DEV_SCSI;
-		bios_id = 0xa0 + candidate - 4;
+		bios_id = 0xa0 + candidate - MAX_IDE_DEVICES;
+		if (state->scsi_bitmap &
+		    (1U << (candidate - MAX_IDE_DEVICES)))
+			break;
 	}
-	draw_probe_progress(candidate + 1U, device_class, bios_id);
+	state->probe_done++;
+	draw_probe_progress(state->probe_done, state->probe_total,
+			    device_class, bios_id);
 	new_device = probe_fixed_device(device_class, bios_id);
 	state->fixed_count = device_count;
 	if (new_device >= 0)
@@ -1755,6 +1842,11 @@ static int startup_menu(struct startup_state *state)
 	boot98_namespace_init(&mounted_namespace);
 	state->phase = STARTUP_DRAW;
 	state->next_candidate = 0;
+	state->ide_bitmap = ide_reported_drives();
+	state->scsi_bitmap = scsi_reported_targets();
+	state->probe_total = bit_count(state->ide_bitmap) +
+			     bit_count(state->scsi_bitmap);
+	state->probe_done = 0;
 	state->fixed_count = device_count;
 	state->auto_device = state->auto_partition = -1;
 	state->auto_priority = 4;

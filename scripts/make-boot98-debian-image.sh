@@ -158,6 +158,30 @@ sudo mount -o loop "$root_image" "$mount_dir"
 mounted=1
 sudo cp -a "$rootfs"/. "$mount_dir"/
 
+# The normal Debian getty starts /bin/login and its PAM stack.  On i486 PC-98
+# systems that path can take long enough to time out, and at 64 MiB it may be
+# killed by memory pressure before a prompt appears.  Retain getty only for
+# terminal ownership/setup, then enter a root shell directly through a tiny
+# wrapper which deliberately ignores any arguments supplied by getty.
+sudo install -d -m 0755 "$mount_dir/usr/local/sbin"
+sudo tee "$mount_dir/usr/local/sbin/pc98-direct-shell" >/dev/null <<'EOF'
+#!/bin/sh
+HOME=/root
+USER=root
+LOGNAME=root
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME USER LOGNAME SHELL PATH
+cd /root || cd /
+exec /bin/sh
+EOF
+sudo chmod 0755 "$mount_dir/usr/local/sbin/pc98-direct-shell"
+sudo sed -i '/^[1-6]:[0-9]*:respawn:\/sbin\/getty /d' \
+	"$mount_dir/etc/inittab"
+printf '%s\n' \
+	'1:2345:respawn:/sbin/getty -8 -L --noclear --skip-login --login-program /usr/local/sbin/pc98-direct-shell 38400 tty1 linux' | \
+	sudo tee -a "$mount_dir/etc/inittab" >/dev/null
+
 # The kernel mounts devtmpfs.  Keep udev installed for later manual use, but
 # avoid its full early-device trigger on this memory-constrained live image.
 sudo rm -f "$mount_dir/etc/rcS.d/S02udev"

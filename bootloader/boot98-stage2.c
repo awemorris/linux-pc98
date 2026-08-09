@@ -1413,11 +1413,11 @@ static int command(char *s)
 		const char *dictionary = boot98_env_get(&boot_environment,
 						      "REMACS_SKK_DICT");
 
-		/* The 8.3 path is present in every Boots image with REMACS.NB. */
+		/* The 8.3 path is present in every Boots image with REMACS.NAP. */
 		if (dictionary == NULL || dictionary[0] == '\0')
 			(void)boot98_env_set(&boot_environment, "REMACS_SKK_DICT",
 					     "HOME/SKKJISYO.DIC");
-		return run_noct_application("REMACS", ".NB", n - 1, &v[1]);
+		return run_noct_application("REMACS", ".NAP", n - 1, &v[1]);
 	}
 	if (streq(v[0], "noct-test")) {
 		int repeat;

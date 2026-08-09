@@ -135,11 +135,11 @@ noct-opcode-check: noct-objects
 NOCT_M3_RELOC := ../build/bootloader/noct-libc-m3.o
 NOCT_M3_UNDEFINED := ../build/bootloader/noct-libc-m3.undefined
 
-noct-link-audit: noct-objects boot98-libc-objects boot98-fs.o \
+noct-link-audit: noct-objects boot98-libc-objects boot98-env.o boot98-fs.o \
 	boot98-namespace.o
 	@mkdir -p $(dir $(NOCT_M3_RELOC))
 	$(NOCT_LD) -m elf_i386 -r $(NOCT_OBJECTS) $(BOOT98_LIBC_OBJECTS) \
-		boot98-fs.o boot98-namespace.o \
+		boot98-env.o boot98-fs.o boot98-namespace.o \
 		-o $(NOCT_M3_RELOC)
 	@$(NOCT_NM) -u $(NOCT_M3_RELOC) | awk '{print $$NF}' | sort -u > \
 		$(NOCT_M3_UNDEFINED)

@@ -698,5 +698,5 @@ Physical Ra43 testing still shows vertical colour bars after explicit module
 loading. The remaining register-initialization mismatch is deferred; the GDC
 console remains the supported display path for the current i486 work.
 
-See `LINUX-7.1-PORT.md`, `QEMU-PC98.md`, and
-`bootloader/README.md` for further implementation and validation details.
+See `LINUX-7.1-PORT.md`, `QEMU-PC98.md`, and the boot-chain sections above
+for further implementation and validation details.

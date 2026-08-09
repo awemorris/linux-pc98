@@ -12,7 +12,7 @@ test -f "$noct_src/CMakeLists.txt" || {
 	echo "Noct submodule is missing; run git submodule update --init third_party/noct" >&2
 	exit 1
 }
-test -x "$remacs_src/tools/build-nb.sh" || {
+test -x "$remacs_src/tools/build-nap.sh" || {
 	echo "Remacs sources are missing from the Noct submodule" >&2
 	exit 1
 }
@@ -54,7 +54,7 @@ test -x "$noct" || {
 }
 
 mkdir -p "$output_dir"
-rm -f -- "$output_dir/REMACS.NB.part"
+rm -f -- "$output_dir/REMACS.NAP.part"
 rm -f -- "$output_dir/SKKJISYO.DIC.part"
 # Keep the temporary path dot-free so this build also works with older Noct
 # revisions from before output-extension parsing was fixed in 887bf89.
@@ -69,28 +69,28 @@ trap cleanup EXIT
 	cd "$remacs_src"
 	mkdir -p "$temporary/generated"
 	python3 tools/gen-napi.py src/napi.def "$temporary/generated"
-	tools/build-nb.sh "$noct" "$temporary/generated" "$temporary"
+	tools/build-nap.sh "$noct" "$temporary/generated" "$temporary"
 )
-test -s "$temporary/REMACS.NB" || {
-	echo "Remacs bytecode compiler produced no REMACS.NB" >&2
+test -s "$temporary/remacs.nap" || {
+	echo "Remacs bytecode compiler produced no remacs.nap" >&2
 	exit 1
 }
 
 # Noct bytecode starts with the portable "Noct Bytecode" header. Checking it here
 # catches accidental source/binary mix-ups before a release image is written.
-test "$(dd if="$temporary/REMACS.NB" bs=1 count=13 status=none)" = \
+test "$(dd if="$temporary/remacs.nap" bs=1 count=13 status=none)" = \
 	"Noct Bytecode" || {
-	echo "REMACS.NB has no Noct bytecode header" >&2
+	echo "remacs.nap has no Noct bytecode header" >&2
 	exit 1
 }
 
-install -m 0644 "$temporary/REMACS.NB" "$output_dir/REMACS.NB.part"
-mv -f -- "$output_dir/REMACS.NB.part" "$output_dir/REMACS.NB"
+install -m 0644 "$temporary/remacs.nap" "$output_dir/REMACS.NAP.part"
+mv -f -- "$output_dir/REMACS.NAP.part" "$output_dir/REMACS.NAP"
 install -m 0644 "$remacs_src/dict/SKK-JISYO.remacs" \
 	"$output_dir/SKKJISYO.DIC.part"
 mv -f -- "$output_dir/SKKJISYO.DIC.part" "$output_dir/SKKJISYO.DIC"
 printf 'Remacs bytecode: %s (%s bytes)\n' \
-	"$output_dir/REMACS.NB" "$(stat -c %s "$output_dir/REMACS.NB")"
+	"$output_dir/REMACS.NAP" "$(stat -c %s "$output_dir/REMACS.NAP")"
 printf 'Remacs SKK dictionary: %s (%s bytes)\n' \
 	"$output_dir/SKKJISYO.DIC" \
 	"$(stat -c %s "$output_dir/SKKJISYO.DIC")"

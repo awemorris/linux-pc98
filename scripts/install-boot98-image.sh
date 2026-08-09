@@ -187,16 +187,16 @@ for utility in LS.NCT CP.NCT; do
 		mcopy -o -i "$image@@$offset" "$bootloader/$utility" ::CMD/"$utility"
 	fi
 done
-remacs_nb="${REMACS_NB:-$repo/build/bootloader/remacs/REMACS.NB}"
+remacs_nap="${REMACS_NAP:-$repo/build/bootloader/remacs/REMACS.NAP}"
 remacs_skk="${REMACS_SKK_DICT:-$repo/build/bootloader/remacs/SKKJISYO.DIC}"
-if test ! -s "$remacs_nb"; then
+if test ! -s "$remacs_nap"; then
 	"$repo/scripts/build-remacs-bytecode.sh"
 fi
-test -s "$remacs_nb" || {
-	echo "Remacs bytecode not found: $remacs_nb" >&2
+test -s "$remacs_nap" || {
+	echo "Remacs bytecode not found: $remacs_nap" >&2
 	exit 1
 }
-mcopy -o -i "$image@@$offset" "$remacs_nb" ::CMD/REMACS.NB
+mcopy -o -i "$image@@$offset" "$remacs_nap" ::CMD/REMACS.NAP
 test -s "$remacs_skk" || {
 	echo "Remacs SKK dictionary not found: $remacs_skk" >&2
 	exit 1

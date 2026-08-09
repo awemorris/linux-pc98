@@ -46,14 +46,14 @@ install -m 0644 "$repo/bootloader/AUTOEXEC.NCT" "$stage/AUTOEXEC.NCT"
 install -m 0644 "$repo/bootloader/HELLO.NCT" "$stage/HELLO.NCT"
 install -m 0644 "$repo/bootloader/LS.NCT" "$stage/CMD/LS.NCT"
 install -m 0644 "$repo/bootloader/CP.NCT" "$stage/CMD/CP.NCT"
-install -m 0644 "$repo/build/bootloader/remacs/REMACS.NB" \
-	"$stage/CMD/REMACS.NB"
+install -m 0644 "$repo/build/bootloader/remacs/REMACS.NAP" \
+	"$stage/CMD/REMACS.NAP"
 install -m 0644 "$repo/build/bootloader/remacs/SKKJISYO.DIC" \
 	"$stage/HOME/SKKJISYO.DIC"
 install -m 0644 "$repo/bootloader/EMACS.RC" "$stage/HOME/.remacs.el"
 install -m 0644 "$repo/bootloader/EMACS.RC" "$stage/HOME/.emacs"
 install -m 0644 "$repo/releases/boot98.cfg" "$stage/BOOT.CFG"
-install -m 0644 "$repo/bootloader/README.md" "$stage/README.md"
+install -m 0644 "$repo/README.md" "$stage/README.md"
 install -m 0644 "$repo/bootloader/dos/README.md" "$stage/DOS-README.md"
 install -m 0644 "$repo/toolchain/gcc/COPYING.LIB" \
 	"$stage/GCC-SOFT-FP-LICENSE.txt"
@@ -66,7 +66,7 @@ install -m 0644 "$repo/third_party/noct/LICENSE" \
 	cd "$stage"
 	zip -X -9 -q "$output.part.$$" \
 		AUTOEXEC.NCT BOOT.CFG BOOT.SYS DOS-README.md GCC-SOFT-FP-LICENSE.txt \
-		CMD/CP.NCT CMD/LS.NCT CMD/REMACS.NB HOME/.emacs HOME/.remacs.el \
+		CMD/CP.NCT CMD/LS.NCT CMD/REMACS.NAP HOME/.emacs HOME/.remacs.el \
 		HOME/SKKJISYO.DIC HELLO.NCT \
 		INST.EXE IO.SYS IPL-LBA0.IMG IPL-LBA2.IMG IPL-PART.IMG \
 		LINUX98.EXE MUSL-COPYRIGHT.txt NOCT-LICENSE.txt README.md

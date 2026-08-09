@@ -111,7 +111,7 @@ static void make_disk(struct test_disk *disk, uint16_t logical_sector_size)
 	put16(disk->data[scale] + 26, 3);
 	memcpy(disk->data[scale] + 32, "..         ", 11);
 	disk->data[scale][32 + 11] = 0x10;
-	memcpy(disk->data[scale] + 64, "REMACS  NB ", 11);
+	memcpy(disk->data[scale] + 64, "REMACS  NAP", 11);
 	disk->data[scale][64 + 11] = 0x20;
 	put16(disk->data[scale] + 64 + 26, 4);
 	put32(disk->data[scale] + 64 + 28, 5);
@@ -153,7 +153,7 @@ static void test_fat16(uint16_t logical_sector_size)
 	assert(boot98_file_read(&file, 0, buffer, 5));
 	assert(!strcmp(buffer, "hello"));
 	memset(buffer, 0, sizeof(buffer));
-	assert(boot98_fs_open(&filesystem, "/cmd/remacs.nb", &file));
+	assert(boot98_fs_open(&filesystem, "/cmd/remacs.nap", &file));
 	assert(file.size == 5);
 	assert(boot98_file_read(&file, 0, buffer, 5));
 	assert(!strcmp(buffer, "remac"));
@@ -161,7 +161,7 @@ static void test_fat16(uint16_t logical_sector_size)
 	assert(!strcmp(entry.name, "KERNEL.BIN"));
 	assert(entry.size == 5 && entry.attributes == 0x20);
 	assert(boot98_fs_readdir(&filesystem, "/cmd", 0, &entry));
-	assert(!strcmp(entry.name, "REMACS.NB"));
+	assert(!strcmp(entry.name, "REMACS.NAP"));
 	assert(!boot98_fs_readdir(&filesystem, "/subdir", 0, &entry));
 	assert(boot98_fs_readdir_result(&filesystem, "/subdir", 0, &entry) ==
 	       BOOT98_FS_NOT_FOUND);
@@ -169,9 +169,9 @@ static void test_fat16(uint16_t logical_sector_size)
 	       BOOT98_FS_READ_ONLY);
 	assert(boot98_file_truncate_result(&file, 0) == BOOT98_FS_READ_ONLY);
 	assert(boot98_file_flush_result(&file) == BOOT98_FS_READ_ONLY);
-	assert(boot98_fs_stat_result(&filesystem, "/cmd/remacs.nb", &entry) ==
+	assert(boot98_fs_stat_result(&filesystem, "/cmd/remacs.nap", &entry) ==
 	       BOOT98_FS_OK);
-	assert(!strcmp(entry.name, "REMACS.NB") && entry.size == 5);
+	assert(!strcmp(entry.name, "REMACS.NAP") && entry.size == 5);
 	assert(boot98_file_contiguous_lba(&file, &lba));
 	assert(lba == TEST_BASE_LBA + disk.data_lba + 2U * scale);
 }

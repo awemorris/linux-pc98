@@ -137,9 +137,10 @@ if test -z "$image"; then
 					sudo tee "$rootfs/etc/network/interfaces" >/dev/null
 				printf '%s\n' 'CONFIGURE_INTERFACES=no' | \
 					sudo tee "$rootfs/etc/default/networking" >/dev/null
-				ROOT_MB=512 "$repo/build.sh" image debian13-i486-h8 \
-					--kernel "$kernel_build/vmlinux.boot" \
-					--rootfs "$rootfs" --output "$image"
+				KERNEL_IMAGE="$kernel_build/vmlinux.boot" \
+					ROOT_STAGE="$rootfs" OUTPUT_IMAGE="$image" \
+					ROOT_MB=512 SWAP_MB=128 \
+					"$repo/scripts/build-images.sh"
 				;;
 		esac
 	fi

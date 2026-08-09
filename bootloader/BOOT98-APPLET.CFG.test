@@ -1,3 +1,0 @@
-echo Running BOOT98 applet...
-run BOOTAPP.BIN one two
-echo Applet test complete

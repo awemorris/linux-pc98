@@ -2,6 +2,15 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")" && pwd)"
+boots="$repo/external/boots"
+
+# The Boots bootloader lives in the external/boots submodule and resolves
+# QEMU, the PC-98 BIOS, release base images, and the soft-float source
+# trees from this repository.
+boots_env()
+{
+	. "$repo/scripts/boots-env.sh"
+}
 
 usage()
 {
@@ -10,8 +19,10 @@ Usage: ./build.sh COMMAND [options]
 
 Primary commands:
   setup [options]             install Debian 13 host build/test dependencies
-  bootloader                  build IPL and BOOT98 binaries
+  bootloader [targets]        build the Boots binaries (external/boots, pc98)
   bootloader-dist             build build/releases/bootloader.zip
+  bootloader-fdd [OUTPUT]     build the Boots FDD image (boots-fdd.img)
+  bootloader-test NAME        run a Boots QEMU test (e.g. noct-repl, hdd-boot)
   remacs                      build CMD/REMACS.NB with the pinned Noct compiler
   remacs-test                 run the bytecode editor under headless QEMU
   noct COMMAND                build or verify the imported Noct core
@@ -37,7 +48,6 @@ Compatibility/developer commands:
   dist                        compress the default legacy image
   glibc FAMILY                build glibc for i386 or i486
   glibc-tests FAMILY          build glibc tests
-  glibc-image FAMILY          build a glibc validation image
   qemu-win64 COMMAND          build Windows QEMU and dependencies
   virtpc98-win64 [COMMAND]    build virtpc98.exe with PyInstaller
   win64-dist [build]          build the complete Windows ZIP distribution
@@ -55,7 +65,7 @@ Run './build.sh image --help' for image-specific options.
 Run './build.sh test --help' for reproducible QEMU test options.
 BOOT installation syntax:
   ./build.sh boot-install [--partition N] [--install-disk-stubs]
-                          IMAGE [VMLINUX [BOOT.CFG]]
+                          IMAGE [VMLINUX [BOOTS.CFG]]
 EOF
 }
 
@@ -65,26 +75,27 @@ build_noct()
 	shift || true
 	case "$action" in
 		objects)
-			make -C "$repo/bootloader" noct-objects "$@"
+			"$boots/build.sh" pc98 noct-objects "$@"
 			;;
 		opcode-check)
-			make -C "$repo/bootloader" noct-opcode-check "$@"
+			"$boots/build.sh" pc98 noct-opcode-check "$@"
 			;;
 		libc-test)
-			make -C "$repo/bootloader" boot98-libc-host-test "$@"
+			"$boots/build.sh" pc98 libc-host-test "$@"
 			;;
 		link-audit)
-			make -C "$repo/bootloader" noct-link-audit "$@"
+			"$boots/build.sh" pc98 noct-link-audit "$@"
 			;;
 		verify)
 			"$repo/scripts/update-noct.sh" verify
-			make -C "$repo/bootloader" noct-m15-verify "$@"
+			boots_env
+			"$boots/build.sh" pc98 noct-m15-verify "$@"
 			;;
 		softfloat-test)
-			make -C "$repo/bootloader" boot98-softfloat-host-test "$@"
+			"$boots/build.sh" pc98 softfloat-host-test "$@"
 			;;
 		lifecycle-test)
-			make -C "$repo/bootloader" boot98-noct-host-test "$@"
+			"$boots/build.sh" pc98 noct-host-test "$@"
 			;;
 		status)
 			"$repo/scripts/update-noct.sh" status
@@ -96,7 +107,7 @@ build_noct()
 			"$repo/scripts/update-noct.sh" update "$@"
 			;;
 		clean)
-			make -C "$repo/bootloader" noct-clean boot98-libc-clean "$@"
+			"$boots/build.sh" pc98 clean "$@"
 			;;
 		-h | --help | help)
 			cat <<'EOF'
@@ -113,7 +124,7 @@ Commands:
   init          initialize the pinned Noct submodule
   update [REF]  fetch and stage a newer Noct gitlink (default: origin/main)
   status        print the submodule origin and pinned/current revisions
-  clean         remove only the selected Noct object files
+  clean         remove the Boots pc98 build tree (build/pc98)
 EOF
 			;;
 		*)
@@ -204,13 +215,31 @@ shift || true
 case "$command" in
 	help | -h | --help) usage ;;
 	setup) "$repo/scripts/setup.sh" "$@" ;;
-	bootloader) make -C "$repo/bootloader" "$@" ;;
+	bootloader) boots_env; "$boots/build.sh" pc98 "$@" ;;
 	bootloader-dist) "$repo/scripts/build-bootloader-dist.sh" "$@" ;;
-	remacs) "$repo/scripts/build-remacs-bytecode.sh" "$@" ;;
-	remacs-test) "$repo/scripts/test-boot98-remacs.sh" "$@" ;;
+	bootloader-fdd)
+		output="${1:-$repo/build/releases/boots-fdd.img}"
+		boots_env
+		mkdir -p "$(dirname "$output")"
+		rm -f -- "$output"
+		"$boots/scripts/make-fdd-image.sh" "$output"
+		;;
+	bootloader-test)
+		name="${1:?usage: ./build.sh bootloader-test NAME [args]}"
+		shift
+		test -x "$boots/scripts/test-$name.sh" || {
+			echo "Unknown Boots test: $name" >&2
+			ls "$boots/scripts" | sed -n 's/^test-\(.*\)\.sh$/  \1/p' >&2
+			exit 2
+		}
+		boots_env
+		"$boots/scripts/test-$name.sh" "$@"
+		;;
+	remacs) boots_env; "$boots/scripts/build-remacs-bytecode.sh" "$@" ;;
+	remacs-test) boots_env; "$boots/scripts/test-remacs.sh" "$@" ;;
 	noct) build_noct "$@" ;;
-	boot-install) "$repo/scripts/install-boot98-image.sh" "$@" ;;
-	dos-loader) make -C "$repo/bootloader/dos" "$@" ;;
+	boot-install) boots_env; "$boots/scripts/install-image.sh" "$@" ;;
+	dos-loader) make -C "$boots/platform/pc98/dos" "$@" ;;
 	kernel) build_kernel "$@" ;;
 	rootfs) build_rootfs "$@" ;;
 	rootfs-cache) "$repo/scripts/rootfs-cache.sh" "$@" ;;
@@ -223,7 +252,6 @@ case "$command" in
 	dist) "$repo/scripts/build-dist.sh" "$@" ;;
 	glibc) "$repo/scripts/build-glibc.sh" "$@" ;;
 	glibc-tests) "$repo/scripts/build-glibc-tests.sh" "$@" ;;
-	glibc-image) "$repo/scripts/build-glibc-validation-image.sh" "$@" ;;
 	qemu-win64) "$repo/scripts/build-qemu-win64.sh" "$@" ;;
 	virtpc98-win64) "$repo/scripts/build-virtpc98.sh" "$@" ;;
 	win64-dist) "$repo/scripts/build-win64-dist.sh" "$@" ;;

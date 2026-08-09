@@ -8,7 +8,7 @@ This repository contains:
 - glibc: 2.41, i486DX port
 - BusyBox: i386SX port
 - qemu: 11.0, NEC PC-9800 support with compatible BIOS
-- pc98boot: NEC PC-9800 HDD-IPL and FAT16 bootloader
+- Boots: NEC PC-9800 HDD-IPL and FAT16 bootloader (external/boots submodule)
 
 Each component is reusable for other retro PCs.
 
@@ -64,7 +64,7 @@ directly, avoiding login timeouts and memory exhaustion on slower machines.
 | `toolchain/` | GCC, musl, and glibc submodules plus the versioned patch inventory |
 | `debian-i486/` | Framework and patch database for the Debian 13/i486DX package port |
 | `configs/` | Debian-derived i686 base and versioned PC-98 configurations |
-| `bootloader/` | PC-98 IPL, BOOT98, FAT16 Linux loader, and DOS loader |
+| `external/boots/` | Boots bootloader submodule: PC-98 IPL, BOOT.SYS, FAT16 Linux loader, and DOS loader |
 | `scripts/` | Internal build, image, test, and publication scripts |
 | `tools/` | Two-partition PC-98 raw disk image builder and helper tools |
 | `build/` | Generated kernel, rootfs, logs, and disk images; ignored by Git |
@@ -95,15 +95,10 @@ validation workflow is:
 ./build.sh glibc i486
 ./build.sh glibc-tests i486
 ./scripts/build-glibc-busybox.sh i486
-./build.sh glibc-image i486
-./scripts/test-glibc-qemu.sh i486
 ```
 
 For exact-i386 research, replace `i486` with `i386` and additionally run
-`check-glibc-i386-opcodes.sh`. The validation image runs a dynamically
-glibc-linked BusyBox as `/sbin/init` and exercises malloc, dynamic loading,
-TLS, pthreads, fork, and robust/process-shared mutexes. The i386-only path
-also runs the kernel atomic suite.
+`check-glibc-i386-opcodes.sh`.
 
 See `GLIBC-2.41-I386-PORT-PLAN.md` for the implementation record, security
 constraints and validation matrix for the exact-i386 research work. Debian
@@ -125,7 +120,8 @@ passed to `apt` manually. Use `./build.sh setup --help` for unattended and
 Root privileges are used when creating the Debian staging tree, installing
 kernel modules into it, and generating the ext4 filesystem image.
 
-The prebuilt `bootloader/dos/linux98.exe` is tracked in the repository and is
+The prebuilt `external/boots/platform/pc98/dos/linux98.exe` is tracked in the
+Boots submodule and is
 stored as `LINUX98.EXE` in generated FAT16 boot partitions. Normal kernel,
 bootloader, image, and Docker builds therefore do not require OpenWatcom.
 Maintainers rebuilding that executable must install OpenWatcom 1.9 and run
@@ -196,9 +192,9 @@ explicitly for automated builds.
 The individual build stages can also be run separately:
 
 ```sh
-./build.sh rootfs debian13-i686
-./build.sh kernel --cpu 686
-./build.sh image debian13-i686-h8
+./build.sh rootfs debian13-i486
+./build.sh kernel --cpu 486
+./build.sh image debian13-i486-ide
 ```
 
 To build the complete public artifact set with canonical filenames:
@@ -340,7 +336,7 @@ as the source for installing BOOT98 onto another DOS-visible disk.
 A test kernel can be installed while creating an image:
 
 ```sh
-./build.sh image debian13-i486-boot98 \
+./build.sh image debian13-i486-ide \
   --kernel build/test-kernel/vmlinux.boot \
   --output build/images/test-kernel.raw
 ```
@@ -349,7 +345,7 @@ To derive a test image without rebuilding its root filesystem, pass either a
 local raw/raw.xz file or a package-server base name:
 
 ```sh
-./build.sh image debian13-i486-boot98 \
+./build.sh image debian13-i486-ide \
   --base-image debian13-i486-boot98-base \
   --kernel build/test-kernel/vmlinux.boot \
   --output build/images/test-from-base.raw
@@ -361,7 +357,7 @@ exact base without exploring the rental server:
 
 ```sh
 ./build.sh cache publish debian13-i486-boot98-base \
-  build/images/debian13-i486-boot98.raw
+  build/images/debian13-i486-ide.raw
 ```
 
 This updates only the documented
@@ -442,7 +438,7 @@ remain Linux-bootable.
 The Linux port includes a PC-98 partition-table parser so both partitions are
 reported through the normal Linux block-device interface.
 
-The `debian13-i486-boot98` profile additionally appends a 128 MiB swap
+The `debian13-i486-*` profiles additionally append a 128 MiB swap
 partition as `/dev/sda3`. Its initial SysV networking policy is disabled in
 `/etc/default/networking`, preventing boot from waiting for DHCP on machines
 without a configured NIC. Enable it after installing and configuring the
@@ -451,16 +447,11 @@ desired PC-98 network adapter.
 ## Updating only the kernel
 
 To update `VMLINUX` in Partition 1 without rebuilding or modifying the
-Debian userland in Partition 2:
+Debian userland in Partition 2, derive a new image from an existing raw
+image and a stripped, non-compressed ELF vmlinux:
 
 ```sh
-./build.sh image debian13-i686-h8
-```
-
-An alternate raw image and stripped, non-compressed ELF vmlinux can be supplied as arguments:
-
-```sh
-./build.sh image debian13-i686-h8 \
+./build.sh image debian13-i486-ide \
   --base-image path/to/disk.raw \
   --kernel path/to/vmlinux.boot \
   --output build/images/test.raw
@@ -537,33 +528,17 @@ The trimmed kernel and module set build successfully. The generated
 two-partition image boots under qemu-pc98 with TCG, mounts the Debian 13 ext4
 root filesystem, reaches the login prompt, and reports Linux 7.1.0 i686.
 
-To build and run the small i486 image with the same PC-98-only profile and
-i386-compatible BusyBox used by the genuine-i386 image:
+To build and run the small BusyBox image:
 
 ```sh
-./build.sh image busybox-i486-h8
+./build.sh image busybox-i386-ide
 
 qemu-system-i386 \
   -M pc9801 \
-  -cpu 486 \
-  -m 5M \
+  -cpu 386 \
+  -m 8 \
   -accel tcg \
-  -drive if=ide,bus=0,unit=0,format=raw,file=build/i486-video/linux-7.1-pc98-i486-busybox.img
-```
-
-The larger generic scripts can still build a Linux 7.1/i686 BusyBox
-development image, but Release images use the Debian 13 userland for i686:
-
-```sh
-CPU_FAMILY=686 ./scripts/build-i486-rootfs.sh
-CPU_FAMILY=686 ./scripts/build-i486-image.sh
-
-qemu-system-i386 \
-  -M pc9821 \
-  -cpu pentium2,-apic \
-  -m 64 \
-  -accel tcg \
-  -drive if=ide,bus=0,unit=0,format=raw,file=build/qemu-pc98-linux-7.1-i686-busybox.raw
+  -drive if=ide,bus=0,unit=0,format=raw,file=build/images/busybox-i386-ide.raw
 ```
 
 Use the named `build.sh image` profiles for release and routine test images.

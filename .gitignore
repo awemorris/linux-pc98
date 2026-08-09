@@ -1,13 +1,5 @@
 /build/
 /dist/
-/bootloader/*.bin
-/bootloader/*.sys
-/bootloader/*.elf
-/bootloader/*.o
-/bootloader/*.BIN
-/bootloader/BOOT.SYS
-/bootloader/BOOT-M9.SYS
-/bootloader/*.com
 *~
 __pycache__/
 *.py[cod]

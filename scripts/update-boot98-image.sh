@@ -6,8 +6,9 @@ set -euo pipefail
 # always come from the same source revision.  The BOOT filesystem is rebuilt;
 # root and swap partitions are not modified.
 repo="$(cd "$(dirname "$0")/.." && pwd)"
+. "$repo/scripts/boots-env.sh"
 image="${1:?usage: $0 IMAGE VMLINUX [BOOT.CFG]}"
 kernel="${2:?usage: $0 IMAGE VMLINUX [BOOT.CFG]}"
 cfg="${3:-}"
 
-exec "$repo/scripts/install-boot98-image.sh" "$image" "$kernel" "$cfg"
+exec "$repo/external/boots/scripts/install-image.sh" "$image" "$kernel" "$cfg"

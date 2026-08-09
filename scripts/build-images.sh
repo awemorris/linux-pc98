@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
+. "$repo/scripts/boots-env.sh"
 build="$repo/build"
 kernel_version="${KERNEL_VERSION:-7.1}"
 default_kernel_build="$build/kernel-$kernel_version"
@@ -16,7 +17,7 @@ small_ext4="${SMALL_EXT4:-0}"
 disk_heads="${DISK_HEADS:-8}"
 disk_sectors="${DISK_SECTORS:-17}"
 output="${OUTPUT_IMAGE:-$default_output}"
-dos_loader="${DOS_LOADER:-$repo/bootloader/dos/linux98.exe}"
+dos_loader="${DOS_LOADER:-$repo/external/boots/platform/pc98/dos/linux98.exe}"
 
 if [ ! -f "$kernel_image" ]; then
 	echo "Kernel image not found: $kernel_image" >&2
@@ -30,7 +31,7 @@ if [ ! -d "$root_stage" ]; then
 fi
 
 mkdir -p "$build"
-make -C "$repo/bootloader"
+"$repo/external/boots/build.sh" pc98
 if [ ! -f "$dos_loader" ]; then
 	echo "DOS Linux loader not found: $dos_loader" >&2
 	echo "Restore the tracked binary or run ./build.sh dos-loader." >&2
@@ -54,9 +55,9 @@ fi
 
 sudo python3 "$repo/tools/mk-pc98-linux-disk.py" create \
 	"$output" \
-	"$repo/bootloader/ipl-lba0.bin" \
-	"$repo/bootloader/partition-pbr.bin" \
-	"$repo/bootloader/fat-loader.bin" \
+	"$repo/external/boots/build/pc98/ipl-lba0.bin" \
+	"$repo/external/boots/build/pc98/partition-pbr.bin" \
+	"$repo/external/boots/build/pc98/fat-loader.bin" \
 	"$kernel_image" \
 	"$root_stage" \
 	"${image_options[@]}"

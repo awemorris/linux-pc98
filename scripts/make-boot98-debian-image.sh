@@ -4,7 +4,8 @@ set -euo pipefail
 PATH="/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-bootloader_dir="$repo/bootloader"
+. "$repo/scripts/boots-env.sh"
+bootloader_dir="$repo/external/boots/build/pc98"
 rootfs="${1:?usage: $0 ROOTFS OUTPUT [VMLINUX]}"
 output="${2:?usage: $0 ROOTFS OUTPUT [VMLINUX]}"
 kernel="${3:-$repo/build/kernel-7.1-i486/vmlinux.boot}"
@@ -96,8 +97,7 @@ cleanup()
 }
 trap cleanup EXIT INT TERM
 
-make -C "$bootloader_dir" ipl-lba0.bin ipl-lba2.bin \
-	partition-pbr.bin IO.SYS BOOT.SYS
+"$repo/external/boots/build.sh" pc98
 mkdir -p "$(dirname "$output")" "$mount_dir"
 truncate -s "$total_bytes" "$output"
 dd if="$bootloader_dir/ipl-lba0.bin" of="$output" bs=512 count=1 \
@@ -223,9 +223,9 @@ mkswap --quiet --label PC98SWAP "$swap_image"
 dd if="$swap_image" of="$output" bs=512 seek="$swap_start" \
 	conv=notrunc,sparse status=progress
 
-BOOT98_AUTOEXEC="$repo/bootloader/AUTOEXEC.NCT" \
+BOOTS_AUTOEXEC="$repo/external/boots/apps/AUTOEXEC.NCT" \
 DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
-	"$repo/scripts/install-boot98-image.sh" --install-disk-stubs \
+	"$repo/external/boots/scripts/install-image.sh" --install-disk-stubs \
 	"$output" "$kernel" "$cfg"
 sync
 

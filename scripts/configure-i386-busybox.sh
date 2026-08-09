@@ -2,7 +2,7 @@
 set -eu
 
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-source="$repo/linux-7.1"
+source="$repo/external/kernel/linux-7.1"
 console_mode="${I386_CONSOLE:-video}"
 cpu_family="${CPU_FAMILY:-386}"
 build="${I386_KERNEL_BUILD:-$repo/build/i386-busybox/kernel}"

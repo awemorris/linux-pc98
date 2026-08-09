@@ -54,7 +54,7 @@ rebuild=0
 jobs="${JOBS:-$(nproc)}"
 timeout_seconds=0
 log=""
-qemu="${QEMU:-$repo/qemu-pc98/build/qemu-system-i386}"
+qemu="${QEMU:-$repo/external/qemu-pc98/build/qemu-system-i386}"
 bios_dir="${BIOS_DIR:-$(dirname "$qemu")/../pc-bios}"
 memory=""
 storage=ide
@@ -110,6 +110,8 @@ if test -z "$image"; then
 				rootfs="$repo/build/i386-buildroot/output/target"
 				skip_rootfs=0
 				test -x "$rootfs/bin/busybox" && skip_rootfs=1
+				# A serial test image boots silently: no AUTOEXEC.NCT menu.
+				BOOTS_AUTOEXEC= \
 				CPU_FAMILY=386 I386_CONSOLE=dual JOBS="$jobs" \
 					SKIP_ROOTFS_BUILD="$skip_rootfs" ROOT_STAGE="$rootfs" \
 					OUTPUT_IMAGE="$image" \

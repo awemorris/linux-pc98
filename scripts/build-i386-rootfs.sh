@@ -9,8 +9,8 @@ source="$work/buildroot-$version"
 output="$work/output"
 archive="$work/buildroot-$version.tar.xz"
 url="https://buildroot.org/downloads/buildroot-$version.tar.xz"
-gcc_source="$repo/toolchain/gcc"
-musl_source="$repo/toolchain/musl"
+gcc_source="$repo/external/gcc"
+musl_source="$repo/external/musl"
 console_mode="${I386_CONSOLE:-video}"
 
 case "$console_mode" in
@@ -44,10 +44,10 @@ fi
 if [ ! -d "$source" ]; then
 	tar -C "$work" -xf "$archive"
 	patch -d "$source" -p1 \
-		< "$repo/patches/buildroot-2026.05-i386.patch"
+		< "$repo/external/kernel/patches/buildroot-2026.05-i386.patch"
 fi
 install -m 0644 \
-	"$repo/patches/busybox-1.38.0-i386.patch" \
+	"$repo/external/kernel/patches/busybox-1.38.0-i386.patch" \
 	"$source/package/busybox/0012-i386-do-not-require-i486-instructions.patch"
 
 # Buildroot's override mechanism copies the repository-managed GCC and musl

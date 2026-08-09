@@ -53,11 +53,10 @@ if [ -n "${BOOT_LOGO:-}" ]; then
 	image_options+=(--logo "$BOOT_LOGO")
 fi
 
-sudo python3 "$repo/tools/mk-pc98-linux-disk.py" create \
+sudo python3 "$repo/scripts/mk-pc98-linux-disk.py" create \
 	"$output" \
 	"$repo/external/boots/build/pc98/ipl-lba0.bin" \
 	"$repo/external/boots/build/pc98/partition-pbr.bin" \
-	"$repo/external/boots/build/pc98/fat-loader.bin" \
 	"$kernel_image" \
 	"$root_stage" \
 	"${image_options[@]}"

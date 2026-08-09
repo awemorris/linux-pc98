@@ -58,9 +58,9 @@ install -m 0644 "$repo/releases/boot98.cfg" "$stage/BOOTS.CFG"
 install -m 0644 "$repo/releases/boot98.cfg" "$stage/BOOT.CFG"
 install -m 0644 "$repo/README.md" "$stage/README.md"
 install -m 0644 "$boots/platform/pc98/dos/README.md" "$stage/DOS-README.md"
-install -m 0644 "$repo/toolchain/gcc/COPYING.LIB" \
+install -m 0644 "$repo/external/gcc/COPYING.LIB" \
 	"$stage/GCC-SOFT-FP-LICENSE.txt"
-install -m 0644 "$repo/toolchain/musl/COPYRIGHT" \
+install -m 0644 "$repo/external/musl/COPYRIGHT" \
 	"$stage/MUSL-COPYRIGHT.txt"
 install -m 0644 "$boots/noct/LICENSE" \
 	"$stage/NOCT-LICENSE.txt"

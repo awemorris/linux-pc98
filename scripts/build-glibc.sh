@@ -5,7 +5,7 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 family="${1:-}"
 jobs="${JOBS:-32}"
 root="${GLIBC_BUILD_ROOT:-$repo/build/glibc-2.41}"
-source_dir="$repo/toolchain/glibc"
+source_dir="$repo/external/glibc"
 sysroot="$root/sysroot"
 kernel_build="$root/kernel-headers"
 
@@ -48,7 +48,7 @@ CPU_FAMILY=386 I386_CONSOLE=dual \
 I386_KERNEL_BUILD="$kernel_build" \
 I386_CONFIG_OUTPUT="$root/kernel-headers.config" \
 	"$repo/scripts/configure-i386-busybox.sh"
-make -C "$repo/linux-7.1" O="$kernel_build" ARCH=i386 \
+make -C "$repo/external/kernel/linux-7.1" O="$kernel_build" ARCH=i386 \
 	headers_install INSTALL_HDR_PATH="$sysroot/usr"
 
 build_dir="$root/build-$family"

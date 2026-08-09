@@ -17,8 +17,8 @@ if [ -n "${QEMU:-}" ]; then
 	qemu="$QEMU"
 else
 	for candidate in \
-		"$repo/qemu-pc98/build-i386-port/qemu-system-i386" \
-		"$repo/qemu-pc98/build/qemu-system-i386" \
+		"$repo/external/qemu-pc98/build-i386-port/qemu-system-i386" \
+		"$repo/external/qemu-pc98/build/qemu-system-i386" \
 		"/home/awe/qemu-pc98/build-i386-port/qemu-system-i386"
 	do
 		if [ -x "$candidate" ]; then
@@ -33,7 +33,7 @@ if [ -z "${qemu:-}" ] || [ ! -x "$qemu" ]; then
 	exit 1
 fi
 test -f "$image"
-bios="${QEMU_BIOS:-$repo/qemu-pc98/pc-bios}"
+bios="${QEMU_BIOS:-$repo/external/qemu-pc98/pc-bios}"
 if [ ! -d "$bios" ]; then
 	bios="$(dirname "$(dirname "$qemu")")/pc-bios"
 fi

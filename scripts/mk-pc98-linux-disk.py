@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Build or update a PC-98 Linux raw disk image."""
+"""Build a PC-98 Linux raw disk image.
+
+The result is an intermediate two/three-partition layout (FAT16 BOOT,
+ext4 root, optional swap).  It is not bootable on its own: the Boots
+installer (external/boots/scripts/install-image.sh --install-disk-stubs)
+installs the IPL, disk stubs, PBR, and BOOT.SYS afterwards.
+"""
 
 import argparse
 import math
@@ -16,9 +22,6 @@ SECTORS = 17
 CYL_SECTORS = HEADS * SECTORS
 PARTITION_TABLE_LBA = 1
 PARTITION_ENTRY_SIZE = 32
-IPL_LOADER_SECTORS = 0x1F0
-PBR_LOADER_SECTORS = 0x46
-LOADER_LBA = 2
 
 
 def set_geometry(heads, sectors):
@@ -36,11 +39,11 @@ def read_file(path):
 
 
 def read_legacy_pbr(path):
-    """Return the first physical sector of a BOOT98 PBR template.
+    """Return the first physical sector of a Boots PBR template.
 
-    The current BOOT98 partition loader occupies one 1024-byte PC-98 DOS
+    The current Boots partition loader occupies one 1024-byte PC-98 DOS
     logical sector.  This image builder still creates an intermediate FAT16
-    volume with its historical 512-byte PBR; install-boot98-image.sh replaces
+    volume with its historical 512-byte PBR; the Boots installer replaces
     that volume and installs the complete 1024-byte PBR afterwards.  Accept
     both template sizes here so the intermediate image remains buildable.
     """
@@ -75,45 +78,6 @@ def partition_entry(mid, sid, start_cylinder, end_cylinder, name):
         end_cylinder,
         label,
     )
-
-
-def detect_geometry(image_path):
-    geometry = None
-    with open(image_path, "rb") as image:
-        image.seek(PARTITION_TABLE_LBA * SECTOR_SIZE)
-        table = image.read(16 * PARTITION_ENTRY_SIZE)
-    if len(table) != SECTOR_SIZE:
-        raise RuntimeError("short PC-98 partition table")
-    for index in range(16):
-        offset = index * PARTITION_ENTRY_SIZE
-        fields = struct.unpack(
-            "<BBBBBBHBBHBBH16s",
-            table[offset:offset + PARTITION_ENTRY_SIZE])
-        if not fields[0] and not fields[1]:
-            continue
-        entry_geometry = (fields[11] + 1, fields[10] + 1)
-        if geometry is None:
-            geometry = entry_geometry
-        elif geometry != entry_geometry:
-            raise RuntimeError(
-                "inconsistent PC-98 partition end geometry")
-    if geometry is None:
-        raise RuntimeError("PC-98 partition table is empty")
-    return geometry
-
-
-def parse_partition(image, index):
-    image.seek((PARTITION_TABLE_LBA * SECTOR_SIZE) +
-               (index * PARTITION_ENTRY_SIZE))
-    raw = image.read(PARTITION_ENTRY_SIZE)
-    if len(raw) != PARTITION_ENTRY_SIZE:
-        raise RuntimeError("short PC-98 partition table")
-    fields = struct.unpack("<BBBBBBHBBHBBH16s", raw)
-    start = chs_lba(fields[9], fields[8], fields[7])
-    end = chs_lba(fields[12], fields[11], fields[10])
-    if not fields[0] or end < start:
-        raise RuntimeError(f"invalid PC-98 partition {index + 1}")
-    return start, end - start + 1
 
 
 def fat16_layout(total_sectors, reserved, sectors_per_cluster,
@@ -352,12 +316,6 @@ def create(args):
     if len(ipl) != SECTOR_SIZE or ipl[4:8] != b"IPL1":
         raise RuntimeError("disk IPL must be 512 bytes with IPL1 at offset 4")
     pbr = read_legacy_pbr(args.pbr)
-    loader = read_file(args.loader)
-    loader_sectors = math.ceil(len(loader) / SECTOR_SIZE)
-    if not 0 < loader_sectors <= chs_lba(1) - LOADER_LBA:
-        raise RuntimeError("second-stage loader does not fit before partition 1")
-    struct.pack_into("<H", ipl, IPL_LOADER_SECTORS, loader_sectors)
-    struct.pack_into("<H", pbr, PBR_LOADER_SECTORS, loader_sectors)
     if args.boot_mb <= 0:
         raise RuntimeError("boot partition size must be positive")
     boot_cylinders = math.ceil(
@@ -391,9 +349,6 @@ def create(args):
         image.truncate(total_sectors * SECTOR_SIZE)
         image.seek(0)
         image.write(ipl)
-        image.seek(LOADER_LBA * SECTOR_SIZE)
-        image.write(loader)
-        image.write(b"\0" * (loader_sectors * SECTOR_SIZE - len(loader)))
         table = bytearray(SECTOR_SIZE)
         table[0:32] = partition_entry(
             0xA1, 0x81, p1_start_cyl, p1_end_cyl, "LINUXBOOT")
@@ -437,47 +392,6 @@ def create(args):
     print(summary)
 
 
-def update_kernel(args):
-    ipl = bytearray(read_file(args.ipl))
-    if len(ipl) != SECTOR_SIZE or ipl[4:8] != b"IPL1":
-        raise RuntimeError("disk IPL must be 512 bytes with IPL1 at offset 4")
-    pbr = read_legacy_pbr(args.pbr)
-    loader = read_file(args.loader)
-    loader_sectors = math.ceil(len(loader) / SECTOR_SIZE)
-    struct.pack_into("<H", ipl, IPL_LOADER_SECTORS, loader_sectors)
-    struct.pack_into("<H", pbr, PBR_LOADER_SECTORS, loader_sectors)
-
-    with open(args.image, "r+b") as image:
-        image.seek(4)
-        if image.read(4) != b"IPL1":
-            raise RuntimeError("not a Mirai98 PC-98 disk image")
-        start_lba, sectors = parse_partition(image, 0)
-        if not 0 < loader_sectors <= start_lba - LOADER_LBA:
-            raise RuntimeError(
-                "second-stage loader does not fit before partition 1")
-        image.seek(0)
-        image.write(ipl)
-        write_zeros(
-            image, LOADER_LBA * SECTOR_SIZE,
-            (start_lba - LOADER_LBA) * SECTOR_SIZE)
-        image.seek(LOADER_LBA * SECTOR_SIZE)
-        image.write(loader)
-        fat_info = write_fat16(
-            image, start_lba, sectors, args.kernel, pbr, args.logo,
-            args.dos_loader)
-    logo_summary = (
-        f"; boot logo {fat_info['logo_bytes']} bytes"
-        if fat_info["logo_bytes"] else "")
-    dos_loader_summary = (
-        f"; DOS loader {fat_info['dos_loader_bytes']} bytes"
-        if fat_info["dos_loader_bytes"] else "")
-    print(
-        f"updated {args.image} partition 1: "
-        f"kernel {fat_info['kernel_bytes']} bytes{logo_summary}"
-        f"{dos_loader_summary}; "
-        "partition 2 was not modified")
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -486,7 +400,6 @@ def main():
     create_parser.add_argument("output")
     create_parser.add_argument("ipl")
     create_parser.add_argument("pbr")
-    create_parser.add_argument("loader")
     create_parser.add_argument("kernel")
     create_parser.add_argument("root_stage")
     create_parser.add_argument("--boot-mb", type=int, default=200)
@@ -505,28 +418,7 @@ def main():
         help="use a 1 MiB journal and omit large-filesystem ext4 features")
     create_parser.set_defaults(function=create)
 
-    update_parser = subparsers.add_parser("update-kernel")
-    update_parser.add_argument("image")
-    update_parser.add_argument("ipl")
-    update_parser.add_argument("pbr")
-    update_parser.add_argument("loader")
-    update_parser.add_argument("kernel")
-    update_parser.add_argument("--heads", type=int)
-    update_parser.add_argument("--sectors", type=int)
-    update_parser.add_argument(
-        "--logo",
-        help="optional 80x120 packed 1bpp LOGO.RAW for the boot screen")
-    update_parser.add_argument(
-        "--dos-loader",
-        help="optional DOS Linux loader stored as LINUX98.EXE")
-    update_parser.set_defaults(function=update_kernel)
-
     args = parser.parse_args()
-    if args.command == "update-kernel":
-        if (args.heads is None) != (args.sectors is None):
-            raise RuntimeError("--heads and --sectors must be specified together")
-        if args.heads is None:
-            args.heads, args.sectors = detect_geometry(args.image)
     set_geometry(args.heads, args.sectors)
     args.function(args)
 

@@ -58,20 +58,19 @@ directly, avoiding login timeouts and memory exhaustion on slower machines.
 
 | Path | Contents |
 | --- | --- |
-| `linux-2.6.7-pc98-original/` | Immutable last-complete upstream PC-9800 source snapshot from immediately before its 2004 removal |
-| `linux-7.1/` | Linux 7.1 source tree with the clean PC-98 port integrated |
-| `qemu-pc98/` | qemu-pc98 submodule used for i386 and PC-98 validation |
-| `toolchain/` | GCC, musl, and glibc submodules plus the versioned patch inventory |
-| `debian-i486/` | Framework and patch database for the Debian 13/i486DX package port |
+| `external/kernel/linux-2.6.7-pc98-original/` | Immutable last-complete upstream PC-9800 source snapshot from immediately before its 2004 removal |
+| `external/kernel/linux-7.1/` | Linux 7.1 source tree with the clean PC-98 port integrated |
+| `external/qemu-pc98/` | qemu-pc98 submodule used for i386 and PC-98 validation |
+| `external/gcc`, `external/musl`, `external/glibc` | Toolchain submodules; versioned patch inventory in `external/patchsets/` |
+| `external/debian-i486/` | Framework and patch database for the Debian 13/i486DX package port |
 | `configs/` | Debian-derived i686 base and versioned PC-98 configurations |
-| `external/boots/` | Boots bootloader submodule: PC-98 IPL, BOOT.SYS, FAT16 Linux loader, and DOS loader |
-| `scripts/` | Internal build, image, test, and publication scripts |
-| `tools/` | Two-partition PC-98 raw disk image builder and helper tools |
+| `external/boots/` | Boots bootloader submodule: PC-98 IPL, BOOT.SYS, and DOS loader |
+| `scripts/` | Internal build, image, test, publication scripts and disk-image tools |
 | `build/` | Generated kernel, rootfs, logs, and disk images; ignored by Git |
 | `build.sh` | Single supported entry point for all project builds |
 
 Nix is not required. The build uses standard packages available on Debian 13.
-See `toolchain/README.md` for the exact source baselines, local-source
+See `external/TOOLCHAIN.md` for the exact source baselines, local-source
 integration, patch regeneration, update procedure, and automated patch
 replay check.
 
@@ -82,7 +81,7 @@ the current Linux 7.1 tree is documented in `LINUX-7.1-PORT.md`.
 ## glibc 2.41 ports
 
 The supported Debian target is the glibc 2.41 i486DX port maintained in the
-`toolchain/glibc` submodule. It uses the i486 native atomic instructions and
+`external/glibc` submodule. It uses the i486 native atomic instructions and
 serves i486DX, Pentium, and Pentium MMX machines. An exact-i386 glibc research
 target also passes its dedicated validation suite, but it is not a Debian
 distribution target. It depends on a versioned kernel atomic syscall because
@@ -102,7 +101,7 @@ For exact-i386 research, replace `i486` with `i386` and additionally run
 
 See `GLIBC-2.41-I386-PORT-PLAN.md` for the implementation record, security
 constraints and validation matrix for the exact-i386 research work. Debian
-i486 packaging is tracked in `debian-i486/`.
+i486 packaging is tracked in `external/debian-i486/`.
 
 ## Host requirements
 
@@ -185,7 +184,7 @@ modules, builds the PC-98 loaders, and creates:
 build/qemu-pc98-linux-7.1.raw
 ```
 
-The kernel is built out of tree in `build/kernel-7.1`; `linux-7.1/` remains
+The kernel is built out of tree in `build/kernel-7.1`; `external/kernel/linux-7.1/` remains
 a source-only directory. `KERNEL_VERSION=7.1` may still be specified
 explicitly for automated builds.
 
@@ -510,7 +509,7 @@ The untrimmed Debian driver catalogue remains available for comparison:
 
 ## Linux 7.1 port status
 
-The `linux-7.1/` tree is based on the official Linux v7.1 release. PC-98
+The `external/kernel/linux-7.1/` tree is based on the official Linux v7.1 release. PC-98
 support was cleanly and directly reconstructed from the official final
 Linux/PC-98 2.6.7 sources, with current APIs and independently maintained
 project code documented in `LINUX-7.1-PORT.md`. Linux 7.1 changed

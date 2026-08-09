@@ -36,7 +36,7 @@ case "$mode" in
 		make -C "$repo/external/boots" ARCH=pc98 clean
 		for name in kernel-7.1 kernel-7.1-i486; do
 			test -d "$build/$name" || continue
-			make -C "$repo/linux-7.1" O="$build/$name" ARCH=i386 clean
+			make -C "$repo/external/kernel/linux-7.1" O="$build/$name" ARCH=i386 clean
 		done
 		;;
 	stale)

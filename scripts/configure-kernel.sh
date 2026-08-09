@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 kernel_version="${KERNEL_VERSION:-7.1}"
-source="${KERNEL_SOURCE:-$repo/linux-$kernel_version}"
+source="${KERNEL_SOURCE:-$repo/external/kernel/linux-$kernel_version}"
 cpu_family="${CPU_FAMILY:-686}"
 device_profile="${DEVICE_PROFILE:-}"
 console_mode="${CONSOLE_MODE:-video}"

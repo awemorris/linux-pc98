@@ -57,7 +57,7 @@ if [ "$skip_kernel_build" = 0 ]; then
 	I386_KERNEL_BUILD="$kernel_build" \
 	I386_CONFIG_OUTPUT="$config_output" \
 		"$repo/scripts/configure-i386-busybox.sh"
-	make -C "$repo/linux-7.1" O="$kernel_build" ARCH=i386 -j"$jobs" vmlinux
+	make -C "$repo/external/kernel/linux-7.1" O="$kernel_build" ARCH=i386 -j"$jobs" vmlinux
 	objcopy --strip-all "$kernel_build/vmlinux" "$boot_vmlinux"
 	chmod 0644 "$boot_vmlinux"
 elif [ "$skip_kernel_build" = 1 ]; then
@@ -133,7 +133,7 @@ printf '%s\n' \
 	'kernel VMLINUX' \
 	"arg root=$root_device rootfstype=ext4 rw${kernel_extra_args:+ $kernel_extra_args}" \
 	'boot' >"$cfg"
-BOOTS_AUTOEXEC="$repo/external/boots/apps/AUTOEXEC.NCT" \
+BOOTS_AUTOEXEC="${BOOTS_AUTOEXEC-$repo/external/boots/apps/AUTOEXEC.NCT}" \
 DISK_HEADS="${DISK_HEADS:-8}" DISK_SECTORS="${DISK_SECTORS:-17}" \
 	"$repo/external/boots/scripts/install-image.sh" --install-disk-stubs \
 		"$output" "$boot_vmlinux" "$cfg"

@@ -10,8 +10,8 @@ validate()
 	component="$1"
 	version="$2"
 	upstream_tag="$3"
-	source="$repo/toolchain/$component"
-	patch_dir="$repo/toolchain/patchsets/$component/$version"
+	source="$repo/external/$component"
+	patch_dir="$repo/external/patchsets/$component/$version"
 	replay="$tmp/$component"
 
 	if [ ! -e "$source/.git" ]; then

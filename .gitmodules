@@ -1,16 +1,16 @@
-[submodule "toolchain/musl"]
+[submodule "external/musl"]
 	path = external/musl
 	url = https://github.com/awemorris/musl-i386.git
-[submodule "toolchain/gcc"]
+[submodule "external/gcc"]
 	path = external/gcc
 	url = https://github.com/awemorris/gcc-i386.git
-[submodule "toolchain/glibc"]
+[submodule "external/glibc"]
 	path = external/glibc
 	url = https://github.com/awemorris/glibc-i386.git
-[submodule "qemu-pc98"]
+[submodule "external/qemu-pc98"]
 	path = external/qemu-pc98
 	url = https://github.com/awemorris/qemu-pc98.git
-[submodule "debian-i486"]
+[submodule "external/debian-i486"]
 	path = external/debian-i486
 	url = git@github.com:awemorris/debian-i486.git
 [submodule "external/boots"]

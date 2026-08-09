@@ -17,19 +17,19 @@ submodules. Patch files are ordered and can be applied with `git am`.
 Run these commands from the linux-pc98 repository root:
 
 ```sh
-rm -f toolchain/patchsets/musl/1.2.6/*.patch
-git -C toolchain/musl format-patch \
-  --output-directory "$PWD/toolchain/patchsets/musl/1.2.6" \
+rm -f external/patchsets/musl/1.2.6/*.patch
+git -C external/musl format-patch \
+  --output-directory "$PWD/external/patchsets/musl/1.2.6" \
   upstream-1.2.6..main
 
-rm -f toolchain/patchsets/gcc/14.3.0/*.patch
-git -C toolchain/gcc format-patch \
-  --output-directory "$PWD/toolchain/patchsets/gcc/14.3.0" \
+rm -f external/patchsets/gcc/14.3.0/*.patch
+git -C external/gcc format-patch \
+  --output-directory "$PWD/external/patchsets/gcc/14.3.0" \
   upstream-14.3.0..main
 
-rm -f toolchain/patchsets/glibc/2.41/*.patch
-git -C toolchain/glibc format-patch \
-  --output-directory "$PWD/toolchain/patchsets/glibc/2.41" \
+rm -f external/patchsets/glibc/2.41/*.patch
+git -C external/glibc format-patch \
+  --output-directory "$PWD/external/patchsets/glibc/2.41" \
   upstream-2.41..port/glibc-2.41-i386
 ```
 
@@ -38,9 +38,9 @@ revision exactly reproducible. The retained glibc 2.43 research baseline is
 kept in `glibc/2.43/`; regenerate it independently with:
 
 ```sh
-rm -f toolchain/patchsets/glibc/2.43/*.patch
-git -C toolchain/glibc format-patch \
-  --output-directory "$PWD/toolchain/patchsets/glibc/2.43" \
+rm -f external/patchsets/glibc/2.43/*.patch
+git -C external/glibc format-patch \
+  --output-directory "$PWD/external/patchsets/glibc/2.43" \
   upstream-2.43..main
 ```
 
@@ -53,7 +53,7 @@ single-HEAD tree comparison.
 After changing a submodule or regenerating an export, run:
 
 ```sh
-./toolchain/validate-patchsets.sh
+./scripts/validate-patchsets.sh
 ```
 
 The script starts at each recorded upstream tag, applies every exported

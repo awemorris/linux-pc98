@@ -1,18 +1,24 @@
 [submodule "external/musl"]
 	path = external/musl
 	url = https://github.com/awemorris/musl-i386.git
+	branch = main
 [submodule "external/gcc"]
 	path = external/gcc
 	url = https://github.com/awemorris/gcc-i386.git
+	branch = main
 [submodule "external/glibc"]
 	path = external/glibc
 	url = https://github.com/awemorris/glibc-i386.git
+	branch = port/glibc-2.41-i386
 [submodule "external/qemu-pc98"]
 	path = external/qemu-pc98
 	url = https://github.com/awemorris/qemu-pc98.git
+	branch = master
 [submodule "external/debian-i486"]
 	path = external/debian-i486
-	url = git@github.com:awemorris/debian-i486.git
+	url = https://github.com/awemorris/debian-i486.git
+	branch = main
 [submodule "external/boots"]
 	path = external/boots
-	url = git@github.com:awemorris/boots.git
+	url = https://github.com/awemorris/boots.git
+	branch = main

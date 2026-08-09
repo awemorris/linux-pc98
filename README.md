@@ -76,7 +76,7 @@ replay check.
 
 The historical Linux 2.6.7 tree is retained as immutable source and
 provenance material; it is not used by the build. The direct clean port to
-the current Linux 7.1 tree is documented in `LINUX-7.1-PORT.md`.
+the current Linux 7.1 tree is documented in `external/kernel/audit/`.
 
 ## glibc 2.41 ports
 
@@ -97,10 +97,10 @@ validation workflow is:
 ```
 
 For exact-i386 research, replace `i486` with `i386` and additionally run
-`check-glibc-i386-opcodes.sh`.
+`scripts/check-glibc-i386-opcodes.sh`.
 
-See `GLIBC-2.41-I386-PORT-PLAN.md` for the implementation record, security
-constraints and validation matrix for the exact-i386 research work. Debian
+See `external/patchsets/glibc/` for the per-release patch inventory, security
+constraints and validation notes covering the exact-i386 research work. Debian
 i486 packaging is tracked in `external/debian-i486/`.
 
 ## Host requirements
@@ -512,7 +512,8 @@ The untrimmed Debian driver catalogue remains available for comparison:
 The `external/kernel/linux-7.1/` tree is based on the official Linux v7.1 release. PC-98
 support was cleanly and directly reconstructed from the official final
 Linux/PC-98 2.6.7 sources, with current APIs and independently maintained
-project code documented in `LINUX-7.1-PORT.md`. Linux 7.1 changed
+project code documented in `external/kernel/audit/PC98-PORTING-REPORT.md`.
+Linux 7.1 changed
 partition-parser logging to `struct seq_buf`; the NEC98 parser follows the
 new API.
 
@@ -602,7 +603,7 @@ qemu-system-i386 \
 ```
 
 `QEMU`, `BIOS_DIR`, `MACHINE`, `CPU`, `MEMORY`, `ACCEL`, and
-`DISPLAY_BACKEND` can override the defaults used by `run-qemu.sh`.
+`DISPLAY_BACKEND` can override the defaults used by `scripts/run-qemu.sh`.
 
 For i486DX, Pentium, and Pentium MMX machines, use the project's Debian
 13/i486DX image and package repository instead. Debian operation has a tested
@@ -672,5 +673,6 @@ Physical Ra43 testing still shows vertical colour bars after explicit module
 loading. The remaining register-initialization mismatch is deferred; the GDC
 console remains the supported display path for the current i486 work.
 
-See `LINUX-7.1-PORT.md`, `QEMU-PC98.md`, and the boot-chain sections above
-for further implementation and validation details.
+See `external/kernel/audit/` and the boot-chain sections above for further
+implementation and validation details. The PC-98 machine model itself lives
+in the `external/qemu-pc98` submodule.

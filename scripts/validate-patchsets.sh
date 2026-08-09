@@ -41,4 +41,7 @@ validate()
 
 validate gcc 14.3.0 upstream-14.3.0
 validate musl 1.2.6 upstream-1.2.6
-validate glibc 2.41 upstream-2.41
+# The glibc port branch re-imports the 2.41 sources on top of the 2.43-based
+# main branch, so its baseline is that import commit.  Replace this with
+# `upstream-2.41` once the glibc repository tags it.
+validate glibc 2.41 88bdb2be

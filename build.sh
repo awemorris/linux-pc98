@@ -4,11 +4,23 @@ set -euo pipefail
 repo="$(cd "$(dirname "$0")" && pwd)"
 boots="$repo/external/boots"
 
+# Submodules are not populated by a plain clone.  Fail with the fix instead
+# of letting the callee report a missing file.
+require_submodule()
+{
+	local path="$repo/external/$1"
+	test -e "$path/.git" && return 0
+	echo "external/$1 is not checked out." >&2
+	echo "Run: git submodule update --init --recursive external/$1" >&2
+	exit 2
+}
+
 # The Boots bootloader lives in the external/boots submodule and resolves
 # QEMU, the PC-98 BIOS, release base images, and the soft-float source
 # trees from this repository.
 boots_env()
 {
+	require_submodule boots
 	. "$repo/scripts/boots-env.sh"
 }
 
@@ -25,7 +37,7 @@ Primary commands:
   bootloader-test NAME        run a Boots QEMU test (e.g. noct-repl, hdd-boot)
   remacs                      build CMD/REMACS.NB with the pinned Noct compiler
   remacs-test                 run the bytecode editor under headless QEMU
-  noct COMMAND                build or verify the imported Noct core
+  noct TARGET                 build or verify the imported Noct core
   boot-install [options]      destructively create a BOOT partition environment
   dos-loader                  rebuild LINUX98.EXE and INST.EXE (OpenWatcom)
   kernel [options]            configure and build Linux 7.1
@@ -47,79 +59,88 @@ Compatibility/developer commands:
   debian                      build the default Debian rootfs/kernel/image
   dist                        compress the default legacy image
   glibc FAMILY                build glibc for i386 or i486
-  glibc-tests FAMILY          build glibc tests
+  glibc-tests FAMILY          cross-compile the glibc test binaries
+  rootfs-inventory ROOTFS     inventory a Debian rootfs (--report/--packages-tsv
+                              /--unowned-tsv required; see --help)
   qemu-win64 COMMAND          build Windows QEMU and dependencies
   virtpc98-win64 [COMMAND]    build virtpc98.exe with PyInstaller
   win64-dist [build]          build the complete Windows ZIP distribution
   run [IMAGE]                 start qemu-pc98 with an image
   clean [current|stale]       clean active outputs or superseded build trees
 
-Kernel options:
-  --cpu 386|486|686           CPU baseline (default: 686)
-  --profile pc98|full         device profile (default: pc98)
-  --output-dir DIR            out-of-tree kernel build directory
-  --jobs N                    parallel jobs
-  --console video|dual        built-in console selection (default: video)
+Rootfs profiles:
+  debian13-i486 debian13-i686 busybox-i386 busybox-i486
 
+Run './build.sh kernel --help' for kernel options.
 Run './build.sh image --help' for image-specific options.
 Run './build.sh test --help' for reproducible QEMU test options.
+Run './build.sh noct --help' for the imported Noct target list.
 BOOT installation syntax:
   ./build.sh boot-install [--partition N] [--install-disk-stubs]
                           IMAGE [VMLINUX [BOOTS.CFG]]
 EOF
 }
 
+kernel_usage()
+{
+	cat <<'EOF'
+Usage: ./build.sh kernel [options]
+
+Options:
+  --cpu 386|486|686           CPU baseline (default: 686)
+  --profile pc98|full         device profile (default: pc98)
+  --output-dir DIR            out-of-tree kernel build directory
+                              (default: build/kernel-7.1[-i386|-i486])
+  --jobs N                    parallel jobs (default: nproc)
+  --console video|dual        built-in console selection (default: video)
+
+The root staging tree defaults to the rootfs matching --cpu and can be
+overridden with the ROOT_STAGE environment variable.
+EOF
+}
+
+# Noct targets are defined in the Boots tree, so read them from there rather
+# than duplicating a map that silently rots when Boots renames a target.
+noct_targets()
+{
+	sed -n 's/^\(noct-[a-z0-9-]*\):.*/\1/p' \
+		"$boots/Makefile" "$boots/platform/pc98/platform.mk" 2>/dev/null |
+		sort -u
+}
+
 build_noct()
 {
-	local action="${1:-objects}"
+	local action="${1:-help}"
 	shift || true
+	require_submodule boots
 	case "$action" in
-		objects)
-			"$boots/build.sh" pc98 noct-objects "$@"
-			;;
-		opcode-check)
-			"$boots/build.sh" pc98 noct-opcode-check "$@"
-			;;
-		libc-test)
-			"$boots/build.sh" pc98 libc-host-test "$@"
-			;;
-		link-audit)
-			"$boots/build.sh" pc98 noct-link-audit "$@"
-			;;
-		verify)
-			boots_env
-			"$boots/build.sh" pc98 noct-m15-verify "$@"
-			;;
-		softfloat-test)
-			"$boots/build.sh" pc98 softfloat-host-test "$@"
-			;;
-		lifecycle-test)
-			"$boots/build.sh" pc98 noct-host-test "$@"
-			;;
-		clean)
-			"$boots/build.sh" pc98 clean "$@"
-			;;
 		-h | --help | help)
 			cat <<'EOF'
-Usage: ./build.sh noct COMMAND
+Usage: ./build.sh noct TARGET [make options]
 
 The Noct source itself is a submodule of Boots; update its pinned revision
 in the external/boots repository.
 
-Commands:
-  objects       compile the selected Boots Noct core objects (JIT enabled)
-  opcode-check  compile and reject post-i386 instructions
-  libc-test     run heap/libc host tests, including allocation failures
-  link-audit    relocatably link Noct/libc and audit undefined symbols
-  lifecycle-test run the M15 lifecycle, File, utility, native-API, and REPL host test
-  softfloat-test run the M5 arithmetic/conversion/math known vectors
-  verify        verify M4-M15, static i386 opcodes, and QEMU REPL paths
-  clean         remove the Boots pc98 build tree (build/pc98)
+Aliases:
+  verify         verify M4-M15, static i386 opcodes, and QEMU REPL paths
+  lifecycle-test run the lifecycle, File, utility, native-API, and REPL host test
+  clean          remove the Boots pc98 build tree (build/pc98)
+
+Boots Noct targets:
 EOF
+			noct_targets | sed 's/^/  /'
 			;;
+		verify) boots_env; "$boots/build.sh" pc98 noct-m15-verify "$@" ;;
+		lifecycle-test) "$boots/build.sh" pc98 noct-host-test "$@" ;;
+		clean) "$boots/build.sh" pc98 clean "$@" ;;
 		*)
-			echo "Unknown Noct command: $action" >&2
-			exit 2
+			if ! noct_targets | grep -qx -- "$action"; then
+				echo "Unknown Noct target: $action" >&2
+				echo "Run './build.sh noct --help' for the target list." >&2
+				exit 2
+			fi
+			boots_env
+			"$boots/build.sh" pc98 "$action" "$@"
 			;;
 	esac
 }
@@ -130,6 +151,10 @@ build_kernel()
 	local console=video root_stage="${ROOT_STAGE:-}"
 	while test "$#" -gt 0; do
 		case "$1" in
+			-h | --help)
+				kernel_usage
+				return
+				;;
 			--cpu | --profile | --output-dir | --jobs | --console)
 				test "$#" -ge 2 || { echo "Missing value for $1" >&2; exit 2; }
 				case "$1" in
@@ -140,10 +165,6 @@ build_kernel()
 					--console) console="$2" ;;
 				esac
 				shift 2
-				;;
-			-h | --help)
-				usage
-				return
 				;;
 			*) echo "Unknown kernel option: $1" >&2; exit 2 ;;
 		esac
@@ -229,7 +250,10 @@ case "$command" in
 	remacs-test) boots_env; "$boots/scripts/test-remacs.sh" "$@" ;;
 	noct) build_noct "$@" ;;
 	boot-install) boots_env; "$boots/scripts/install-image.sh" "$@" ;;
-	dos-loader) make -C "$boots/platform/pc98/dos" "$@" ;;
+	dos-loader)
+		require_submodule boots
+		make -C "$boots/platform/pc98/dos" "$@"
+		;;
 	kernel) build_kernel "$@" ;;
 	rootfs) build_rootfs "$@" ;;
 	rootfs-cache) "$repo/scripts/rootfs-cache.sh" "$@" ;;
@@ -240,12 +264,13 @@ case "$command" in
 	cache) "$repo/scripts/image-cache.sh" "$@" ;;
 	debian) "$repo/scripts/build-debian.sh" "$@" ;;
 	dist) "$repo/scripts/build-dist.sh" "$@" ;;
-	glibc) "$repo/scripts/build-glibc.sh" "$@" ;;
+	glibc) require_submodule glibc; "$repo/scripts/build-glibc.sh" "$@" ;;
 	glibc-tests) "$repo/scripts/build-glibc-tests.sh" "$@" ;;
+	rootfs-inventory) "$repo/scripts/inventory-debian-rootfs.py" "$@" ;;
 	qemu-win64) "$repo/scripts/build-qemu-win64.sh" "$@" ;;
 	virtpc98-win64) "$repo/scripts/build-virtpc98.sh" "$@" ;;
 	win64-dist) "$repo/scripts/build-win64-dist.sh" "$@" ;;
-	run) "$repo/scripts/run-qemu.sh" "$@" ;;
+	run) require_submodule qemu-pc98; "$repo/scripts/run-qemu.sh" "$@" ;;
 	clean) "$repo/scripts/clean-build.sh" "$@" ;;
 	*)
 		echo "Unknown command: $command" >&2

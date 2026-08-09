@@ -17,7 +17,7 @@ qemu-pc98 is a separate top-level submodule at `../qemu-pc98/`.
 
 ## Patch inventory
 
-`patchsets/` is the main-repository record of every submodule delta. It
+`external/patchsets/` is the main-repository record of every submodule delta. It
 contains exact `git format-patch` exports, upstream versions, source archive
 hashes, commit IDs, patch order, limitations, and validation requirements.
 
@@ -27,13 +27,13 @@ reapply the delta without first reconstructing repository relationships.
 
 ## Buildroot integration
 
-`build-i386-rootfs.sh` writes these entries to the Buildroot output
+`scripts/build-i386-rootfs.sh` writes these entries to the Buildroot output
 directory's `local.mk`:
 
 ```make
-GCC_INITIAL_OVERRIDE_SRCDIR = /path/to/linux-pc98/toolchain/gcc
-GCC_FINAL_OVERRIDE_SRCDIR = /path/to/linux-pc98/toolchain/gcc
-MUSL_OVERRIDE_SRCDIR = /path/to/linux-pc98/toolchain/musl
+GCC_INITIAL_OVERRIDE_SRCDIR = /path/to/linux-pc98/external/gcc
+GCC_FINAL_OVERRIDE_SRCDIR = /path/to/linux-pc98/external/gcc
+MUSL_OVERRIDE_SRCDIR = /path/to/linux-pc98/external/musl
 ```
 
 Buildroot copies these sources into its build directory and skips the normal
@@ -64,13 +64,13 @@ The current qemu-pc98 validation passed with both `-cpu 386` and `-cpu 486`.
 On i386, dynamic loading, malloc, TLS, pthread mutexes, fork, process-shared
 robust mutexes, COW/read-only fault containment, and the 12-test atomic UAPI
 selftest all pass. A dynamically glibc-linked BusyBox also runs as
-`/sbin/init`. See `../GLIBC-2.41-I386-PORT-PLAN.md`, section 22, for the
-implemented design, test matrix, and remaining Debian packaging gates.
+`/sbin/init`. See `patchsets/glibc/2.41/README.md` for the implemented design,
+test matrix, and remaining Debian packaging gates.
 
 The glibc implementation is recorded in submodule commit
 `cddb5b71c3ee05561cc78ed9c7f8f1e04f703d68`. Its portable export is
-`patchsets/glibc/2.41/0001-Add-Linux-assisted-atomics-for-genuine-i386.patch`.
-`validate-patchsets.sh` replays that patch from `upstream-2.41` and requires
+`external/patchsets/glibc/2.41/0001-Add-Linux-assisted-atomics-for-genuine-i386.patch`.
+`scripts/validate-patchsets.sh` replays that patch from `upstream-2.41` and requires
 the resulting tree to match the pinned submodule revision exactly.
 
 ## Updating a component
@@ -80,9 +80,9 @@ the resulting tree to match the pinned submodule revision exactly.
 2. Tag it `upstream-<version>`.
 3. Rebase the legacy-i386 commits on that tag and validate the result.
 4. Update the submodule gitlink in this repository.
-5. Regenerate `patchsets/<component>/<version>/` with `git format-patch`.
-6. Update `patchsets/README.md` and the component-specific README.
-7. Run `./toolchain/validate-patchsets.sh` and require all tree comparisons
+5. Regenerate `external/patchsets/<component>/<version>/` with `git format-patch`.
+6. Update `external/patchsets/README.md` and the component-specific README.
+7. Run `./scripts/validate-patchsets.sh` and require all tree comparisons
    to report `OK`.
 8. Run the component build, instruction scan, and qemu-pc98 boot tests
    before committing the new gitlink.

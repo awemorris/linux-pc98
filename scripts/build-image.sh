@@ -10,7 +10,7 @@ Usage: ./build.sh image PROFILE [options]
        ./build.sh image list
 
 Profiles:
-  busybox-i386-ide      Boots, i386 BusyBox, IDE H=4/S=17, below 40 MB
+  busybox-i386-ide      Boots, i386 BusyBox, IDE H=8/S=17, below 40 MB
   busybox-i386-scsi92   Boots, i386 BusyBox, 92 SCSI H=8/S=32, 8 MiB swap
   busybox-i386-scsi55   Boots, i386 BusyBox, 55 SCSI H=8/S=17, 8 MiB swap
   debian13-i486-ide     Boots, Debian/i486, IDE H=8/S=17, 128 MiB swap
@@ -61,20 +61,6 @@ materialize_path()
 			cp --reflink=auto --sparse=always "$source" "$destination"
 			;;
 	esac
-}
-
-image_size_for_geometry()
-{
-	local heads="$1" sectors="$2" cylinder_bytes total_cylinders=1 size_mb
-	shift 2
-	cylinder_bytes=$((heads * sectors * 512))
-	for size_mb in "$@"; do
-		case "$size_mb" in
-			'' | *[!0-9]*) echo "Invalid partition size: $size_mb MiB" >&2; exit 2 ;;
-		esac
-		total_cylinders=$((total_cylinders + (size_mb * 1024 * 1024 + cylinder_bytes - 1) / cylinder_bytes))
-	done
-	printf '%s\n' "$((total_cylinders * cylinder_bytes))"
 }
 
 profile="${1:-}"
@@ -189,14 +175,6 @@ kernel="${kernel:-$default_kernel}"
 rootfs="${rootfs:-$default_rootfs}"
 swap_mb="${swap_mb:-$default_swap}"
 
-if test "$profile" = busybox-i386-ide; then
-	# Match the compatible BIOS small-disk geometry.  Calculate the exact
-	# cylinder-rounded size that the image builder will produce with H=4.
-	candidate_size="$(image_size_for_geometry 4 "$sectors" \
-		"$boot_mb" "$root_mb" "$swap_mb")"
-	test "$candidate_size" -ge $((40 * 1024 * 1024)) || heads=4
-fi
-
 if test -n "$base_image"; then
 	if test -f "$base_image"; then
 		materialize_path "$base_image" "$output"
@@ -206,7 +184,7 @@ if test -n "$base_image"; then
 
 	case "$profile" in
 		*-ide)
-			if test "$(stat -c %s "$output")" -lt $((40 * 1024 * 1024)); then
+			if test "$(stat -c %s "$output")" -le $((20 * 1024 * 1024)); then
 				heads=4
 			else
 				heads=8

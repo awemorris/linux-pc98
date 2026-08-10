@@ -243,7 +243,8 @@ canonical image after successful completion, together with its SHA-256 file.
 must not be added to files in `build/releases/`. Use `./build.sh release` for
 the complete compressed public artifact set.
 
-IDE profiles use the NEC logical geometry H=8/S=17. PC-9801-92 SCSI
+The BusyBox i386 IDE image is below 40 MiB and uses the compatible BIOS small-
+disk geometry H=4/S=17. Larger IDE profiles use H=8/S=17. PC-9801-92 SCSI
 profiles use H=8/S=32 and therefore require a separate disk image even when
 the files stored in the partitions are identical. PC-9801-55-compatible
 profiles, including WINnote98, use H=8/S=17. The old profile names ending in
@@ -381,7 +382,7 @@ The Debian images use the full PC-98 kernel configuration and require 64 MiB.
 
 | Image | Geometry and purpose | Userland | Minimum RAM | Raw size limit |
 | --- | --- | --- | ---: | ---: |
-| `linux-pc98-i386sx-busybox-ide.img.xz` | IDE H=8/S=17 on i386SX/DX machines | static musl/BusyBox | 5 MiB | below 40 MB |
+| `linux-pc98-i386sx-busybox-ide.img.xz` | IDE H=4/S=17 on i386SX/DX machines | static musl/BusyBox | 5 MiB | below 40 MB |
 | `linux-pc98-i386sx-busybox-scsi55.img.xz` | PC-9801-55-compatible SCSI H=8/S=17, including WINnote98 | static musl/BusyBox | 5 MiB | below 40 MB |
 | `linux-pc98-i386sx-busybox-scsi92.img.xz` | PC-9801-92 SCSI H=8/S=32 | static musl/BusyBox | 5 MiB | below 40 MB |
 | `linux-pc98-i486dx-debian13-ide.img.xz` | IDE H=8/S=17 on i486DX or newer | Debian 13/i486DX | 64 MiB | below 2 GB |

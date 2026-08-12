@@ -116,7 +116,7 @@ ensure_debian_rootfs "$debian_root" "$debian_cache"
 echo "Verifying Noct through M14 (v0.9.0 has a documented REPL issue)"
 (
 	. "$repo/scripts/boots-env.sh"
-	"$boots/build.sh" pc98 noct-m14-verify
+	"$boots/build.sh" noct-m14-verify pc98
 )
 
 echo "Building i386 BusyBox IDE and SCSI images"

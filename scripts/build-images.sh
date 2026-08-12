@@ -31,7 +31,7 @@ if [ ! -d "$root_stage" ]; then
 fi
 
 mkdir -p "$build"
-"$repo/external/boots/build.sh" pc98
+"$repo/external/boots/build.sh" all pc98
 if [ ! -f "$dos_loader" ]; then
 	echo "DOS Linux loader not found: $dos_loader" >&2
 	echo "Restore the tracked binary or run ./build.sh dos-loader." >&2

@@ -33,7 +33,7 @@ remove_build_dir()
 mode="${1:-current}"
 case "$mode" in
 	current)
-		make -C "$repo/external/boots" ARCH=pc98 clean
+		"$repo/external/boots/build.sh" clean pc98
 		for name in kernel-7.1 kernel-7.1-i486; do
 			test -d "$build/$name" || continue
 			make -C "$repo/external/kernel/linux-7.1" O="$build/$name" ARCH=i386 clean

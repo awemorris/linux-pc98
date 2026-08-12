@@ -20,7 +20,7 @@ if [ ! -f "$kernel_image" ]; then
 	exit 1
 fi
 
-"$repo/external/boots/build.sh" pc98
+"$repo/external/boots/build.sh" all pc98
 if [ ! -f "$dos_loader" ]; then
 	echo "DOS Linux loader not found: $dos_loader" >&2
 	echo "Restore the tracked binary or run ./build.sh dos-loader." >&2

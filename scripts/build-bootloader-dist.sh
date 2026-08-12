@@ -31,7 +31,7 @@ command -v unzip >/dev/null 2>&1 || {
 }
 
 mkdir -p "$release_dir" "$(dirname "$output")"
-"$boots/build.sh" pc98
+"$boots/build.sh" all pc98
 "$boots/scripts/build-remacs-bytecode.sh"
 
 stage="$(mktemp -d "$release_dir/.bootloader-zip.XXXXXX")"

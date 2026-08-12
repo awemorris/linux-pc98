@@ -130,9 +130,9 @@ Boots Noct targets:
 EOF
 			noct_targets | sed 's/^/  /'
 			;;
-		verify) boots_env; "$boots/build.sh" pc98 noct-m15-verify "$@" ;;
-		lifecycle-test) "$boots/build.sh" pc98 noct-host-test "$@" ;;
-		clean) "$boots/build.sh" pc98 clean "$@" ;;
+		verify) boots_env; "$boots/build.sh" noct-m15-verify pc98 "$@" ;;
+		lifecycle-test) boots_env; "$boots/build.sh" noct-host-test pc98 "$@" ;;
+		clean) boots_env; "$boots/build.sh" clean pc98 "$@" ;;
 		*)
 			if ! noct_targets | grep -qx -- "$action"; then
 				echo "Unknown Noct target: $action" >&2
@@ -140,7 +140,7 @@ EOF
 				exit 2
 			fi
 			boots_env
-			"$boots/build.sh" pc98 "$action" "$@"
+			"$boots/build.sh" "$action" pc98 "$@"
 			;;
 	esac
 }
@@ -226,7 +226,12 @@ shift || true
 case "$command" in
 	help | -h | --help) usage ;;
 	setup) "$repo/scripts/setup.sh" "$@" ;;
-	bootloader) boots_env; "$boots/build.sh" pc98 "$@" ;;
+	bootloader)
+		target="${1:-all}"
+		test "$#" -eq 0 || shift
+		boots_env
+		"$boots/build.sh" "$target" pc98 "$@"
+		;;
 	bootloader-dist) "$repo/scripts/build-bootloader-dist.sh" "$@" ;;
 	bootloader-fdd)
 		output="${1:-$repo/build/releases/boots-fdd.img}"

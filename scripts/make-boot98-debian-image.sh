@@ -97,7 +97,7 @@ cleanup()
 }
 trap cleanup EXIT INT TERM
 
-"$repo/external/boots/build.sh" pc98
+"$repo/external/boots/build.sh" all pc98
 mkdir -p "$(dirname "$output")" "$mount_dir"
 truncate -s "$total_bytes" "$output"
 dd if="$bootloader_dir/ipl-lba0.bin" of="$output" bs=512 count=1 \

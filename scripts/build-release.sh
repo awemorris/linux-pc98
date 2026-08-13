@@ -183,6 +183,7 @@ done
 
 copy_release_file "$repo/build/i386-video/kernel/vmlinux.boot" vmlinux-i386
 copy_release_file "$repo/build/kernel-7.1-i486/vmlinux.boot" vmlinux-i486-debian
+"$repo/build.sh" bootsimple
 "$repo/build.sh" bootloader-dist
 copy_release_file "$note" RELEASE-NOTES.md
 
@@ -199,7 +200,7 @@ fi
 		linux-pc98-i486dx-debian13-ide.img.xz \
 		linux-pc98-i486dx-debian13-scsi55.img.xz \
 		linux-pc98-i486dx-debian13-scsi92.img.xz \
-		vmlinux-i386 vmlinux-i486-debian bootloader.zip \
+		vmlinux-i386 vmlinux-i486-debian bootsimple.zip bootloader.zip \
 		qemu-pc98-win64.zip >SHA256SUMS
 )
 printf 'Complete %s artifact set: %s\n' "$version" "$release_dir"

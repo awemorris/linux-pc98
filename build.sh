@@ -32,7 +32,8 @@ Usage: ./build.sh COMMAND [options]
 Primary commands:
   setup [options]             install Debian 13 host build/test dependencies
   bootloader [targets]        build the zedBSD binaries (external/zedBSD, pc98)
-  bootsimple PROFILE [opts]   build the BusyBox assembly IO.SYS loader
+  bootsimple                  build build/releases/bootsimple.zip
+  bootsimple PROFILE [opts]   build one BusyBox assembly IO.SYS loader
                               (--cmdline STRING is required)
   bootsimple-test NAME [args] run a bootsimple build/layout/failure/QEMU test
   bootloader-dist             build build/releases/bootloader.zip
@@ -236,7 +237,11 @@ case "$command" in
 		"$zedbsd/build.sh" "$target" pc98 "$@"
 		;;
 	bootsimple)
-		profile="${1:?usage: ./build.sh bootsimple PROFILE --cmdline STRING}"
+		if test "$#" -eq 0; then
+			"$repo/scripts/build-bootsimple-dist.sh"
+			exit
+		fi
+		profile="$1"
 		shift
 		"$repo/bootsimple/build.sh" --profile "$profile" "$@"
 		;;

@@ -34,3 +34,29 @@ Build a profile with:
 
 Generated files are written below `build/bootsimple/` and are not tracked.
 
+## Distribution archive
+
+From the linux-pc98 repository, build the standalone distribution with:
+
+```sh
+./build.sh bootsimple
+```
+
+This creates `build/releases/bootsimple.zip`. The archive contains the complete
+loader source, build/install/verification scripts, tests, and prebuilt loader
+sets for the three public BusyBox profiles. Each profile directory includes
+the exact release command line as `CMDLINE.txt`.
+
+To replace the BOOT partition of an existing PC-98 image, extract the archive
+and run, for example:
+
+```sh
+cmdline="$(cat profiles/busybox-i386-ide/CMDLINE.txt)"
+./bootsimple/install-image.sh \
+  --profile busybox-i386-ide --heads 8 --sectors 17 \
+  --cmdline "$cmdline" disk.img vmlinux-i386
+```
+
+The selected BOOT partition is reformatted. Linux root and swap partitions are
+not modified. `vmlinux-i386` is published separately with each linux-pc98
+release.

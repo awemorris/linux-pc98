@@ -39,7 +39,8 @@ printf 'Verifying bootloader overlay configuration and assets...\n'
 test "$(wc -l < "$base/etc/zinit.rc")" -eq 1
 grep -qx '/bin/noct /bin/menu.nct' "$base/etc/zinit.rc"
 grep -q '/bin/menuback.bmp' "$base/bin/menu.nct"
-grep -q '/bin/linux /vmlinux' "$base/bin/menu.nct"
+grep -q '/bin/linux /vmlinux root=PARTLABEL=DEBIAN13 rootfstype=ext4 rw rootwait' \
+	"$base/bin/menu.nct"
 grep -q '/bin/noct /apps/holoris.nct' "$base/bin/menu.nct"
 if grep -qi 'boot\.cfg' "$base/bin/menu.nct"; then
 	echo "menu Linux action must not source boot.cfg" >&2

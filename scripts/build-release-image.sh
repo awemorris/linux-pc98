@@ -64,6 +64,26 @@ canonical_name()
 	esac
 }
 
+verify_bootloader()
+{
+	local selected="$1" image="$2" sectors loader
+	case "$selected" in
+		busybox-i386-ide | busybox-i386-scsi55)
+			sectors=17 ;;
+		busybox-i386-scsi92)
+			sectors=32 ;;
+		debian13-*)
+			printf 'Release bootloader: zedBSD (%s)\n' "$selected"
+			return ;;
+		*) return 2 ;;
+	esac
+	loader="$repo/build/bootsimple/$selected"
+	"$repo/bootsimple/verify-image.py" all "$image" \
+		--heads 8 --sectors "$sectors" --partition 1 \
+		--loader-dir "$loader"
+	printf 'Release bootloader: bootsimple (%s)\n' "$selected"
+}
+
 profile="${1:-}"
 case "$profile" in
 	-h | --help | help | '') usage; exit 0 ;;
@@ -115,6 +135,7 @@ build_one()
 		echo "Generated image is empty: $temporary" >&2
 		exit 1
 	}
+	verify_bootloader "$selected" "$temporary"
 	mv -f -- "$temporary" "$destination"
 	temporary=""
 	(

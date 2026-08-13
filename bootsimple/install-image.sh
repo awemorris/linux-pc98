@@ -155,5 +155,4 @@ mattrib -i "$image@@$offset" +r +h +s ::VMLINUX
 
 "$repo/bootsimple/verify-image.py" all "$image" \
 	--heads "$heads" --sectors "$sectors" --partition "$partition" \
-	--kernel "$kernel"
-
+	--kernel "$kernel" --loader-dir "$build"

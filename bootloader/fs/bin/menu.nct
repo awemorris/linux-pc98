@@ -155,7 +155,7 @@ func main() {
             BeUI.close();
             if (background != 0) { BeUI.destroyImage(background); }
             if (selected == 0) {
-                System.setEnv("BOOT_ACTION", "/bin/linux /vmlinux root=PARTLABEL=LINUXROOT rootfstype=ext4 rw");
+                System.setEnv("BOOT_ACTION", "/bin/linux /vmlinux root=PARTLABEL=DEBIAN13 rootfstype=ext4 rw rootwait");
             }
             if (selected == 1) {
                 System.setEnv("BOOT_ACTION", "emacs EDIT.TXT");

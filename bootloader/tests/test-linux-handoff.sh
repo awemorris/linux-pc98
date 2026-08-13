@@ -2,13 +2,13 @@
 set -euo pipefail
 
 # Exercise the production GUI menu's default Linux selection, then verify
-# that /bin/linux reaches the point-of-no-return handoff.
+# that the Debian root filesystem is mounted and userspace starts.
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 build="${ZEDBSD_BUILD_DIR:-$repo/build/bootloader-tests/pc98}"
 qemu="${QEMU:-qemu-system-i386}"
 bios="${PC98_BIOS_DIR:-$repo/roms/pc98bios}"
-base="${ZEDBSD_TEST_BASE:-$repo/build/releases/linux-pc98-i386sx-busybox-ide.img}"
+base="${ZEDBSD_TEST_BASE:-$repo/build/releases/linux-pc98-i486dx-debian13-ide.img}"
 work="$build/tests/linux-handoff"
 image="$work/linux-handoff.img"
 monitor="$work/monitor.sock"
@@ -144,23 +144,23 @@ if handoff is None:
     qmp("screendump", {"filename": screenshot})
     raise SystemExit("Linux never left the zedBSD loader execution range")
 
-# BusyBox init prints this marker after mounting proc/sysfs and enabling the
-# Linux swap partition. PC-98 text VRAM stores one character per little-endian
-# word at physical 0xa0000, so seeing it proves Linux reached userspace.
+# Debian prints this banner after mounting the root filesystem and entering
+# runlevel 2. PC-98 text VRAM stores one character per little-endian word at
+# physical 0xa0000, so seeing it proves Linux reached userspace.
 deadline = time.monotonic() + 45
 while time.monotonic() < deadline:
     qmp("pmemsave", {"val": 0xa0000, "size": 0x2000,
                      "filename": tvram})
     raw = pathlib.Path(tvram).read_bytes()
     text = raw[0::2]
-    if b"I386-BUSYBOX-SUCCESS" in text:
-        print("Linux BusyBox init and shell startup observed")
+    if b"Debian GNU/Linux 13 debian-pc98" in text:
+        print("Debian root mount and userspace startup observed")
         stream.close()
         client.close()
         raise SystemExit(0)
     time.sleep(1)
 qmp("screendump", {"filename": screenshot})
-raise SystemExit("Linux handoff succeeded but BusyBox init marker was absent")
+raise SystemExit("Linux handoff succeeded but Debian userspace banner was absent")
 PY
 
 kill "$qemu_pid" 2>/dev/null || true

@@ -148,7 +148,7 @@ PY
 printf '%s\n' \
 	'echo Booting Debian 13 i486...' \
 	'kernel VMLINUX' \
-	"arg root=/dev/sda2 rootfstype=ext4 rw${kernel_extra_args:+ $kernel_extra_args}" \
+	"arg root=PARTLABEL=DEBIAN13 rootfstype=ext4 rw rootwait${kernel_extra_args:+ $kernel_extra_args}" \
 	'boot' >"$cfg"
 
 truncate -s "$root_bytes" "$root_image"

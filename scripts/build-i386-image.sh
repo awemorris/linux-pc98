@@ -2,7 +2,6 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-. "$repo/scripts/zedbsd-env.sh"
 console_mode="${I386_CONSOLE:-video}"
 cpu_family="${CPU_FAMILY:-386}"
 jobs="${JOBS:-$(nproc)}"

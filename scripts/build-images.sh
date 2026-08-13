@@ -2,7 +2,6 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-. "$repo/scripts/zedbsd-env.sh"
 build="$repo/build"
 kernel_version="${KERNEL_VERSION:-7.1}"
 default_kernel_build="$build/kernel-$kernel_version"
@@ -20,7 +19,7 @@ output="${OUTPUT_IMAGE:-$default_output}"
 bootloader="${BOOTLOADER:-}"
 bootsimple_profile="${BOOTSIMPLE_PROFILE:-}"
 bootsimple_cmdline="${BOOTSIMPLE_CMDLINE:-}"
-dos_loader="${DOS_LOADER:-$repo/external/zedBSD/platform/pc98/dos/linux98.exe}"
+dos_loader="${DOS_LOADER:-}"
 
 case "$bootloader" in
 	bootsimple)
@@ -55,6 +54,8 @@ case "$bootloader" in
 		pbr="$bootsimple_build/partition-pbr.bin"
 		;;
 	zedbsd)
+		. "$repo/scripts/zedbsd-env.sh"
+		dos_loader="${dos_loader:-$repo/external/zedBSD/platform/pc98/dos/linux98.exe}"
 		"$repo/external/zedBSD/build.sh" all pc98
 		test -f "$dos_loader" || {
 			echo "DOS Linux loader not found: $dos_loader" >&2

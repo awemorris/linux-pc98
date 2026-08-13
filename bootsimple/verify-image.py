@@ -218,6 +218,20 @@ def verify_image(args):
     found = sorted(forbidden.intersection(fat.entries))
     if found:
         raise VerifyError(f"zedBSD/product files present in bootsimple BOOT: {found}")
+    if args.loader_dir:
+        loader_dir = args.loader_dir
+        expected_lba0 = open(
+            os.path.join(loader_dir, "ipl-lba0.bin"), "rb").read()
+        expected_lba2 = open(
+            os.path.join(loader_dir, "ipl-lba2.bin"), "rb").read()
+        expected_io = open(os.path.join(loader_dir, "IO.SYS"), "rb").read()
+        if image[:PHYS_SECTOR] != expected_lba0:
+            raise VerifyError("LBA 0 differs from the selected bootsimple build")
+        lba2_start = 2 * PHYS_SECTOR
+        if image[lba2_start:lba2_start + len(expected_lba2)] != expected_lba2:
+            raise VerifyError("LBA 2 selector differs from the selected bootsimple build")
+        if io_data != expected_io:
+            raise VerifyError("IO.SYS differs from the selected bootsimple build")
     if args.kernel:
         expected = open(args.kernel, "rb").read()
         if hashlib.sha256(expected).digest() != hashlib.sha256(vm_data).digest():
@@ -243,6 +257,7 @@ def main():
     image.add_argument("--sectors", type=int, required=True)
     image.add_argument("--partition", type=int, default=1)
     image.add_argument("--kernel")
+    image.add_argument("--loader-dir")
     image.set_defaults(function=verify_image)
     elf = commands.add_parser("elf")
     elf.add_argument("vmlinux")
@@ -256,4 +271,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -79,8 +79,8 @@ verify_bootloader()
 				return 1
 			}
 			test "$(od -An -tx1 -j510 -N2 "$image" | tr -d ' \n')" = \
-				0000 || {
-				echo "Native PC-98 release image has a PC/AT MBR signature: $image" >&2
+				55aa || {
+				echo "Release image lacks the PC-9821 IPL signature: $image" >&2
 				return 1
 			}
 			printf 'Release bootloader: zedBSD (%s)\n' "$selected"

@@ -157,11 +157,11 @@ int nec98_partition(struct parsed_partitions *state)
 	}
 
 	/*
-	 * A native PC-98 disk normally omits the PC/AT 55 AA marker.  Some old
-	 * linux-pc98 images and the PC/AT + PC-98 unified loader need it, though.
-	 * IPL1 identifies those as this project's PC-98-aware IPL, so prefer the
-	 * LBA 1 NEC98 table even when the PC/AT marker is also present.  Without
-	 * IPL1, leave a 55 AA disk for the MSDOS parser below us.
+	 * Some later PC-9821 firmware requires the trailing 55 AA marker even on
+	 * native disks.  IPL1 identifies this project's PC-98-aware IPL, so prefer
+	 * the LBA 1 NEC98 table when both markers are present.  This also supports
+	 * older unsigned native images and the PC/AT + PC-98 unified loader.
+	 * Without IPL1, leave a 55 AA disk for the MSDOS parser below us.
 	 */
 	boot = read_part_sector(state, 0, &boot_sector);
 	if (!boot)

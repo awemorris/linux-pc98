@@ -969,9 +969,9 @@ def build_ipl():
     ipl[IPL_CODE:IPL_CODE + len(code)] = code
     ipl[0xFE:0x100] = b"\x55\xaa"
     ipl[IPL_DATA:IPL_DATA + len(data)] = data
-    # Keep the native PC-98 disk distinct from a PC/AT MBR.  IPL1 at offset
-    # four is the positive PC-98 marker used by linux-pc98 and virtpc98.
-    ipl[0x1FE:0x200] = b"\x00\x00"
+    # IPL1 identifies the NEC98 table to linux-pc98; later PC-9821 firmware
+    # also requires the conventional trailing signature before booting it.
+    ipl[0x1FE:0x200] = b"\x55\xaa"
     return bytes(ipl)
 
 

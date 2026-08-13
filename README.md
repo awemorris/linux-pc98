@@ -425,12 +425,12 @@ partitions.
 | BOOT partition data area | FAT16 containing contiguous `IO.SYS`, `BOOT.SYS`, `boot.cfg`, non-compressed `VMLINUX`, and `LINUX98.EXE` |
 | Partition 2 | ext4 root filesystem, mounted as `/dev/sda2` |
 
-Native PC-98 images deliberately leave bytes 510–511 of LBA 0 as zero rather
-than using the PC/AT `55 AA` MBR signature.  The `IPL1` marker at offset 4 is
-the positive identifier for this project's PC-98-aware IPL.  Linux gives a
-valid NEC98 table at LBA 1 priority when `IPL1` is present, including on older
-or unified images that also carry `55 AA`; an unmarked `55 AA` disk is left to
-the normal MS-DOS partition parser.
+Native PC-98 images carry both the `IPL1` marker at offset 4 and the `55 AA`
+signature at bytes 510–511 of LBA 0.  Some later PC-9821 firmware requires the
+trailing signature before it will execute a hard-disk IPL.  Linux gives a valid
+NEC98 table at LBA 1 priority when `IPL1` is present, even though `55 AA` is
+also present; an unmarked `55 AA` disk is left to the normal MS-DOS partition
+parser.
 
 The distributed LBA 2 selector and the NEC fixed-disk boot menu both enter the
 same partition PBR. Its IPL and data-start CHS values are identical. The PBR

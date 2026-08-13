@@ -98,5 +98,5 @@ boot_id:
 
 	.org	0x01fc
 	.word	9
-	/* Native PC-98 disks deliberately omit the PC/AT MBR signature. */
-	.word	0
+	/* Required by later PC-9821 firmware before it will execute the IPL. */
+	.word	0xaa55

@@ -32,6 +32,9 @@ Usage: ./build.sh COMMAND [options]
 Primary commands:
   setup [options]             install Debian 13 host build/test dependencies
   bootloader [targets]        build the zedBSD binaries (external/zedBSD, pc98)
+  bootsimple PROFILE [opts]   build the BusyBox assembly IO.SYS loader
+                              (--cmdline STRING is required)
+  bootsimple-test NAME [args] run a bootsimple build/layout/failure/QEMU test
   bootloader-dist             build build/releases/bootloader.zip
   bootloader-fdd [OUTPUT]     build the zedBSD FDD image (zedbsd-fdd.img)
   bootloader-test NAME        run a zedBSD QEMU test (e.g. noct-repl, hdd-boot)
@@ -231,6 +234,18 @@ case "$command" in
 		test "$#" -eq 0 || shift
 		zedbsd_env
 		"$zedbsd/build.sh" "$target" pc98 "$@"
+		;;
+	bootsimple)
+		profile="${1:?usage: ./build.sh bootsimple PROFILE --cmdline STRING}"
+		shift
+		"$repo/bootsimple/build.sh" --profile "$profile" "$@"
+		;;
+	bootsimple-test)
+		name="${1:?usage: ./build.sh bootsimple-test build|image-layout|failures|qemu [args]}"
+		shift
+		test -x "$repo/bootsimple/tests/test-$name.sh" || {
+			echo "Unknown bootsimple test: $name" >&2; exit 2; }
+		"$repo/bootsimple/tests/test-$name.sh" "$@"
 		;;
 	bootloader-dist) "$repo/scripts/build-bootloader-dist.sh" "$@" ;;
 	bootloader-fdd)

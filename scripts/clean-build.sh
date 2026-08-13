@@ -33,6 +33,7 @@ remove_build_dir()
 mode="${1:-current}"
 case "$mode" in
 	current)
+		remove_build_dir bootsimple
 		"$repo/external/zedBSD/build.sh" clean pc98
 		for name in kernel-7.1 kernel-7.1-i486; do
 			test -d "$build/$name" || continue

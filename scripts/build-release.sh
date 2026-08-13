@@ -136,6 +136,12 @@ for compact in \
 		exit 1
 	fi
 done
+"$repo/bootsimple/verify-image.py" all \
+	"$release_dir/linux-pc98-i386sx-busybox-ide.img" --heads 8 --sectors 17
+"$repo/bootsimple/verify-image.py" all \
+	"$release_dir/linux-pc98-i386sx-busybox-scsi55.img" --heads 8 --sectors 17
+"$repo/bootsimple/verify-image.py" all \
+	"$release_dir/linux-pc98-i386sx-busybox-scsi92.img" --heads 8 --sectors 32
 
 echo "Building the shared Debian/i486 kernel and modules"
 ROOT_STAGE="$debian_root" INSTALL_MODULES=1 \

@@ -140,7 +140,7 @@ if test -z "$image"; then
 					sudo tee "$rootfs/etc/default/networking" >/dev/null
 				KERNEL_IMAGE="$kernel_build/vmlinux.boot" \
 					ROOT_STAGE="$rootfs" OUTPUT_IMAGE="$image" \
-					ROOT_MB=512 SWAP_MB=128 \
+					ROOT_MB=512 SWAP_MB=128 BOOTLOADER=zedbsd \
 					"$repo/scripts/build-images.sh"
 				printf '%s\n' \
 					'kernel VMLINUX' \

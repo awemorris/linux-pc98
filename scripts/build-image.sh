@@ -10,15 +10,15 @@ Usage: ./build.sh image PROFILE [options]
        ./build.sh image list
 
 Profiles:
-  busybox-i386-ide      zedBSD, i386 BusyBox, IDE H=8/S=17
-  busybox-i386-scsi92   zedBSD, i386 BusyBox, 92 SCSI H=8/S=32
-  busybox-i386-scsi55   zedBSD, i386 BusyBox, 55 SCSI H=8/S=17
+  busybox-i386-ide      bootsimple, i386 BusyBox, IDE H=8/S=17
+  busybox-i386-scsi92   bootsimple, i386 BusyBox, 92 SCSI H=8/S=32
+  busybox-i386-scsi55   bootsimple, i386 BusyBox, 55 SCSI H=8/S=17
   debian13-i486-ide     zedBSD, Debian/i486, IDE H=8/S=17
   debian13-i486-scsi92  zedBSD, Debian/i486, 92 SCSI H=8/S=32
   debian13-i486-scsi55  zedBSD, Debian/i486, 55 SCSI H=8/S=17
 
-By default, newly created profiles use a 128 MiB FAT16 BOOT partition and
-contain a 64 MiB zedBSD /swapfile in addition to their Linux swap partition.
+New images use a 128 MiB FAT16 BOOT partition. Debian/zedBSD images contain
+a 64 MiB zedBSD /swapfile; bootsimple BusyBox images do not.
 
 Options:
   --kernel FILE         use a specific uncompressed ELF kernel
@@ -88,7 +88,7 @@ base_image=""
 output=""
 cfg=""
 swap_mb=""
-zedbsd_swapfile_mb="${ZEDBSD_SWAPFILE_MB:-64}"
+zedbsd_swapfile_mb="${ZEDBSD_SWAPFILE_MB:-}"
 boot_mb="${BOOT_MB:-}"
 root_mb="${ROOT_MB:-200}"
 jobs="${JOBS:-$(nproc)}"
@@ -185,6 +185,21 @@ kernel="${kernel:-$default_kernel}"
 rootfs="${rootfs:-$default_rootfs}"
 swap_mb="${swap_mb:-$default_swap}"
 boot_mb="${boot_mb:-128}"
+bootsimple_cmdline="vdso=0 console=tty0 earlyprintk=pc9800 root=$root_device rootfstype=ext4 rw sysctl.vm.min_free_kbytes=64 sysctl.vm.dirty_background_bytes=32768 sysctl.vm.dirty_bytes=65536 sysctl.vm.vfs_cache_pressure=200 sysctl.vm.swappiness=100 sysctl.vm.page-cluster=0${kernel_extra_args:+ $kernel_extra_args}"
+case "$profile" in
+	busybox-*)
+		zedbsd_swapfile_mb="${zedbsd_swapfile_mb:-0}"
+		test -z "$cfg" || {
+			echo "--config is only valid for zedBSD/Debian images" >&2
+			exit 2
+		}
+		test "$zedbsd_swapfile_mb" = 0 || {
+			echo "bootsimple BusyBox images do not use a zedBSD swapfile" >&2
+			exit 2
+		}
+		;;
+	debian13-*) zedbsd_swapfile_mb="${zedbsd_swapfile_mb:-64}" ;;
+esac
 case "$zedbsd_swapfile_mb" in
 	0 | 32 | 64) ;;
 	*) echo "zedBSD swapfile size must be 0, 32, or 64 MiB" >&2; exit 2 ;;
@@ -214,10 +229,21 @@ if test -n "$base_image"; then
 		exit 1
 	fi
 
-	DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
-		ZEDBSD_SWAP_SIZE_MIB="$zedbsd_swapfile_mb" \
-		"$repo/scripts/update-boot98-image.sh" \
-		"$output" "$kernel" "$cfg"
+	case "$profile" in
+		busybox-*)
+			"$repo/bootsimple/install-image.sh" \
+				--profile "$profile" --partition 1 \
+				--heads "$heads" --sectors "$sectors" \
+				--cmdline "$bootsimple_cmdline" \
+				"$output" "$kernel"
+			;;
+		debian13-*)
+			DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
+				ZEDBSD_SWAP_SIZE_MIB="$zedbsd_swapfile_mb" \
+				"$repo/scripts/update-boot98-image.sh" \
+				"$output" "$kernel" "$cfg"
+			;;
+	esac
 else
 	case "$profile" in
 		busybox-i386-ide | busybox-i386-scsi92 | busybox-i386-scsi55)
@@ -232,7 +258,7 @@ else
 				BOOT_MB="$boot_mb"
 				ROOT_MB="$root_mb"
 				SWAP_MB="$swap_mb"
-				ZEDBSD_SWAP_SIZE_MIB="$zedbsd_swapfile_mb"
+				IMAGE_PROFILE="$profile"
 				OUTPUT_IMAGE="$output"
 			)
 			if test -n "$rootfs"; then
@@ -240,8 +266,11 @@ else
 			fi
 			env "${busybox_env[@]}" "$repo/scripts/build-i386-image.sh"
 			if test -n "${kernel:-}" && test "$kernel" != "$default_kernel"; then
-				DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
-					"$repo/scripts/update-kernel.sh" "$output" "$kernel"
+				"$repo/bootsimple/install-image.sh" \
+					--profile "$profile" --partition 1 \
+					--heads "$heads" --sectors "$sectors" \
+					--cmdline "$bootsimple_cmdline" \
+					"$output" "$kernel"
 			fi
 			;;
 		debian13-i486-ide | debian13-i486-scsi92 | debian13-i486-scsi55)

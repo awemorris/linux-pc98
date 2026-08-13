@@ -8,7 +8,8 @@ This repository contains:
 - glibc: 2.41, i486DX port
 - BusyBox: i386SX port
 - qemu: 11.0, NEC PC-9800 support with compatible BIOS
-- zedBSD: NEC PC-9800 HDD-IPL and FAT16 bootloader (external/zedBSD submodule)
+- bootsimple: assembly-only FAT16 VMLINUX loader for the BusyBox images
+- zedBSD: boot OS used by the Debian images (external/zedBSD submodule)
 
 Each component is reusable for other retro PCs.
 
@@ -64,7 +65,8 @@ directly, avoiding login timeouts and memory exhaustion on slower machines.
 | `external/gcc`, `external/musl`, `external/glibc` | Toolchain submodules; versioned patch inventory in `external/patchsets/` |
 | `external/debian-i486/` | Framework and patch database for the Debian 13/i486DX package port |
 | `configs/` | Debian-derived i686 base and versioned PC-98 configurations |
-| `external/zedBSD/` | zedBSD boot OS submodule: PC-98 IPL, `vmunix`, userland, and DOS loader |
+| `bootsimple/` | Assembly PC-98 IPL, FAT16 PBR, and direct VMLINUX loader for BusyBox images |
+| `external/zedBSD/` | zedBSD boot OS submodule used as the Debian image bootloader and menu |
 | `external/noct/` | NoctLang submodule used to precompile Remacs for product images |
 | `bootloader/` | Linux product overlay; `fs/` mirrors its BOOT FAT placement |
 | `scripts/` | Internal build, image, test, publication scripts and disk-image tools |
@@ -121,13 +123,13 @@ passed to `apt` manually. Use `./build.sh setup --help` for unattended and
 Root privileges are used when creating the Debian staging tree, installing
 kernel modules into it, and generating the ext4 filesystem image.
 
-The prebuilt `external/zedBSD/platform/pc98/dos/linux98.exe` is tracked in the
-zedBSD submodule and is
-stored as `LINUX98.EXE` in generated FAT16 boot partitions. Normal kernel,
-bootloader, image, and Docker builds therefore do not require OpenWatcom.
-Maintainers rebuilding that executable must install OpenWatcom 1.9 and run
-`./build.sh dos-loader`; set `WATCOM` if it is not installed at
-`/home/awe/openwatcom-1.9`.
+The Debian images retain the prebuilt
+`external/zedBSD/platform/pc98/dos/linux98.exe`, stored as `LINUX98.EXE` in
+their FAT16 boot partitions. BusyBox images do not contain this DOS loader:
+their assembly-only `IO.SYS` loads VMLINUX directly. Normal builds therefore
+do not require OpenWatcom. Maintainers rebuilding `LINUX98.EXE` must install
+OpenWatcom 1.9 and run `./build.sh dos-loader`; set `WATCOM` if it is not
+installed at `/home/awe/openwatcom-1.9`.
 
 ### Docker build environment
 
@@ -251,20 +253,23 @@ legacy small-disk geometry H=4/S=17. Other IDE profiles use H=8/S=17. PC-9801-92
 profiles use H=8/S=32 and therefore require a separate disk image even when
 the files stored in the partitions are identical. PC-9801-55-compatible
 profiles, including WINnote98, use H=8/S=17. Every release image has a
-128 MiB FAT16 BOOT partition containing a 64 MiB zedBSD `/swapfile`; this is
-separate from the Linux swap partition. The old profile names ending in
-plain `-scsi` remain aliases for `-scsi92`. Partition sizes are defined in
+128 MiB FAT16 BOOT partition. Debian images put zedBSD's 64 MiB `/swapfile`
+there; BusyBox images reserve the same partition size but contain only the
+direct-loader files and VMLINUX. This swapfile is separate from the Linux
+swap partition. The old profile names ending in plain `-scsi` remain aliases
+for `-scsi92`. Partition sizes are defined in
 bytes and rounded up to whole cylinders, so changing geometry does not nearly
 double the SCSI image capacity. The i386 IDE image uses the small `pc98_ide`
 driver (`/dev/hda`, with a second disk at `/dev/hdb`); i386 SCSI and both
 i486/libata images use the standard
 SCSI disk namespace (`/dev/sda`).
 
-BOOT98 and `LINUX98.EXE` pass the BIOS SENSE drive number and logical H/S to
-Linux in a `SETUP_PC98_DISK` setup-data record. The PC-9801-55/92 driver uses
-that value when decoding the boot disk's NEC98 partition table. For an older
-loader which does not provide the record, `pc9801_scsi=55` selects the 8/17
-fallback; the default `pc9801_scsi=92` fallback is 8/32.
+Both bootsimple and zedBSD/`LINUX98.EXE` pass the BIOS SENSE drive number and
+logical H/S to Linux in `SETUP_PC98_DISK` setup-data records. bootsimple also
+enumerates additional BIOS IDE drives. The PC-9801-55/92 driver uses the
+record when decoding the boot disk's NEC98 partition table. For an older
+loader which does not provide it, `pc9801_scsi=55` selects the 8/17 fallback;
+the default `pc9801_scsi=92` fallback is 8/32.
 
 The same argument can override the Linux IRQ and PC-98 DMA channel for a
 fixed-configuration or compatible board:
@@ -302,18 +307,18 @@ MaxSyncSpeed = 5
 Debug = 0
 ```
 
-The BusyBox H=8 profiles install the replaceable BOOT98 environment. The
-silent `ipl-lba0.bin` enters `ipl-lba2.bin`; that selector loads the PBR of
-the FAT16 partition named BOOT. The one 1024-byte reserved logical sector
-contains the PBR/BPB only; it loads contiguous `IO.SYS` as an ordinary FAT
-file, and `IO.SYS` then loads `vmunix`. NEC MS-DOS can mount the same volume.
-zedBSD always starts `/bin/sh`. Linux product images overlay
-`/etc/zinit.rc`, which waits one second and runs `/bin/noct /bin/menu.nct`
-unless cancelled. The GUI menu starts Linux through `/bin/linux`, and also
-offers Emacs, Holoris, and the interactive shell. A bare zedBSD image has no
+BusyBox images use bootsimple. Its LBA0 enters LBA2, the selector loads the
+PBR of the FAT16 partition named BOOT, and the PBR loads contiguous `IO.SYS`
+as an ordinary FAT file. `IO.SYS` is assembly code which SENSEs the disk,
+loads the root-directory file `VMLINUX` directly as ELF32, constructs Linux
+boot parameters and PC-98 disk setup-data, then enters Linux. Each phase is
+shown on the PC-98 text screen so a real-machine stop can be localized.
+`./build.sh bootsimple-test` verifies the loader and generated-image layout.
+
+Debian images retain zedBSD as the graphical boot OS. zedBSD starts `/bin/sh`;
+the Linux product overlay supplies `/etc/zinit.rc`, the Noct menu, Emacs and
+Holoris, and starts Linux through `/bin/linux`. A bare zedBSD image has no
 startup script and enters the shell directly.
-The headless `busybox-i386` smoke test uses this unattended path without
-synthetic keyboard input.
 
 `INST.EXE` performs the three raw installation operations needed after a DOS
 partitioning/formatting tool has prepared the target volume.  Keep
@@ -483,7 +488,7 @@ The main environment-variable overrides are:
 | `DEBIAN_INCLUDE` | Comma-separated packages added to the rootfs |
 | `ROOT_PASSWORD` | Initial local test password; default `pc98` |
 | `BOOT_MB` | FAT16 boot partition size for BusyBox profiles; default 128 MiB |
-| `ZEDBSD_SWAPFILE_MB` | zedBSD BOOT swapfile size; default 64 MiB (`0`, `32`, or `64`) |
+| `ZEDBSD_SWAPFILE_MB` | zedBSD BOOT swapfile size for Debian images; default 64 MiB (`0`, `32`, or `64`); BusyBox bootsimple images require `0` |
 | `ROOT_MB` | ext4 root partition size; default 200 MiB |
 | `BOOT_LOGO` | Optional 80 by 120 packed 1bpp logo for the boot screen |
 | `DIST_IMAGE_NAME` | Filename inside `dist/` before the `.xz` suffix |

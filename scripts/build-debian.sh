@@ -8,4 +8,4 @@ if [ ! -d "$root_stage" ]; then
 	"$repo/scripts/build-debian-rootfs.sh"
 fi
 "$repo/scripts/build-kernel.sh"
-"$repo/scripts/build-images.sh"
+BOOTLOADER=zedbsd "$repo/scripts/build-images.sh"

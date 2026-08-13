@@ -68,12 +68,11 @@ video)
 	;;
 esac
 
-# The root filesystem must mount before kernel-command-line sysctls are
-# applied.  Once /sbin/init is about to run, keep less idle RAM in the VM
-# watermarks, bound dirty data, reclaim VFS metadata aggressively, and favor
-# the CF swap partition over retaining anonymous pages.
-"$sc" --file "$config" --set-str CMDLINE \
-	"vdso=0 $console_args earlyprintk=pc9800 root=PARTLABEL=LINUXROOT rootfstype=ext4 rw sysctl.vm.min_free_kbytes=64 sysctl.vm.dirty_background_bytes=32768 sysctl.vm.dirty_bytes=65536 sysctl.vm.vfs_cache_pressure=200 sysctl.vm.swappiness=100 sysctl.vm.page-cluster=0"
+# BusyBox images are started by bootsimple, which owns the complete profile
+# command line (including IDE/SCSI-specific arguments).  Keep the built-in
+# string empty and reject CONFIG_CMDLINE_OVERRIDE so /proc/cmdline contains
+# exactly what IO.SYS supplied.
+"$sc" --file "$config" --set-str CMDLINE ""
 
 make -C "$source" O="$build" ARCH=i386 olddefconfig
 cp "$config" "$output"

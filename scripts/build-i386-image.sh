@@ -44,6 +44,13 @@ skip_kernel_build="${SKIP_KERNEL_BUILD:-0}"
 root_device="${ROOT_DEVICE:-PARTLABEL=LINUXROOT}"
 swap_device="${SWAP_DEVICE:-PARTLABEL=LINUXSWAP}"
 kernel_extra_args="${KERNEL_EXTRA_ARGS:-}"
+image_profile="${IMAGE_PROFILE:-busybox-i${cpu_family}-ide}"
+
+case "$console_mode" in
+	dual) console_args="console=ttyPC0 console=tty0" ;;
+	video) console_args="console=tty0" ;;
+esac
+kernel_cmdline="vdso=0 $console_args earlyprintk=pc9800 root=$root_device rootfstype=ext4 rw sysctl.vm.min_free_kbytes=64 sysctl.vm.dirty_background_bytes=32768 sysctl.vm.dirty_bytes=65536 sysctl.vm.vfs_cache_pressure=200 sysctl.vm.swappiness=100 sysctl.vm.page-cluster=0${kernel_extra_args:+ $kernel_extra_args}"
 
 case "$root_device" in
 /dev/*2) swap_device="${SWAP_DEVICE:-${root_device%2}3}" ;;
@@ -102,10 +109,8 @@ fi
 # temporary copy so the on-image fstab can use the matching block-device
 # namespace without modifying the next profile's input tree.
 image_root_stage="$(mktemp -d "${TMPDIR:-/tmp}/pc98-rootfs.XXXXXX")"
-cfg="$(mktemp "${TMPDIR:-/tmp}/boot98-i${cpu_family}.XXXXXX")"
 cleanup()
 {
-	rm -f -- "$cfg"
 	rm -rf -- "$image_root_stage"
 }
 trap cleanup EXIT INT TERM
@@ -126,15 +131,7 @@ ROOT_MB="${ROOT_MB:-200}" \
 SWAP_MB="${SWAP_MB:-32}" \
 SMALL_EXT4="${SMALL_EXT4:-1}" \
 OUTPUT_IMAGE="$output" \
+	BOOTLOADER=bootsimple \
+	BOOTSIMPLE_PROFILE="$image_profile" \
+	BOOTSIMPLE_CMDLINE="$kernel_cmdline" \
 	"$repo/scripts/build-images.sh"
-
-printf '%s\n' \
-	"echo Booting Linux 7.1 i${cpu_family}..." \
-	'kernel VMLINUX' \
-	"arg root=$root_device rootfstype=ext4 rw${kernel_extra_args:+ $kernel_extra_args}" \
-	'boot' >"$cfg"
-DISK_HEADS="${DISK_HEADS:-8}" DISK_SECTORS="${DISK_SECTORS:-17}" \
-	"$repo/external/zedBSD/scripts/install-image.sh" --install-disk-stubs \
-		"$output" "$boot_vmlinux" "$cfg"
-DISK_HEADS="${DISK_HEADS:-8}" DISK_SECTORS="${DISK_SECTORS:-17}" \
-	"$repo/bootloader/install-fs.sh" --partition 1 "$output"

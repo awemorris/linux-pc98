@@ -1474,6 +1474,51 @@ def relaunch_elevated():
     return code > 32
 
 
+MACHINE_CHOICES = ("PC-9801", "PC-9821")
+MACHINE_ARG = {"PC-9801": "pc9801", "PC-9821": "pc9821"}
+
+GRAPHICS_GDC = "GDC (640x400)"
+GRAPHICS_CIRRUS = "GDC (640x400) + Cirrus (-1024x768)"
+GRAPHICS_PEGC = ("GDC (640x400) + PEGC (-640x480) + "
+                 "Cirrus (-1024x768)")
+PC9801_GRAPHICS = (GRAPHICS_GDC,)
+PC9821_GRAPHICS = (GRAPHICS_GDC, GRAPHICS_CIRRUS, GRAPHICS_PEGC)
+
+
+def machine_value(value):
+    """Normalize a GUI label or CLI spelling to the QEMU machine name."""
+    value = str(value or "PC-9821").strip()
+    if value in MACHINE_ARG:
+        return MACHINE_ARG[value]
+    lowered = value.lower()
+    if lowered in ("pc9801", "9801"):
+        return "pc9801"
+    if lowered in ("pc9821", "9821"):
+        return "pc9821"
+    raise ValueError("unknown PC-98 machine: %s" % value)
+
+
+def graphics_value(value):
+    """Normalize the short CLI spellings while preserving GUI labels."""
+    value = str(value or GRAPHICS_CIRRUS).strip()
+    aliases = {"gdc": GRAPHICS_GDC, "cirrus": GRAPHICS_CIRRUS,
+               "pegc": GRAPHICS_PEGC}
+    return aliases.get(value.lower(), value)
+
+
+def qemu_machine(cfg):
+    """Return the complete -M value for the selected display hardware."""
+    machine = machine_value(cfg.get("machine"))
+    graphics = graphics_value(cfg.get("graphics"))
+    allowed = PC9801_GRAPHICS if machine == "pc9801" else PC9821_GRAPHICS
+    if graphics not in allowed:
+        raise ValueError("%s is not available on %s" % (graphics, machine))
+    if machine == "pc9801":
+        return machine
+    return "%s,pegc=%s" % (machine,
+                            "on" if graphics == GRAPHICS_PEGC else "off")
+
+
 def qemu_command(cfg):
     """Build the QEMU argv from a settings dict; also returns any notes.
 
@@ -1481,7 +1526,8 @@ def qemu_command(cfg):
     channel as hard disks, so the 1st/2nd disk and a mounted folder compete
     for those; the secondary channel is the CD-ROM's.
     """
-    argv = [cfg["qemu"], "-M", "pc9821", "-m", cfg.get("memory") or "64M"]
+    argv = [cfg["qemu"], "-M", qemu_machine(cfg),
+            "-m", cfg.get("memory") or "64M"]
     notes = []
     if cfg.get("kvm"):
         argv += ["-accel", "kvm"]
@@ -2416,10 +2462,17 @@ Booting
                [--cd=ISO] [--scsi1=IMAGE] ... [--scsi4=IMAGE]
                [--serial=PORT] [--mount=DIR] [--roms=DIR]
                [--memory=64M] [--kvm] [--hyperv] [--qemu=PATH]
+               [--machine=pc9801|pc9821]
+               [--graphics=gdc|cirrus|pegc]
                [--sound=86|wss|none] [--lan] [--dry-run]
 
   --kvm and --hyperv are experimental; without them the guest runs
   under TCG, which is the tested path.
+
+  --machine selects PC-9801 or PC-9821; the default is PC-9821.
+
+  --graphics selects GDC, GDC + Cirrus, or GDC + PEGC + Cirrus.  PEGC is
+  available only on PC-9821 and uses QEMU's compatible BIOS.
 
   --sound fits one board: 86 is the PC-9801-86 (FM and PCM), wss is the
   Mate-X built-in Sound System.  The default is 86.
@@ -2437,7 +2490,7 @@ Booting
 def boot_cli(opts, log):
     cfg = {k: opts.get(k, "") for k in
            ("qemu", "roms", "hdd1", "hdd2", "fdd1", "fdd2", "cd", "mount")
-           + SCSI_KEYS + ("serial", "memory", "extra")}
+           + SCSI_KEYS + ("serial", "memory", "machine", "graphics", "extra")}
     board = str(opts.get("sound") or "86").lower()
     if "no_sound" in opts:
         board = "none"
@@ -2680,7 +2733,9 @@ def gui():
             # not a file, so it gets its own row rather than a BOOT_ROWS entry
             self.vars["serial"] = tk.StringVar()
             self.compat = tk.BooleanVar(value=True)
+            self.machine = tk.StringVar(value=MACHINE_CHOICES[1])
             self.memory = tk.StringVar(value="64M")
+            self.graphics = tk.StringVar(value=GRAPHICS_CIRRUS)
             self.extra = tk.StringVar()
             self.sound = tk.StringVar(value=SOUND_CHOICES[0][0])
             self.kvm = tk.BooleanVar(value=False)
@@ -2705,43 +2760,61 @@ def gui():
                 inner = self.add_row(storage, inner, *spec)
 
             hardware = self.add_group(right, 0, "Hardware")
+            ttk.Label(hardware, text="Machine", width=LABEL_WIDTH).grid(
+                row=0, column=0, sticky="w", pady=2)
+            self.machine_box = ttk.Combobox(
+                hardware, textvariable=self.machine, state="readonly",
+                values=MACHINE_CHOICES)
+            self.machine_box.grid(row=0, column=1, columnspan=4,
+                                  sticky="ew", pady=2)
+            self.machine_box.bind("<<ComboboxSelected>>",
+                                  self.machine_selected)
             row = 1
             ttk.Label(hardware, text="Memory", width=LABEL_WIDTH).grid(
-                row=0, column=0, sticky="w", pady=2)
+                row=1, column=0, sticky="w", pady=2)
             self.mem_scale = ttk.Scale(hardware, from_=0,
                                        to=len(MEMORY_STEPS) - 1,
                                        orient="horizontal",
                                        command=self.slide_memory)
-            self.mem_scale.grid(row=0, column=1, sticky="ew", pady=2)
+            self.mem_scale.grid(row=1, column=1, sticky="ew", pady=2)
             # free text on purpose: the slider covers the usual sizes and
             # the box still takes anything -m would
             ttk.Entry(hardware, textvariable=self.memory, width=9).grid(
-                row=0, column=3, padx=(4, 0), pady=2)
+                row=1, column=3, padx=(4, 0), pady=2)
             self.memory.trace_add("write", self.memory_edited)
             self.memory_edited()
+            ttk.Label(hardware, text="Graphics", width=LABEL_WIDTH).grid(
+                row=2, column=0, sticky="w", pady=2)
+            self.graphics_box = ttk.Combobox(
+                hardware, textvariable=self.graphics, state="readonly",
+                values=PC9821_GRAPHICS)
+            self.graphics_box.grid(row=2, column=1, columnspan=4,
+                                   sticky="ew", pady=2)
+            self.graphics_box.bind("<<ComboboxSelected>>",
+                                   self.graphics_selected)
             ttk.Label(hardware, text="Serial Port", width=LABEL_WIDTH).grid(
-                row=1, column=0, sticky="w", pady=2)
+                row=3, column=0, sticky="w", pady=2)
             self.serial_box = ttk.Combobox(hardware,
                                            textvariable=self.vars["serial"])
-            self.serial_box.grid(row=1, column=1, sticky="ew", pady=2)
+            self.serial_box.grid(row=3, column=1, sticky="ew", pady=2)
             # Scan sits where the other rows keep Drive...: both go looking
             # for real hardware
             ttk.Button(hardware, text="Scan", width=9,
                        command=self.scan_serial).grid(
-                row=1, column=3, padx=(4, 0), pady=2)
-            self.add_clear(hardware, 1, "serial")
+                row=3, column=3, padx=(4, 0), pady=2)
+            self.add_clear(hardware, 3, "serial")
             ttk.Label(hardware, text="Sound", width=LABEL_WIDTH).grid(
-                row=2, column=0, sticky="w", pady=2)
+                row=4, column=0, sticky="w", pady=2)
             # a fixed set of boards, so the field is a choice and not free text
             ttk.Combobox(hardware, textvariable=self.sound, state="readonly",
                          values=[c[0] for c in SOUND_CHOICES]).grid(
-                row=2, column=1, columnspan=4, sticky="ew", pady=2)
+                row=4, column=1, columnspan=4, sticky="ew", pady=2)
             ttk.Label(hardware, text="Network", width=LABEL_WIDTH).grid(
-                row=3, column=0, sticky="w", pady=2)
+                row=5, column=0, sticky="w", pady=2)
             self.network = tk.StringVar(value=NETWORK_CHOICES[0])
             ttk.Combobox(hardware, textvariable=self.network,
                          state="readonly", values=NETWORK_CHOICES).grid(
-                row=3, column=1, columnspan=4, sticky="ew", pady=2)
+                row=5, column=1, columnspan=4, sticky="ew", pady=2)
 
             path = self.add_group(right, row, "Path")
             row += 1
@@ -2783,6 +2856,26 @@ def gui():
                                           state="disabled")
             self.stop_button.pack(side="right", padx=6)
             return frame
+
+        def update_graphics_choices(self, preferred=None):
+            choices = (PC9801_GRAPHICS if self.machine.get() == "PC-9801"
+                       else PC9821_GRAPHICS)
+            self.graphics_box["values"] = choices
+            selected = preferred if preferred in choices else self.graphics.get()
+            if selected not in choices:
+                selected = choices[0]
+            self.graphics.set(selected)
+
+        def machine_selected(self, _event=None):
+            self.update_graphics_choices()
+
+        def graphics_selected(self, _event=None):
+            # Full PEGC is implemented by the compatibility BIOS and QEMU
+            # deliberately rejects it with a vendor ROM dump.
+            if self.graphics.get() == GRAPHICS_PEGC and not self.compat.get():
+                self.compat.set(True)
+                self.apply_compat()
+                self.write("PEGC selected: using the compatible BIOS")
 
         def slide_memory(self, raw):
             """Snap the knob to a stop and spell that stop in the box."""
@@ -2880,6 +2973,10 @@ def gui():
             return picked[0] if picked else ""
 
         def apply_compat(self):
+            if not self.compat.get() and self.graphics.get() == GRAPHICS_PEGC:
+                self.compat.set(True)
+                self.write("PEGC requires the compatible BIOS")
+                return
             compat = compat_roms(self.vars["qemu"].get())
             if self.compat.get():
                 current = self.vars["roms"].get()
@@ -2897,7 +2994,9 @@ def gui():
         def config(self):
             cfg = {k: v.get().strip() for k, v in self.vars.items()}
             fm, pcm = sound_parts(self.sound.get())
-            cfg.update(memory=self.memory.get().strip(),
+            cfg.update(machine=self.machine.get(),
+                       memory=self.memory.get().strip(),
+                       graphics=self.graphics.get(),
                        extra=self.extra.get().strip(), fm=fm, pcm=pcm,
                        kvm=self.kvm.get(), hyperv=self.hyperv.get(),
                        lan=NETWORK_ARG.get(self.network.get(), ""))
@@ -3348,6 +3447,13 @@ def gui():
             args = {v: k for k, v in NETWORK_ARG.items()}
             self.network.set(args.get(saved.get("lan", ""),
                                       NETWORK_CHOICES[0]))
+            machine = saved.get("machine", MACHINE_CHOICES[1])
+            if machine not in MACHINE_CHOICES:
+                machine = {"pc9801": MACHINE_CHOICES[0],
+                           "pc9821": MACHINE_CHOICES[1]}.get(
+                               machine.lower(), MACHINE_CHOICES[1])
+            self.machine.set(machine)
+            self.update_graphics_choices(saved.get("graphics", GRAPHICS_CIRRUS))
             self.memory.set(saved.get("memory", "64M"))
             self.extra.set(saved.get("extra", ""))
             # settings written before FM and PCM were told apart say "sound",
@@ -3368,6 +3474,8 @@ def gui():
             self.saved_roms = saved.get("roms", "") or default_roms(
                 self.vars["qemu"].get())
             self.apply_compat()
+            if self.graphics.get() == GRAPHICS_PEGC:
+                self.graphics_selected()
             roms = self.vars["roms"].get()
             if not self.compat.get() and roms and not all(
                     os.path.isfile(os.path.join(roms, f)) for f in ROM_FILES):
@@ -3384,7 +3492,9 @@ def gui():
             parser = configparser.ConfigParser(interpolation=None)
             parser[SECTION] = dict(
                 state, compat=str(self.compat.get()).lower(),
-                memory=self.memory.get(), extra=self.extra.get(),
+                machine=self.machine.get(), memory=self.memory.get(),
+                graphics=self.graphics.get(),
+                extra=self.extra.get(),
                 fm=str(fm).lower(), pcm=str(pcm).lower(),
                 kvm=str(self.kvm.get()).lower(),
                 hyperv=str(self.hyperv.get()).lower())

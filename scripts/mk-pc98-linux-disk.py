@@ -80,6 +80,79 @@ def partition_entry(mid, sid, start_cylinder, end_cylinder, name):
     )
 
 
+def entry_chs_lba(entry, offset):
+    sector = entry[offset]
+    head = entry[offset + 1]
+    cylinder = struct.unpack_from("<H", entry, offset + 2)[0]
+    if sector >= SECTORS or head >= HEADS:
+        raise RuntimeError(
+            f"invalid CHS C/H/S={cylinder}/{head}/{sector} for "
+            f"H={HEADS}/S={SECTORS}")
+    return chs_lba(cylinder, head, sector)
+
+
+def validate_image(path):
+    """Validate the PC-98 CHS table against the raw image's real size."""
+    image_bytes = os.path.getsize(path)
+    if image_bytes == 0 or image_bytes % SECTOR_SIZE:
+        raise RuntimeError(
+            f"image size {image_bytes} is not a nonzero multiple of "
+            f"{SECTOR_SIZE}")
+    image_sectors = image_bytes // SECTOR_SIZE
+    if image_sectors <= PARTITION_TABLE_LBA:
+        raise RuntimeError("image is too small to contain a partition table")
+    with open(path, "rb") as image:
+        image.seek(PARTITION_TABLE_LBA * SECTOR_SIZE)
+        table = image.read(SECTOR_SIZE)
+    if len(table) != SECTOR_SIZE:
+        raise RuntimeError("cannot read the complete PC-98 partition table")
+
+    previous_end = -1
+    count = 0
+    for index in range(SECTOR_SIZE // PARTITION_ENTRY_SIZE):
+        entry = table[
+            index * PARTITION_ENTRY_SIZE:
+            (index + 1) * PARTITION_ENTRY_SIZE]
+        if entry[0] == 0:
+            continue
+        try:
+            start = entry_chs_lba(entry, 4)
+            data = entry_chs_lba(entry, 8)
+            end = entry_chs_lba(entry, 12)
+        except RuntimeError as error:
+            raise RuntimeError(f"partition {index + 1}: {error}") from error
+        if not start <= data <= end:
+            raise RuntimeError(
+                f"partition {index + 1}: invalid start/data/end LBA "
+                f"{start}/{data}/{end}")
+        if start <= previous_end:
+            raise RuntimeError(
+                f"partition {index + 1}: LBA {start} overlaps the previous "
+                f"partition ending at LBA {previous_end}")
+        if end >= image_sectors:
+            raise RuntimeError(
+                f"partition {index + 1}: end LBA {end} exceeds image last "
+                f"LBA {image_sectors - 1}; likely CHS geometry mismatch "
+                f"(expected H={HEADS}/S={SECTORS})")
+        previous_end = end
+        count += 1
+    if count == 0:
+        raise RuntimeError("PC-98 partition table contains no partitions")
+    if previous_end + 1 != image_sectors:
+        raise RuntimeError(
+            f"last partition ends at LBA {previous_end}, but image ends at "
+            f"LBA {image_sectors - 1}; image is not cylinder-complete for "
+            f"H={HEADS}/S={SECTORS}")
+    return count, image_sectors
+
+
+def validate(args):
+    count, sectors = validate_image(args.image)
+    print(
+        f"validated {args.image}: {count} PC-98 partitions, {sectors} "
+        f"sectors, H={HEADS}/S={SECTORS}")
+
+
 def fat16_layout(total_sectors, reserved, sectors_per_cluster,
                  root_entries=512, fats=2,
                  logical_sector_size=PC98_DOS_SECTOR_SIZE):
@@ -375,6 +448,8 @@ def create(args):
                 p3_cylinders * CYL_SECTORS)
         image.truncate(total_sectors * SECTOR_SIZE)
 
+    validate_image(args.output)
+
     summary = (
         f"wrote {args.output}: {total_sectors * SECTOR_SIZE} bytes; "
         f"p1 FAT16 LBA {p1_start}+{p1_sectors}, "
@@ -418,9 +493,19 @@ def main():
         help="use a 1 MiB journal and omit large-filesystem ext4 features")
     create_parser.set_defaults(function=create)
 
+    validate_parser = subparsers.add_parser(
+        "validate", help="validate PC-98 CHS entries against image size")
+    validate_parser.add_argument("image")
+    validate_parser.add_argument("--heads", type=int, default=8)
+    validate_parser.add_argument("--sectors", type=int, default=17)
+    validate_parser.set_defaults(function=validate)
+
     args = parser.parse_args()
     set_geometry(args.heads, args.sectors)
-    args.function(args)
+    try:
+        args.function(args)
+    except RuntimeError as error:
+        parser.exit(1, f"error: {error}\n")
 
 
 if __name__ == "__main__":

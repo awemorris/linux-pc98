@@ -63,6 +63,12 @@ materialize_path()
 	esac
 }
 
+validate_pc98_image()
+{
+	python3 "$repo/scripts/mk-pc98-linux-disk.py" validate "$1" \
+		--heads "$heads" --sectors "$sectors"
+}
+
 profile="${1:-}"
 if test "$profile" = list; then
 	list_profiles
@@ -191,6 +197,13 @@ if test -n "$base_image"; then
 			fi
 			;;
 	esac
+	# Cached and explicitly supplied base images may have been created by the
+	# retired small-IDE H=4 policy.  Updating their files does not rewrite the
+	# partition layout, so reject a geometry mismatch before modifying them.
+	if ! validate_pc98_image "$output"; then
+		rm -f -- "$output"
+		exit 1
+	fi
 
 	DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
 		"$repo/scripts/update-boot98-image.sh" \
@@ -229,6 +242,11 @@ else
 			;;
 	esac
 fi
+
+# The boot installer updates the IPL/PBR and volume contents.  Recheck the
+# outer PC-98 partition table afterwards so no release can publish a truncated
+# or wrong-geometry raw image.
+validate_pc98_image "$output"
 
 if test -n "$publish_base"; then
 	"$repo/scripts/image-cache.sh" publish "$publish_base" "$output"

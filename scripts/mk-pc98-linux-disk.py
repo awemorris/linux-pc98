@@ -172,15 +172,6 @@ def fat16_layout(total_sectors, reserved, sectors_per_cluster,
     return sectors_per_fat, root_sectors, clusters
 
 
-def write_zeros(stream, offset, length):
-    zero = b"\0" * (1 << 20)
-    stream.seek(offset)
-    while length:
-        chunk = min(length, len(zero))
-        stream.write(zero[:chunk])
-        length -= chunk
-
-
 def write_fat16(image, start_lba, total_physical_sectors, kernel_path,
                 pbr_template, logo_path=None, dos_loader_path=None):
     if total_physical_sectors % PC98_DOS_SECTOR_SCALE:
@@ -281,7 +272,6 @@ def write_fat16(image, start_lba, total_physical_sectors, kernel_path,
         struct.pack_into("<I", root, entry + 28, len(dos_loader))
 
     base = start_lba * SECTOR_SIZE
-    write_zeros(image, base, total_physical_sectors * SECTOR_SIZE)
     image.seek(base)
     image.write(pbr)
 
@@ -477,7 +467,7 @@ def main():
     create_parser.add_argument("pbr")
     create_parser.add_argument("kernel")
     create_parser.add_argument("root_stage")
-    create_parser.add_argument("--boot-mb", type=int, default=200)
+    create_parser.add_argument("--boot-mb", type=int, default=128)
     create_parser.add_argument("--root-mb", type=int, default=200)
     create_parser.add_argument("--swap-mb", type=int, default=0)
     create_parser.add_argument("--heads", type=int, default=8)

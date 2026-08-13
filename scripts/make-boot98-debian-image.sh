@@ -47,15 +47,14 @@ esac
 # is the NEC system area and the FAT16 BOOT volume begins at cylinder one.
 # The FAT16 PBR occupies one 1024-byte reserved sector and IO.SYS is the first
 # ordinary FAT file, so DOS and the partition IPL use the same start CHS.
-# Keep the original H=8/S=17 image's BOOT and root byte
-# capacities,
-# then round each one up to whole cylinders for the selected geometry.  Fixed
+# Keep the root byte capacity, use a 128 MiB FAT16 BOOT partition, and round
+# each one up to whole cylinders for the selected geometry.  Fixed
 # ending cylinder numbers would make an H=8/S=32 SCSI image about 1.88 times
 # larger than the IDE image even though both contain the same files.
 cylinder_sectors=$((heads * sectors))
 cylinder_bytes=$((cylinder_sectors * 512))
 baseline_cylinder_bytes=$((8 * 17 * 512))
-boot_target_bytes=$((2047 * baseline_cylinder_bytes))
+boot_target_bytes=$((128 * 1024 * 1024))
 root_target_bytes=$((13371 * baseline_cylinder_bytes))
 
 boot_start_cylinder=1

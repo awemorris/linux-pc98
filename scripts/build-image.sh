@@ -10,12 +10,15 @@ Usage: ./build.sh image PROFILE [options]
        ./build.sh image list
 
 Profiles:
-  busybox-i386-ide      Boots, i386 BusyBox, IDE H=8/S=17, below 40 MB
-  busybox-i386-scsi92   Boots, i386 BusyBox, 92 SCSI H=8/S=32, 8 MiB swap
-  busybox-i386-scsi55   Boots, i386 BusyBox, 55 SCSI H=8/S=17, 8 MiB swap
-  debian13-i486-ide     Boots, Debian/i486, IDE H=8/S=17, 128 MiB swap
-  debian13-i486-scsi92  Boots, Debian/i486, 92 SCSI H=8/S=32, 128 MiB swap
-  debian13-i486-scsi55  Boots, Debian/i486, 55 SCSI H=8/S=17, 128 MiB swap
+  busybox-i386-ide      Boots, i386 BusyBox, IDE H=8/S=17
+  busybox-i386-scsi92   Boots, i386 BusyBox, 92 SCSI H=8/S=32
+  busybox-i386-scsi55   Boots, i386 BusyBox, 55 SCSI H=8/S=17
+  debian13-i486-ide     Boots, Debian/i486, IDE H=8/S=17
+  debian13-i486-scsi92  Boots, Debian/i486, 92 SCSI H=8/S=32
+  debian13-i486-scsi55  Boots, Debian/i486, 55 SCSI H=8/S=17
+
+By default, newly created profiles use a 128 MiB FAT16 BOOT partition and
+contain a 64 MiB zedBSD /swapfile in addition to their Linux swap partition.
 
 Options:
   --kernel FILE         use a specific uncompressed ELF kernel
@@ -24,7 +27,9 @@ Options:
   --base-image NAME     fetch NAME from the package-server image cache
   --output FILE         output path (must not already exist)
   --config FILE         BOOTS.CFG replacement for a Boots base image
-  --swap-mb N           swap size for newly created images
+  --swap-mb N           Linux swap partition size for newly created images
+  --zedbsd-swapfile-mb N
+                        zedBSD BOOT swapfile size (0, 32, or 64; default 64)
   --boot-mb N           FAT16 BOOT size for newly created BusyBox images
   --root-mb N           ext4 root size for newly created BusyBox images
   --jobs N              parallel kernel/rootfs build jobs
@@ -83,14 +88,15 @@ base_image=""
 output=""
 cfg=""
 swap_mb=""
-boot_mb="${BOOT_MB:-200}"
+zedbsd_swapfile_mb="${ZEDBSD_SWAPFILE_MB:-64}"
+boot_mb="${BOOT_MB:-}"
 root_mb="${ROOT_MB:-200}"
 jobs="${JOBS:-$(nproc)}"
 publish_base=""
 
 while test "$#" -gt 0; do
 	case "$1" in
-		--kernel | --rootfs | --base-image | --output | --config | --swap-mb | --boot-mb | --root-mb | --jobs | --publish-base)
+		--kernel | --rootfs | --base-image | --output | --config | --swap-mb | --zedbsd-swapfile-mb | --boot-mb | --root-mb | --jobs | --publish-base)
 			test "$#" -ge 2 || { echo "Missing value for $1" >&2; exit 2; }
 			case "$1" in
 				--kernel) kernel="$2" ;;
@@ -99,6 +105,7 @@ while test "$#" -gt 0; do
 				--output) output="$2" ;;
 				--config) cfg="$2" ;;
 				--swap-mb) swap_mb="$2" ;;
+				--zedbsd-swapfile-mb) zedbsd_swapfile_mb="$2" ;;
 				--boot-mb) boot_mb="$2" ;;
 				--root-mb) root_mb="$2" ;;
 				--jobs) jobs="$2" ;;
@@ -130,7 +137,6 @@ kernel_extra_args=""
 case "$profile" in
 	busybox-i386-ide)
 		cpu_family=386
-		boot_mb=8
 		root_mb=20
 		default_swap=8
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
@@ -140,7 +146,6 @@ case "$profile" in
 		sectors=32
 		root_device=PARTLABEL=LINUXROOT
 		kernel_extra_args="rootwait pc9801_scsi=92,mode=dma"
-		boot_mb=8
 		root_mb=20
 		default_swap=8
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
@@ -149,7 +154,6 @@ case "$profile" in
 		cpu_family=386
 		root_device=PARTLABEL=LINUXROOT
 		kernel_extra_args="rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=async-pio"
-		boot_mb=8
 		root_mb=20
 		default_swap=8
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
@@ -180,6 +184,11 @@ output="${output:-$repo/build/images/$profile.raw}"
 kernel="${kernel:-$default_kernel}"
 rootfs="${rootfs:-$default_rootfs}"
 swap_mb="${swap_mb:-$default_swap}"
+boot_mb="${boot_mb:-128}"
+case "$zedbsd_swapfile_mb" in
+	0 | 32 | 64) ;;
+	*) echo "zedBSD swapfile size must be 0, 32, or 64 MiB" >&2; exit 2 ;;
+esac
 
 if test -n "$base_image"; then
 	if test -f "$base_image"; then
@@ -206,6 +215,7 @@ if test -n "$base_image"; then
 	fi
 
 	DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
+		ZEDBSD_SWAP_SIZE_MIB="$zedbsd_swapfile_mb" \
 		"$repo/scripts/update-boot98-image.sh" \
 		"$output" "$kernel" "$cfg"
 else
@@ -222,6 +232,7 @@ else
 				BOOT_MB="$boot_mb"
 				ROOT_MB="$root_mb"
 				SWAP_MB="$swap_mb"
+				ZEDBSD_SWAP_SIZE_MIB="$zedbsd_swapfile_mb"
 				OUTPUT_IMAGE="$output"
 			)
 			if test -n "$rootfs"; then
@@ -236,6 +247,7 @@ else
 		debian13-i486-ide | debian13-i486-scsi92 | debian13-i486-scsi55)
 			SWAP_MB="$swap_mb" DISK_HEADS="$heads" \
 				DISK_SECTORS="$sectors" \
+				ZEDBSD_SWAP_SIZE_MIB="$zedbsd_swapfile_mb" \
 				KERNEL_EXTRA_ARGS="$kernel_extra_args" \
 				"$repo/scripts/make-boot98-debian-image.sh" \
 				"$rootfs" "$output" "$kernel"

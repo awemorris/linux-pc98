@@ -131,8 +131,8 @@ for compact in \
 	linux-pc98-i386sx-busybox-scsi55.img \
 	linux-pc98-i386sx-busybox-scsi92.img; do
 	compact_size="$(stat -c %s "$release_dir/$compact")"
-	if test "$compact_size" -ge 40000000; then
-		echo "$compact exceeds the 40 MB compatibility limit: $compact_size" >&2
+	if test "$compact_size" -ge $((160 * 1024 * 1024)); then
+		echo "$compact exceeds the 160 MiB compatibility limit: $compact_size" >&2
 		exit 1
 	fi
 done

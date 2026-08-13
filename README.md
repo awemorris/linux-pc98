@@ -243,12 +243,14 @@ canonical image after successful completion, together with its SHA-256 file.
 must not be added to files in `build/releases/`. Use `./build.sh release` for
 the complete compressed public artifact set.
 
-The BusyBox i386 IDE image is below 40 MiB and uses H=8/S=17, which matches
+The BusyBox i386 IDE image is below 160 MiB and uses H=8/S=17, which matches
 most PC-98 IDE BIOS implementations. Only IDE images of 20 MiB or less use the
 legacy small-disk geometry H=4/S=17. Other IDE profiles use H=8/S=17. PC-9801-92 SCSI
 profiles use H=8/S=32 and therefore require a separate disk image even when
 the files stored in the partitions are identical. PC-9801-55-compatible
-profiles, including WINnote98, use H=8/S=17. The old profile names ending in
+profiles, including WINnote98, use H=8/S=17. Every release image has a
+128 MiB FAT16 BOOT partition containing a 64 MiB zedBSD `/swapfile`; this is
+separate from the Linux swap partition. The old profile names ending in
 plain `-scsi` remain aliases for `-scsi92`. Partition sizes are defined in
 bytes and rounded up to whole cylinders, so changing geometry does not nearly
 double the SCSI image capacity. The i386 IDE image uses the small `pc98_ide`
@@ -383,9 +385,9 @@ The Debian images use the full PC-98 kernel configuration and require 64 MiB.
 
 | Image | Geometry and purpose | Userland | Minimum RAM | Raw size limit |
 | --- | --- | --- | ---: | ---: |
-| `linux-pc98-i386sx-busybox-ide.img.xz` | IDE H=8/S=17 on i386SX/DX machines | static musl/BusyBox | 5 MiB | below 40 MB |
-| `linux-pc98-i386sx-busybox-scsi55.img.xz` | PC-9801-55-compatible SCSI H=8/S=17, including WINnote98 | static musl/BusyBox | 5 MiB | below 40 MB |
-| `linux-pc98-i386sx-busybox-scsi92.img.xz` | PC-9801-92 SCSI H=8/S=32 | static musl/BusyBox | 5 MiB | below 40 MB |
+| `linux-pc98-i386sx-busybox-ide.img.xz` | IDE H=8/S=17 on i386SX/DX machines | static musl/BusyBox | 5 MiB | below 160 MiB |
+| `linux-pc98-i386sx-busybox-scsi55.img.xz` | PC-9801-55-compatible SCSI H=8/S=17, including WINnote98 | static musl/BusyBox | 5 MiB | below 160 MiB |
+| `linux-pc98-i386sx-busybox-scsi92.img.xz` | PC-9801-92 SCSI H=8/S=32 | static musl/BusyBox | 5 MiB | below 160 MiB |
 | `linux-pc98-i486dx-debian13-ide.img.xz` | IDE H=8/S=17 on i486DX or newer | Debian 13/i486DX | 64 MiB | below 2 GB |
 | `linux-pc98-i486dx-debian13-scsi55.img.xz` | PC-9801-55-compatible SCSI H=8/S=17 | Debian 13/i486DX | 64 MiB | below 2 GB |
 | `linux-pc98-i486dx-debian13-scsi92.img.xz` | PC-9801-92 SCSI H=8/S=32 | Debian 13/i486DX | 64 MiB | below 2 GB |
@@ -478,7 +480,8 @@ The main environment-variable overrides are:
 | `DEBIAN_MIRROR` | Official Debian mirror |
 | `DEBIAN_INCLUDE` | Comma-separated packages added to the rootfs |
 | `ROOT_PASSWORD` | Initial local test password; default `pc98` |
-| `BOOT_MB` | FAT16 boot partition size; default 200 MiB |
+| `BOOT_MB` | FAT16 boot partition size for BusyBox profiles; default 128 MiB |
+| `ZEDBSD_SWAPFILE_MB` | zedBSD BOOT swapfile size; default 64 MiB (`0`, `32`, or `64`) |
 | `ROOT_MB` | ext4 root partition size; default 200 MiB |
 | `BOOT_LOGO` | Optional 80 by 120 packed 1bpp logo for the boot screen |
 | `DIST_IMAGE_NAME` | Filename inside `dist/` before the `.xz` suffix |

@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 release_dir="$repo/build/releases"
-version="${RELEASE_VERSION:-v0.9.0}"
+version="${RELEASE_VERSION:-v0.11.0}"
 jobs="${JOBS:-$(nproc)}"
 publish_rootfs=0
 build_win64=1

@@ -57,7 +57,9 @@ trap cleanup EXIT INT TERM
 	cd "$remacs_src"
 	mkdir -p "$temporary/generated"
 	python3 tools/gen-napi.py src/napi.def "$temporary/generated"
-	tools/build-nap.sh "$noct" "$temporary/generated" "$temporary"
+	# Bytecode generation is non-interactive.  Do not let the host Noct CLI
+	# inherit the release build's terminal or consume its controlling input.
+	tools/build-nap.sh "$noct" "$temporary/generated" "$temporary" </dev/null
 )
 test -s "$temporary/remacs.nap" || {
 	echo "Remacs bytecode compiler produced no remacs.nap" >&2

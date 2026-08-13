@@ -216,18 +216,18 @@ sudo umount "$mount_dir"
 mounted=0
 
 dd if="$root_image" of="$output" bs=512 seek="$root_start" \
-	conv=notrunc,sparse status=progress
+	conv=notrunc,sparse,fdatasync status=progress
 truncate -s "$swap_bytes" "$swap_image"
 mkswap --quiet --label PC98SWAP "$swap_image"
 dd if="$swap_image" of="$output" bs=512 seek="$swap_start" \
-	conv=notrunc,sparse status=progress
+	conv=notrunc,sparse,fdatasync status=progress
 
 DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
 	"$repo/external/zedBSD/scripts/install-image.sh" --install-disk-stubs \
 	"$output" "$kernel" "$cfg"
+printf 'Installing graphical menu and Remacs overlay...\n'
 DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
 	"$repo/bootloader/install-fs.sh" --partition 1 "$output"
-sync
 
 sha256sum "$output"
 printf 'BOOT98 Debian 13 i486 image: %s\n' "$output"

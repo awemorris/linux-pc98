@@ -64,6 +64,7 @@ test "$offset" -lt "$(stat -c %s "$image")" || {
 	exit 1
 }
 
+printf 'Preparing Remacs bytecode and SKK dictionary...\n'
 "$repo/bootloader/build-remacs.sh"
 base="$repo/bootloader/fs"
 sources=(
@@ -85,15 +86,38 @@ destinations=(
 for source in "${sources[@]}"; do
 	test -s "$source" || { echo "Overlay source is missing: $source" >&2; exit 1; }
 done
+printf 'Checking FAT boot volume at byte offset %s...\n' "$offset"
 mdir -i "$image@@$offset" :: >/dev/null
 for directory in ::ETC ::BIN ::APPS ::HOME; do
-	mmd -i "$image@@$offset" "$directory" 2>/dev/null || true
+	printf 'Ensuring FAT directory %s...\n' "$directory"
+	if ! mdir -i "$image@@$offset" "$directory" >/dev/null 2>&1; then
+		mmd -i "$image@@$offset" "$directory"
+	fi
 done
 for obsolete in ::AUTOEXEC.NCT ::APPS/HOLORIS.NAP ::APPS/REMACS.NAP \
     ::HOME/EMACS.EL ::HOME/REMACS.EL; do
+	printf 'Removing obsolete overlay path %s if present...\n' "$obsolete"
 	mdel -i "$image@@$offset" "$obsolete" 2>/dev/null || true
 done
 for index in "${!sources[@]}"; do
+	printf 'Installing overlay file %s -> %s (%s bytes)...\n' \
+		"${sources[$index]}" "${destinations[$index]}" \
+		"$(stat -c %s "${sources[$index]}")"
 	mcopy -o -i "$image@@$offset" "${sources[$index]}" "${destinations[$index]}"
 done
+# mtools closes the image when each command exits but does not promise that
+# dirty pages have reached storage.  Flush this image only; never sync the
+# host filesystem or unrelated builds.
+printf 'Flushing bootloader overlay writes for %s...\n' "$image"
+python3 - "$image" <<'PY'
+import os
+import sys
+
+descriptor = os.open(sys.argv[1], os.O_RDWR)
+try:
+    os.fdatasync(descriptor)
+finally:
+    os.close(descriptor)
+PY
+printf 'Verifying installed bootloader overlay...\n'
 "$repo/bootloader/verify-fs.sh" "$image" "$offset"

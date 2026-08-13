@@ -26,6 +26,7 @@ for command in cmp dd mdir mtype python3; do
 	command -v "$command" >/dev/null || { echo "$command is required" >&2; exit 1; }
 done
 for index in "${!sources[@]}"; do
+	printf 'Verifying overlay file %s...\n' "${destinations[$index]}"
 	mdir -i "$image@@$offset" "${destinations[$index]}" >/dev/null
 	mtype -i "$image@@$offset" "${destinations[$index]}" | \
 		cmp -s -- "${sources[$index]}" - || {
@@ -34,6 +35,7 @@ for index in "${!sources[@]}"; do
 	}
 done
 
+printf 'Verifying bootloader overlay configuration and assets...\n'
 test "$(wc -l < "$base/etc/zinit.rc")" -eq 1
 grep -qx '/bin/noct /bin/menu.nct' "$base/etc/zinit.rc"
 grep -q '/bin/menuback.bmp' "$base/bin/menu.nct"

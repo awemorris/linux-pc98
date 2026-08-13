@@ -22,6 +22,8 @@
 #define NEC98_PARTITION_SECTOR	1
 #define NEC98_PARTITIONS	16
 #define NEC98_ENTRY_SIZE	32
+#define NEC98_IPL_MAGIC_OFFSET	4
+#define NEC98_IPL_MAGIC		"IPL1"
 struct nec98_partition {
 	u8 mid;
 	u8 sid;
@@ -83,30 +85,48 @@ static void nec98_set_partition_name(struct parsed_partitions *state, int slot,
 }
 
 static bool nec98_table_valid(const struct nec98_partition *table,
-			      unsigned int heads, unsigned int sectors)
+			      unsigned int heads, unsigned int sectors,
+			      sector_t capacity)
 {
+	sector_t starts[NEC98_PARTITIONS], ends[NEC98_PARTITIONS];
 	bool found = false;
-	int i;
+	int count = 0;
+	int i, j;
 
 	for (i = 0; i < NEC98_PARTITIONS; i++) {
 		const struct nec98_partition *entry = &table[i];
-		u16 start_cylinder, end_cylinder;
+		sector_t ipl, start, end;
+		u16 ipl_cylinder, start_cylinder, end_cylinder;
 
 		if (!entry->mid && !entry->sid)
 			continue;
 		if (!entry->mid || !entry->sid ||
 		    get_unaligned_le16(entry->reserved))
 			return false;
+		ipl_cylinder = get_unaligned_le16(&entry->ipl_cylinder);
 		start_cylinder = get_unaligned_le16(&entry->start_cylinder);
 		end_cylinder = get_unaligned_le16(&entry->end_cylinder);
-		if (start_cylinder > end_cylinder ||
-		    !nec98_chs_valid(entry->ipl_head, entry->ipl_sector,
+		if (!nec98_chs_valid(entry->ipl_head, entry->ipl_sector,
 				       heads, sectors) ||
 		    !nec98_chs_valid(entry->start_head, entry->start_sector,
 				       heads, sectors) ||
 		    !nec98_chs_valid(entry->end_head, entry->end_sector,
 				       heads, sectors))
 			return false;
+		ipl = nec98_chs_to_lba(ipl_cylinder, entry->ipl_head,
+					 entry->ipl_sector, heads, sectors);
+		start = nec98_chs_to_lba(start_cylinder, entry->start_head,
+					   entry->start_sector, heads, sectors);
+		end = nec98_chs_to_lba(end_cylinder, entry->end_head,
+					 entry->end_sector, heads, sectors);
+		if (ipl > start || start > end || end >= capacity)
+			return false;
+		for (j = 0; j < count; j++)
+			if (start <= ends[j] && starts[j] <= end)
+				return false;
+		starts[count] = start;
+		ends[count] = end;
+		count++;
 		found = true;
 	}
 
@@ -120,6 +140,7 @@ int nec98_partition(struct parsed_partitions *state)
 	unsigned int heads, sectors;
 	sector_t capacity = get_capacity(state->disk);
 	Sector boot_sector, table_sector;
+	bool has_ipl_magic, has_mbr_signature;
 	int found = 0;
 	int i;
 
@@ -135,21 +156,28 @@ int nec98_partition(struct parsed_partitions *state)
 		}
 	}
 
-	/* Genuine NEC IPLs and this project's free IPL both end in 55 AA. */
+	/*
+	 * A native PC-98 disk normally omits the PC/AT 55 AA marker.  Some old
+	 * linux-pc98 images and the PC/AT + PC-98 unified loader need it, though.
+	 * IPL1 identifies those as this project's PC-98-aware IPL, so prefer the
+	 * LBA 1 NEC98 table even when the PC/AT marker is also present.  Without
+	 * IPL1, leave a 55 AA disk for the MSDOS parser below us.
+	 */
 	boot = read_part_sector(state, 0, &boot_sector);
 	if (!boot)
 		return -1;
-	if (get_unaligned_le16(boot + 510) != 0xaa55) {
-		put_dev_sector(boot_sector);
-		return 0;
-	}
+	has_ipl_magic = !memcmp(boot + NEC98_IPL_MAGIC_OFFSET,
+				NEC98_IPL_MAGIC, sizeof(NEC98_IPL_MAGIC) - 1);
+	has_mbr_signature = get_unaligned_le16(boot + 510) == 0xaa55;
 	put_dev_sector(boot_sector);
+	if (has_mbr_signature && !has_ipl_magic)
+		return 0;
 
 	table = read_part_sector(state, NEC98_PARTITION_SECTOR, &table_sector);
 	if (!table)
 		return -1;
 	if (!nec98_table_valid((const struct nec98_partition *)table,
-			       heads, sectors)) {
+			       heads, sectors, capacity)) {
 		put_dev_sector(table_sector);
 		return 0;
 	}

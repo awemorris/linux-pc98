@@ -126,7 +126,7 @@ config MSDOS_PARTITION
 
 config NEC98_PARTITION
 	bool "NEC PC-9800 partition table support"
-	depends on PARTITION_ADVANCED && X86_PC9800
+	depends on X86_PC9800
 	default y
 	help
 	  Say Y to read the 16-entry partition table stored in sector 1 of

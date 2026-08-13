@@ -98,4 +98,5 @@ boot_id:
 
 	.org	0x01fc
 	.word	9
-	.word	0xaa55
+	/* Native PC-98 disks deliberately omit the PC/AT MBR signature. */
+	.word	0

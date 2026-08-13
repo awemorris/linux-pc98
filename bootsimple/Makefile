@@ -47,7 +47,7 @@ check: $(OUT)/disk-ipl.elf $(OUT)/lba2.elf $(OUT)/partition-pbr.elf \
 	@size="$$(stat -c %s $(OUT)/IO.SYS)"; \
 		test "$$size" -gt 0 && test "$$size" -le 65024 || { \
 			echo "IO.SYS size $$size exceeds the PBR limit" >&2; exit 1; }
-	@python3 -c 'from pathlib import Path; p=Path("$(OUT)/ipl-lba0.bin").read_bytes(); assert p[510:512] == b"\x55\xaa"'
+	@python3 -c 'from pathlib import Path; p=Path("$(OUT)/ipl-lba0.bin").read_bytes(); assert p[4:8] == b"IPL1" and p[510:512] == b"\x00\x00"'
 	@python3 -c 'from pathlib import Path; p=Path("$(OUT)/partition-pbr.bin").read_bytes(); assert p[510:512] == b"\x55\xaa" and p[1022:1024] == b"\x55\xaa"'
 	@printf 'bootsimple: LBA0=%s LBA2=%s PBR=%s IO.SYS=%s bytes\n' \
 		"$$(stat -c %s $(OUT)/ipl-lba0.bin)" \

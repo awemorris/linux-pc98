@@ -73,6 +73,16 @@ verify_bootloader()
 		busybox-i386-scsi92)
 			sectors=32 ;;
 		debian13-*)
+			test "$(od -An -tx1 -j4 -N4 "$image" | tr -d ' \n')" = \
+				49504c31 || {
+				echo "Release image lacks the IPL1 marker: $image" >&2
+				return 1
+			}
+			test "$(od -An -tx1 -j510 -N2 "$image" | tr -d ' \n')" = \
+				0000 || {
+				echo "Native PC-98 release image has a PC/AT MBR signature: $image" >&2
+				return 1
+			}
 			printf 'Release bootloader: zedBSD (%s)\n' "$selected"
 			return ;;
 		*) return 2 ;;

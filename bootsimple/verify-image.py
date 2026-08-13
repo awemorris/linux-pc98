@@ -192,7 +192,7 @@ def verify_elf(data):
 
 def verify_image(args):
     image = open(args.image, "rb").read()
-    if image[510:512] != b"\x55\xaa" or image[4:8] != b"IPL1":
+    if image[510:512] != b"\x00\x00" or image[4:8] != b"IPL1":
         raise VerifyError("invalid bootsimple LBA 0 IPL")
     if image[2 * PHYS_SECTOR + 510:2 * PHYS_SECTOR + 512] != b"\x55\xaa":
         raise VerifyError("invalid bootsimple LBA 2 selector")

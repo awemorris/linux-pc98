@@ -113,10 +113,10 @@ rm -f -- \
 ensure_rootfs busybox-i386 "$busybox_cache" "$busybox_root" bin/busybox
 ensure_debian_rootfs "$debian_root" "$debian_cache"
 
-echo "Verifying Noct through M14 (v0.9.0 has a documented REPL issue)"
+echo "Verifying current zedBSD host/build and instruction gates"
 (
 	. "$repo/scripts/zedbsd-env.sh"
-	"$zedbsd/build.sh" noct-m14-verify pc98
+	"$zedbsd/build.sh" check pc98 noct-m5-final-opcode-check
 )
 
 echo "Building i386 BusyBox IDE and SCSI images"
@@ -157,6 +157,9 @@ fi
 for profile in debian13-i486-ide debian13-i486-scsi55 debian13-i486-scsi92; do
 	"$repo/build.sh" release-image "$profile" --jobs "$jobs"
 done
+QEMU="${QEMU:-$repo/external/qemu-pc98/build/qemu-system-i386}" \
+	PC98_BIOS_DIR="${PC98_BIOS_DIR:-$repo/external/qemu-pc98/roms/pc98bios}" \
+	"$repo/bootloader/tests/test-linux-handoff.sh"
 for debian_image in \
 	linux-pc98-i486dx-debian13-ide.img \
 	linux-pc98-i486dx-debian13-scsi55.img \

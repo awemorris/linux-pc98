@@ -2,8 +2,8 @@
 """Build a PC-98 Linux raw disk image.
 
 The result is an intermediate two/three-partition layout (FAT16 BOOT,
-ext4 root, optional swap).  It is not bootable on its own: the Boots
-installer (external/boots/scripts/install-image.sh --install-disk-stubs)
+ext4 root, optional swap).  It is not bootable on its own: the zedBSD
+installer (external/zedBSD/scripts/install-image.sh --install-disk-stubs)
 installs the IPL, disk stubs, PBR, and BOOT.SYS afterwards.
 """
 
@@ -39,11 +39,11 @@ def read_file(path):
 
 
 def read_legacy_pbr(path):
-    """Return the first physical sector of a Boots PBR template.
+    """Return the first physical sector of a zedBSD PBR template.
 
-    The current Boots partition loader occupies one 1024-byte PC-98 DOS
+    The current zedBSD partition loader occupies one 1024-byte PC-98 DOS
     logical sector.  This image builder still creates an intermediate FAT16
-    volume with its historical 512-byte PBR; the Boots installer replaces
+    volume with its historical 512-byte PBR; the zedBSD installer replaces
     that volume and installs the complete 1024-byte PBR afterwards.  Accept
     both template sizes here so the intermediate image remains buildable.
     """

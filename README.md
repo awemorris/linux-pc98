@@ -8,7 +8,7 @@ This repository contains:
 - glibc: 2.41, i486DX port
 - BusyBox: i386SX port
 - qemu: 11.0, NEC PC-9800 support with compatible BIOS
-- Boots: NEC PC-9800 HDD-IPL and FAT16 bootloader (external/boots submodule)
+- zedBSD: NEC PC-9800 HDD-IPL and FAT16 bootloader (external/zedBSD submodule)
 
 Each component is reusable for other retro PCs.
 
@@ -64,7 +64,9 @@ directly, avoiding login timeouts and memory exhaustion on slower machines.
 | `external/gcc`, `external/musl`, `external/glibc` | Toolchain submodules; versioned patch inventory in `external/patchsets/` |
 | `external/debian-i486/` | Framework and patch database for the Debian 13/i486DX package port |
 | `configs/` | Debian-derived i686 base and versioned PC-98 configurations |
-| `external/boots/` | Boots bootloader submodule: PC-98 IPL, BOOT.SYS, and DOS loader |
+| `external/zedBSD/` | zedBSD boot OS submodule: PC-98 IPL, `vmunix`, userland, and DOS loader |
+| `external/noct/` | NoctLang submodule used to precompile Remacs for product images |
+| `bootloader/` | Linux product overlay; `fs/` mirrors its BOOT FAT placement |
 | `scripts/` | Internal build, image, test, publication scripts and disk-image tools |
 | `build/` | Generated kernel, rootfs, logs, and disk images; ignored by Git |
 | `build.sh` | Single supported entry point for all project builds |
@@ -119,8 +121,8 @@ passed to `apt` manually. Use `./build.sh setup --help` for unattended and
 Root privileges are used when creating the Debian staging tree, installing
 kernel modules into it, and generating the ext4 filesystem image.
 
-The prebuilt `external/boots/platform/pc98/dos/linux98.exe` is tracked in the
-Boots submodule and is
+The prebuilt `external/zedBSD/platform/pc98/dos/linux98.exe` is tracked in the
+zedBSD submodule and is
 stored as `LINUX98.EXE` in generated FAT16 boot partitions. Normal kernel,
 bootloader, image, and Docker builds therefore do not require OpenWatcom.
 Maintainers rebuilding that executable must install OpenWatcom 1.9 and run
@@ -304,12 +306,12 @@ The BusyBox H=8 profiles install the replaceable BOOT98 environment. The
 silent `ipl-lba0.bin` enters `ipl-lba2.bin`; that selector loads the PBR of
 the FAT16 partition named BOOT. The one 1024-byte reserved logical sector
 contains the PBR/BPB only; it loads contiguous `IO.SYS` as an ordinary FAT
-file, and `IO.SYS` then loads `BOOT.SYS`. NEC MS-DOS can mount the same volume.
-After BIOS-reported disks have been examined, the first 32-bit menu has a
-one-second timeout. `Auto` runs `AUTOEXEC.NCT` when present, otherwise it
-reads `BOOT.CFG` and boots `VMLINUX`. Select Escape before the timeout to enter
-the interactive shell instead. The `Auto` entry identifies the selected HDD,
-partition, and startup file.
+file, and `IO.SYS` then loads `vmunix`. NEC MS-DOS can mount the same volume.
+zedBSD always starts `/bin/sh`. Linux product images overlay
+`/etc/zinit.rc`, which waits one second and runs `/bin/noct /bin/menu.nct`
+unless cancelled. The GUI menu starts Linux through `/bin/linux`, and also
+offers Emacs, Holoris, and the interactive shell. A bare zedBSD image has no
+startup script and enters the shell directly.
 The headless `busybox-i386` smoke test uses this unattended path without
 synthetic keyboard input.
 

@@ -10,12 +10,12 @@ Usage: ./build.sh image PROFILE [options]
        ./build.sh image list
 
 Profiles:
-  busybox-i386-ide      Boots, i386 BusyBox, IDE H=8/S=17
-  busybox-i386-scsi92   Boots, i386 BusyBox, 92 SCSI H=8/S=32
-  busybox-i386-scsi55   Boots, i386 BusyBox, 55 SCSI H=8/S=17
-  debian13-i486-ide     Boots, Debian/i486, IDE H=8/S=17
-  debian13-i486-scsi92  Boots, Debian/i486, 92 SCSI H=8/S=32
-  debian13-i486-scsi55  Boots, Debian/i486, 55 SCSI H=8/S=17
+  busybox-i386-ide      zedBSD, i386 BusyBox, IDE H=8/S=17
+  busybox-i386-scsi92   zedBSD, i386 BusyBox, 92 SCSI H=8/S=32
+  busybox-i386-scsi55   zedBSD, i386 BusyBox, 55 SCSI H=8/S=17
+  debian13-i486-ide     zedBSD, Debian/i486, IDE H=8/S=17
+  debian13-i486-scsi92  zedBSD, Debian/i486, 92 SCSI H=8/S=32
+  debian13-i486-scsi55  zedBSD, Debian/i486, 55 SCSI H=8/S=17
 
 By default, newly created profiles use a 128 MiB FAT16 BOOT partition and
 contain a 64 MiB zedBSD /swapfile in addition to their Linux swap partition.
@@ -26,7 +26,7 @@ Options:
   --base-image PATH     copy an existing raw/raw.xz image before updating it
   --base-image NAME     fetch NAME from the package-server image cache
   --output FILE         output path (must not already exist)
-  --config FILE         BOOTS.CFG replacement for a Boots base image
+  --config FILE         BOOT.CFG replacement for a zedBSD base image
   --swap-mb N           Linux swap partition size for newly created images
   --zedbsd-swapfile-mb N
                         zedBSD BOOT swapfile size (0, 32, or 64; default 64)

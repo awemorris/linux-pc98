@@ -4,8 +4,8 @@ set -euo pipefail
 PATH="/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-. "$repo/scripts/boots-env.sh"
-bootloader_dir="$repo/external/boots/build/pc98"
+. "$repo/scripts/zedbsd-env.sh"
+bootloader_dir="$repo/external/zedBSD/build/pc98"
 rootfs="${1:?usage: $0 ROOTFS OUTPUT [VMLINUX]}"
 output="${2:?usage: $0 ROOTFS OUTPUT [VMLINUX]}"
 kernel="${3:-$repo/build/kernel-7.1-i486/vmlinux.boot}"
@@ -96,7 +96,7 @@ cleanup()
 }
 trap cleanup EXIT INT TERM
 
-"$repo/external/boots/build.sh" all pc98
+"$repo/external/zedBSD/build.sh" all pc98
 mkdir -p "$(dirname "$output")" "$mount_dir"
 truncate -s "$total_bytes" "$output"
 dd if="$bootloader_dir/ipl-lba0.bin" of="$output" bs=512 count=1 \
@@ -222,10 +222,11 @@ mkswap --quiet --label PC98SWAP "$swap_image"
 dd if="$swap_image" of="$output" bs=512 seek="$swap_start" \
 	conv=notrunc,sparse status=progress
 
-BOOTS_AUTOEXEC="$repo/external/boots/apps/AUTOEXEC.NCT" \
 DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
-	"$repo/external/boots/scripts/install-image.sh" --install-disk-stubs \
+	"$repo/external/zedBSD/scripts/install-image.sh" --install-disk-stubs \
 	"$output" "$kernel" "$cfg"
+DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
+	"$repo/bootloader/install-fs.sh" --partition 1 "$output"
 sync
 
 sha256sum "$output"

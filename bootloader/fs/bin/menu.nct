@@ -1,0 +1,172 @@
+// zedBSD graphical startup menu.  The 640x480 background is loaded from
+// /bin/menuback.bmp; all overlay panels are opaque and rectangular.
+
+func make_rgb(red, green, blue) {
+    return ((red & 0xff) << 16) | ((green & 0xff) << 8) | (blue & 0xff);
+}
+
+func loadBackground(path) {
+    if (!FileUtil.checkFileExists(path)) { return 0; }
+    var size = FileUtil.getFileSize(path);
+    var file = File.open(path, "rb");
+    var bytes = File.read(file, size);
+    File.close(file);
+    if (Packed.size(bytes) != size) { return 0; }
+    return BeUI.loadImage(bytes);
+}
+
+func rowText(index) {
+    if (index == 0) { return "Linux を起動"; }
+    if (index == 1) { return "Emacs"; }
+    if (index == 2) { return "Holoris"; }
+    return "シェルに戻る";
+}
+
+func rowMark(index) {
+    if (index == 0) { return "L"; }
+    if (index == 1) { return "E"; }
+    if (index == 2) { return "H"; }
+    return ">_";
+}
+
+func drawRow(index, selected) {
+    var y = 134 + index * 54;
+    var panel = make_rgb(0x20, 0x1a, 0x17);
+    var selectedPanel = make_rgb(0x45, 0x2f, 0x1f);
+    var amber = make_rgb(0xd5, 0x92, 0x47);
+    var text = make_rgb(0xf4, 0xe9, 0xdc);
+    var muted = make_rgb(0xc8, 0xb6, 0xa5);
+    var background = panel;
+    var iconBackground = make_rgb(0x4a, 0x3b, 0x32);
+    var iconText = text;
+    var rowTextColor = text;
+    if (selected == 1) {
+        background = selectedPanel;
+        iconBackground = amber;
+        iconText = make_rgb(0x21, 0x17, 0x10);
+        rowTextColor = make_rgb(0xff, 0xf1, 0xdf);
+    }
+
+    BeUI.fill(190, y, 424, 42, background);
+    if (selected == 1) {
+        BeUI.fill(190, y, 4, 42, amber);
+        BeUI.line(190, y, 613, y, amber);
+        BeUI.line(190, y + 41, 613, y + 41, amber);
+        BeUI.line(613, y, 613, y + 41, amber);
+        BeUI.drawText(">", 202, y + 12, amber, background);
+    } else {
+        BeUI.drawText(" ", 202, y + 12, muted, background);
+    }
+    BeUI.fill(222, y + 7, 30, 28, iconBackground);
+    BeUI.drawText(rowMark(index), 229, y + 12, iconText, iconBackground);
+    BeUI.drawText(rowText(index), 266, y + 12, rowTextColor, background);
+}
+
+func moveSelection(previous, selected) {
+    drawRow(previous, 0);
+    drawRow(selected, 1);
+    BeUI.flush();
+}
+
+func drawMenu(backgroundImage, selected) {
+    var width = BeUI.getWidth();
+    var height = BeUI.getHeight();
+    var dark = make_rgb(0x18, 0x13, 0x11);
+    var sidebar = make_rgb(0x26, 0x1d, 0x19);
+    var header = make_rgb(0x16, 0x11, 0x0f);
+    var amber = make_rgb(0xd5, 0x92, 0x47);
+    var text = make_rgb(0xf4, 0xe9, 0xdc);
+    var muted = make_rgb(0xb9, 0xa7, 0x98);
+
+    if (backgroundImage != 0)
+        BeUI.drawImageRegion(backgroundImage, 0, 0, width, height, 0, 0);
+    else
+        BeUI.fill(0, 0, width, height, make_rgb(0x39, 0x27, 0x1d));
+
+    BeUI.fill(0, 0, 640, 46, header);
+    BeUI.fill(0, 44, 640, 2, amber);
+    BeUI.drawText("zedBSD/98", 18, 14, text, header);
+    BeUI.drawText("Boot loader and pre-boot environment", 190, 14,
+                  muted, header);
+
+    BeUI.fill(0, 46, 164, height - 46, sidebar);
+    BeUI.fill(163, 46, 2, height - 46, make_rgb(0x65, 0x4d, 0x3d));
+    BeUI.drawText("SYSTEM", 16, 72, amber, sidebar);
+    BeUI.drawText("Overview", 24, 104, muted, sidebar);
+    BeUI.drawText("Storage", 24, 136, muted, sidebar);
+    BeUI.drawText("Networking", 24, 168, muted, sidebar);
+    BeUI.fill(0, 194, 164, 38, amber);
+    BeUI.fill(0, 194, 4, 38, text);
+    BeUI.drawText("Boot menu", 24, 205, dark, amber);
+    BeUI.drawText("TOOLS", 16, 250, amber, sidebar);
+    BeUI.drawText("Emacs", 24, 278, muted, sidebar);
+    BeUI.drawText("Noct shell", 24, 306, muted, sidebar);
+    BeUI.drawText("Terminal", 24, 334, muted, sidebar);
+
+    BeUI.fill(178, 64, 448, 58, dark);
+    BeUI.drawText("ブートストラップ環境", 190, 76, amber, dark);
+    BeUI.drawText("起動する項目を選択してください", 190, 100,
+                  text, dark);
+    drawRow(0, selected == 0);
+    drawRow(1, selected == 1);
+    drawRow(2, selected == 2);
+    drawRow(3, selected == 3);
+
+    BeUI.fill(164, height - 38, width - 164, 38, header);
+    BeUI.drawText("↑ ↓", 190, height - 27, amber, header);
+    BeUI.drawText(": 選択", 230, height - 27, text, header);
+    BeUI.drawText("Enter", 338, height - 27, amber, header);
+    BeUI.drawText(": 決定", 394, height - 27, text, header);
+    BeUI.flush();
+}
+
+func main() {
+    Console.print("menu: loading /bin/menuback.bmp");
+    var background = loadBackground("/bin/menuback.bmp");
+    if (background == 0)
+        Console.print("menu: background unavailable; using solid fill");
+    else
+        Console.print("menu: background loaded");
+    Console.print("menu: entering 8bpp graphics mode");
+    if (BeUI.initWithHint(8) != 1) {
+        Console.print("menu: graphics mode initialization failed");
+        if (background != 0) { BeUI.destroyImage(background); }
+        return 1;
+    }
+    var selected = 0;
+    drawMenu(background, selected);
+    // Discard type-ahead accumulated while the ELF, script, and BMP were
+    // loading.  In particular, an old Enter must not select Linux before
+    // the freshly drawn menu has been visible on real hardware.
+    BeUI.sleep(150);
+    while (1) {
+        var key = Keyboard.read();
+        var previous = selected;
+        if (key == Key.Down && selected < 3) { selected = selected + 1; }
+        if (key == Key.Up && selected > 0) { selected = selected - 1; }
+        if (selected != previous) { moveSelection(previous, selected); }
+        if (key == 27) {
+            BeUI.close();
+            if (background != 0) { BeUI.destroyImage(background); }
+            System.setEnv("BOOT_ACTION", "echo Entering shell.");
+            return 0;
+        }
+        if (key == Key.Enter) {
+            BeUI.close();
+            if (background != 0) { BeUI.destroyImage(background); }
+            if (selected == 0) {
+                System.setEnv("BOOT_ACTION", "/bin/linux /vmlinux root=PARTLABEL=LINUXROOT rootfstype=ext4 rw");
+            }
+            if (selected == 1) {
+                System.setEnv("BOOT_ACTION", "emacs EDIT.TXT");
+            }
+            if (selected == 2) {
+                System.setEnv("BOOT_ACTION", "/bin/noct /apps/holoris.nct");
+            }
+            if (selected == 3) {
+                System.setEnv("BOOT_ACTION", "echo Entering shell.");
+            }
+            return 0;
+        }
+    }
+}

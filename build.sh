@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")" && pwd)"
-boots="$repo/external/boots"
+zedbsd="$repo/external/zedBSD"
 
 # Submodules are not populated by a plain clone.  Fail with the fix instead
 # of letting the callee report a missing file.
@@ -15,13 +15,13 @@ require_submodule()
 	exit 2
 }
 
-# The Boots bootloader lives in the external/boots submodule and resolves
+# The zedBSD bootloader lives in the external/zedBSD submodule and resolves
 # QEMU, the PC-98 BIOS, release base images, and the soft-float source
 # trees from this repository.
-boots_env()
+zedbsd_env()
 {
-	require_submodule boots
-	. "$repo/scripts/boots-env.sh"
+	require_submodule zedBSD
+	. "$repo/scripts/zedbsd-env.sh"
 }
 
 usage()
@@ -31,11 +31,11 @@ Usage: ./build.sh COMMAND [options]
 
 Primary commands:
   setup [options]             install Debian 13 host build/test dependencies
-  bootloader [targets]        build the Boots binaries (external/boots, pc98)
+  bootloader [targets]        build the zedBSD binaries (external/zedBSD, pc98)
   bootloader-dist             build build/releases/bootloader.zip
-  bootloader-fdd [OUTPUT]     build the Boots FDD image (boots-fdd.img)
-  bootloader-test NAME        run a Boots QEMU test (e.g. noct-repl, hdd-boot)
-  remacs                      build CMD/REMACS.NB with the pinned Noct compiler
+  bootloader-fdd [OUTPUT]     build the zedBSD FDD image (zedbsd-fdd.img)
+  bootloader-test NAME        run a zedBSD QEMU test (e.g. noct-repl, hdd-boot)
+  remacs                      build bootloader/fs/apps/emacs.nap
   remacs-test                 run the bytecode editor under headless QEMU
   noct TARGET                 build or verify the imported Noct core
   boot-install [options]      destructively create a BOOT partition environment
@@ -77,7 +77,7 @@ Run './build.sh test --help' for reproducible QEMU test options.
 Run './build.sh noct --help' for the imported Noct target list.
 BOOT installation syntax:
   ./build.sh boot-install [--partition N] [--install-disk-stubs]
-                          IMAGE [VMLINUX [BOOTS.CFG]]
+                          IMAGE [VMLINUX [BOOT.CFG]]
 EOF
 }
 
@@ -99,12 +99,12 @@ overridden with the ROOT_STAGE environment variable.
 EOF
 }
 
-# Noct targets are defined in the Boots tree, so read them from there rather
-# than duplicating a map that silently rots when Boots renames a target.
+# Noct targets are defined in the zedBSD tree, so read them from there rather
+# than duplicating a map that silently rots when zedBSD renames a target.
 noct_targets()
 {
 	sed -n 's/^\(noct-[a-z0-9-]*\):.*/\1/p' \
-		"$boots/Makefile" "$boots/platform/pc98/platform.mk" 2>/dev/null |
+		"$zedbsd/Makefile" "$zedbsd/platform/pc98/platform.mk" 2>/dev/null |
 		sort -u
 }
 
@@ -112,35 +112,35 @@ build_noct()
 {
 	local action="${1:-help}"
 	shift || true
-	require_submodule boots
+	require_submodule zedBSD
 	case "$action" in
 		-h | --help | help)
 			cat <<'EOF'
 Usage: ./build.sh noct TARGET [make options]
 
-The Noct source itself is a submodule of Boots; update its pinned revision
-in the external/boots repository.
+The Noct source itself is a submodule of zedBSD; update its pinned revision
+in the external/zedBSD repository.
 
 Aliases:
   verify         verify M4-M15, static i386 opcodes, and QEMU REPL paths
   lifecycle-test run the lifecycle, File, utility, native-API, and REPL host test
-  clean          remove the Boots pc98 build tree (build/pc98)
+  clean          remove the zedBSD pc98 build tree (build/pc98)
 
-Boots Noct targets:
+zedBSD Noct targets:
 EOF
 			noct_targets | sed 's/^/  /'
 			;;
-		verify) boots_env; "$boots/build.sh" noct-m15-verify pc98 "$@" ;;
-		lifecycle-test) boots_env; "$boots/build.sh" noct-host-test pc98 "$@" ;;
-		clean) boots_env; "$boots/build.sh" clean pc98 "$@" ;;
+		verify) zedbsd_env; "$zedbsd/build.sh" noct-m15-verify pc98 "$@" ;;
+		lifecycle-test) zedbsd_env; "$zedbsd/build.sh" noct-host-test pc98 "$@" ;;
+		clean) zedbsd_env; "$zedbsd/build.sh" clean pc98 "$@" ;;
 		*)
 			if ! noct_targets | grep -qx -- "$action"; then
 				echo "Unknown Noct target: $action" >&2
 				echo "Run './build.sh noct --help' for the target list." >&2
 				exit 2
 			fi
-			boots_env
-			"$boots/build.sh" "$action" pc98 "$@"
+			zedbsd_env
+			"$zedbsd/build.sh" "$action" pc98 "$@"
 			;;
 	esac
 }
@@ -229,35 +229,41 @@ case "$command" in
 	bootloader)
 		target="${1:-all}"
 		test "$#" -eq 0 || shift
-		boots_env
-		"$boots/build.sh" "$target" pc98 "$@"
+		zedbsd_env
+		"$zedbsd/build.sh" "$target" pc98 "$@"
 		;;
 	bootloader-dist) "$repo/scripts/build-bootloader-dist.sh" "$@" ;;
 	bootloader-fdd)
-		output="${1:-$repo/build/releases/boots-fdd.img}"
-		boots_env
+		output="${1:-$repo/build/releases/zedbsd-fdd.img}"
+		zedbsd_env
 		mkdir -p "$(dirname "$output")"
 		rm -f -- "$output"
-		"$boots/scripts/make-fdd-image.sh" "$output"
+		"$zedbsd/scripts/make-fdd-image.sh" "$output"
 		;;
 	bootloader-test)
 		name="${1:?usage: ./build.sh bootloader-test NAME [args]}"
 		shift
-		test -x "$boots/scripts/test-$name.sh" || {
-			echo "Unknown Boots test: $name" >&2
-			ls "$boots/scripts" | sed -n 's/^test-\(.*\)\.sh$/  \1/p' >&2
+		if test -x "$repo/bootloader/tests/test-$name.sh"; then
+			"$repo/bootloader/tests/test-$name.sh" "$@"
+			exit
+		fi
+		test -x "$zedbsd/scripts/test-$name.sh" || {
+			echo "Unknown zedBSD test: $name" >&2
+			ls "$repo/bootloader/tests" 2>/dev/null | \
+				sed -n 's/^test-\(.*\)\.sh$/  \1/p' >&2
+			ls "$zedbsd/scripts" | sed -n 's/^test-\(.*\)\.sh$/  \1/p' >&2
 			exit 2
 		}
-		boots_env
-		"$boots/scripts/test-$name.sh" "$@"
+		zedbsd_env
+		"$zedbsd/scripts/test-$name.sh" "$@"
 		;;
-	remacs) boots_env; "$boots/scripts/build-remacs-bytecode.sh" "$@" ;;
-	remacs-test) boots_env; "$boots/scripts/test-remacs.sh" "$@" ;;
+	remacs) "$repo/bootloader/build-remacs.sh" "$@" ;;
+	remacs-test) "$repo/bootloader/tests/test-remacs.sh" "$@" ;;
 	noct) build_noct "$@" ;;
-	boot-install) boots_env; "$boots/scripts/install-image.sh" "$@" ;;
+	boot-install) "$repo/bootloader/install-product.sh" "$@" ;;
 	dos-loader)
-		require_submodule boots
-		make -C "$boots/platform/pc98/dos" "$@"
+		require_submodule zedBSD
+		make -C "$zedbsd/platform/pc98/dos" "$@"
 		;;
 	kernel) build_kernel "$@" ;;
 	rootfs) build_rootfs "$@" ;;

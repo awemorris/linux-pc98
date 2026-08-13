@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-. "$repo/scripts/boots-env.sh"
+. "$repo/scripts/zedbsd-env.sh"
 build="$repo/build"
 kernel_version="${KERNEL_VERSION:-7.1}"
 default_kernel_build="$build/kernel-$kernel_version"
@@ -17,7 +17,7 @@ small_ext4="${SMALL_EXT4:-0}"
 disk_heads="${DISK_HEADS:-8}"
 disk_sectors="${DISK_SECTORS:-17}"
 output="${OUTPUT_IMAGE:-$default_output}"
-dos_loader="${DOS_LOADER:-$repo/external/boots/platform/pc98/dos/linux98.exe}"
+dos_loader="${DOS_LOADER:-$repo/external/zedBSD/platform/pc98/dos/linux98.exe}"
 
 if [ ! -f "$kernel_image" ]; then
 	echo "Kernel image not found: $kernel_image" >&2
@@ -31,7 +31,7 @@ if [ ! -d "$root_stage" ]; then
 fi
 
 mkdir -p "$build"
-"$repo/external/boots/build.sh" all pc98
+"$repo/external/zedBSD/build.sh" all pc98
 if [ ! -f "$dos_loader" ]; then
 	echo "DOS Linux loader not found: $dos_loader" >&2
 	echo "Restore the tracked binary or run ./build.sh dos-loader." >&2
@@ -55,11 +55,18 @@ fi
 
 sudo python3 "$repo/scripts/mk-pc98-linux-disk.py" create \
 	"$output" \
-	"$repo/external/boots/build/pc98/ipl-lba0.bin" \
-	"$repo/external/boots/build/pc98/partition-pbr.bin" \
+	"$repo/external/zedBSD/build/pc98/ipl-lba0.bin" \
+	"$repo/external/zedBSD/build/pc98/partition-pbr.bin" \
 	"$kernel_image" \
 	"$root_stage" \
 	"${image_options[@]}"
 sudo chown "$(id -u):$(id -g)" "$output"
+
+# Convert the freshly partitioned disk into the same product BOOT environment
+# used by the profile-specific builders.  Callers may reinstall a different
+# BOOT.CFG afterwards without changing the overlay ownership boundary.
+DISK_HEADS="$disk_heads" DISK_SECTORS="$disk_sectors" \
+	"$repo/bootloader/install-product.sh" --install-disk-stubs \
+	"$output" "$kernel_image" "$repo/configs/boot.cfg"
 
 printf 'QEMU PC-98 Linux disk: %s\n' "$output"

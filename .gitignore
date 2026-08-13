@@ -3,3 +3,5 @@
 *~
 __pycache__/
 *.py[cod]
+/bootloader/fs/apps/emacs.nap
+/bootloader/fs/apps/emacs.nap.part

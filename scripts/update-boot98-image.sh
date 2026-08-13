@@ -6,9 +6,10 @@ set -euo pipefail
 # always come from the same source revision.  The BOOT filesystem is rebuilt;
 # root and swap partitions are not modified.
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-. "$repo/scripts/boots-env.sh"
+. "$repo/scripts/zedbsd-env.sh"
 image="${1:?usage: $0 IMAGE VMLINUX [BOOT.CFG]}"
 kernel="${2:?usage: $0 IMAGE VMLINUX [BOOT.CFG]}"
 cfg="${3:-}"
 
-exec "$repo/external/boots/scripts/install-image.sh" "$image" "$kernel" "$cfg"
+"$repo/external/zedBSD/scripts/install-image.sh" "$image" "$kernel" "$cfg"
+"$repo/bootloader/install-fs.sh" --partition 1 "$image"

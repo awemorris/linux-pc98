@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-. "$repo/scripts/boots-env.sh"
+. "$repo/scripts/zedbsd-env.sh"
 
 usage()
 {
@@ -110,8 +110,6 @@ if test -z "$image"; then
 				rootfs="$repo/build/i386-buildroot/output/target"
 				skip_rootfs=0
 				test -x "$rootfs/bin/busybox" && skip_rootfs=1
-				# A serial test image boots silently: no AUTOEXEC.NCT menu.
-				BOOTS_AUTOEXEC= \
 				CPU_FAMILY=386 I386_CONSOLE=dual JOBS="$jobs" \
 					SKIP_ROOTFS_BUILD="$skip_rootfs" ROOT_STAGE="$rootfs" \
 					OUTPUT_IMAGE="$image" \
@@ -144,16 +142,14 @@ if test -z "$image"; then
 					ROOT_STAGE="$rootfs" OUTPUT_IMAGE="$image" \
 					ROOT_MB=512 SWAP_MB=128 \
 					"$repo/scripts/build-images.sh"
-				# Install the current Boots over the image.  Without an
-				# AUTOEXEC.NCT and with a kernel-only BOOTS.CFG the image
-				# boots silently straight into Linux.
 				printf '%s\n' \
 					'kernel VMLINUX' \
 					'arg root=/dev/sda2 rootfstype=ext4 rw' \
-					'boot' >"$work/boots.cfg"
-				"$boots/scripts/install-image.sh" \
+					'boot' >"$work/boot.cfg"
+				"$zedbsd/scripts/install-image.sh" \
 					--install-disk-stubs "$image" \
-					"$kernel_build/vmlinux.boot" "$work/boots.cfg"
+					"$kernel_build/vmlinux.boot" "$work/boot.cfg"
+				"$repo/bootloader/install-fs.sh" --partition 1 "$image"
 				;;
 		esac
 	fi

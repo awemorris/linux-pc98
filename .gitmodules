@@ -18,7 +18,10 @@
 	path = external/debian-i486
 	url = https://github.com/awemorris/debian-i486.git
 	branch = main
-[submodule "external/boots"]
-	path = external/boots
-	url = https://github.com/awemorris/boots.git
+[submodule "external/zedBSD"]
+	path = external/zedBSD
+	url = https://github.com/awemorris/zedBSD.git
 	branch = main
+[submodule "external/noct"]
+	path = external/noct
+	url = https://github.com/awemorris/NoctLang.git

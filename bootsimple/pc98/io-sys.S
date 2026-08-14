@@ -220,6 +220,14 @@ kernel_found:
 	movl	%cr0, %eax
 	andl	$0xfffffffe, %eax
 	movl	%eax, %cr0
+	/*
+	 * Keep the unreal-mode 4 GiB limits, but normalize the visible real-mode
+	 * selectors.  A BIOS that saves and restores FS/GS with push/pop will then
+	 * reload base zero instead of BOOT_DS << 4.
+	 */
+	xorw	%ax, %ax
+	movw	%ax, %fs
+	movw	%ax, %gs
 	sti
 
 	call	stream_reset

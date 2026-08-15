@@ -203,7 +203,7 @@ printf '%s\n' \
 printf '%s\n' 'CONFIGURE_INTERFACES=no' | \
 	sudo tee "$mount_dir/etc/default/networking" >/dev/null
 printf '%s\n' \
-	'deb [trusted=yes] https://noctvm.io/debian-i486/packages trixie main pc98' | \
+	'deb [trusted=yes arch=i386] https://noctvm.io/debian-i486/packages trixie main pc98' | \
 	sudo tee "$mount_dir/etc/apt/sources.list" >/dev/null
 printf '%s\n' \
 	'Debian GNU/Linux 13 (trixie) i486 PC-98 BOOT98 image' \

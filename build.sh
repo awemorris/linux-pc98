@@ -41,7 +41,7 @@ Primary commands:
   bootloader-test NAME        run a zedBSD QEMU test (e.g. noct-repl, hdd-boot)
   remacs                      build bootloader/fs/apps/emacs.nap
   remacs-test                 run the bytecode editor under headless QEMU
-  noct TARGET                 build or verify the imported Noct core
+  noct build|clean            build Noct or remove the zedBSD pc98 build tree
   boot-install [options]      destructively create a BOOT partition environment
   dos-loader                  rebuild LINUX98.EXE and INST.EXE (OpenWatcom)
   kernel [options]            configure and build Linux 7.1
@@ -78,7 +78,7 @@ Rootfs profiles:
 Run './build.sh kernel --help' for kernel options.
 Run './build.sh image --help' for image-specific options.
 Run './build.sh test --help' for reproducible QEMU test options.
-Run './build.sh noct --help' for the imported Noct target list.
+Run './build.sh noct --help' for Noct commands.
 BOOT installation syntax:
   ./build.sh boot-install [--partition N] [--install-disk-stubs]
                           IMAGE [VMLINUX [BOOT.CFG]]
@@ -103,15 +103,6 @@ overridden with the ROOT_STAGE environment variable.
 EOF
 }
 
-# Noct targets are defined in the zedBSD tree, so read them from there rather
-# than duplicating a map that silently rots when zedBSD renames a target.
-noct_targets()
-{
-	sed -n 's/^\(noct-[a-z0-9-]*\):.*/\1/p' \
-		"$zedbsd/Makefile" "$zedbsd/platform/pc98/platform.mk" 2>/dev/null |
-		sort -u
-}
-
 build_noct()
 {
 	local action="${1:-help}"
@@ -120,31 +111,22 @@ build_noct()
 	case "$action" in
 		-h | --help | help)
 			cat <<'EOF'
-Usage: ./build.sh noct TARGET [make options]
+Usage: ./build.sh noct build|clean [make options]
 
 The Noct source itself is a submodule of zedBSD; update its pinned revision
 in the external/zedBSD repository.
 
-Aliases:
-  verify         verify M4-M15, static i386 opcodes, and QEMU REPL paths
-  lifecycle-test run the lifecycle, File, utility, native-API, and REPL host test
+Commands:
+  build          build the zedBSD Noct user program (NOCT.ELF)
   clean          remove the zedBSD pc98 build tree (build/pc98)
-
-zedBSD Noct targets:
 EOF
-			noct_targets | sed 's/^/  /'
 			;;
-		verify) zedbsd_env; "$zedbsd/build.sh" noct-m15-verify pc98 "$@" ;;
-		lifecycle-test) zedbsd_env; "$zedbsd/build.sh" noct-host-test pc98 "$@" ;;
+		build) zedbsd_env; "$zedbsd/build.sh" NOCT.ELF pc98 "$@" ;;
 		clean) zedbsd_env; "$zedbsd/build.sh" clean pc98 "$@" ;;
 		*)
-			if ! noct_targets | grep -qx -- "$action"; then
-				echo "Unknown Noct target: $action" >&2
-				echo "Run './build.sh noct --help' for the target list." >&2
-				exit 2
-			fi
-			zedbsd_env
-			"$zedbsd/build.sh" "$action" pc98 "$@"
+			echo "Unknown Noct command: $action" >&2
+			echo "Run './build.sh noct --help' for usage." >&2
+			exit 2
 			;;
 	esac
 }

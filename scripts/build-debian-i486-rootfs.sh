@@ -30,7 +30,7 @@ mkdir -p "$(dirname "$stage")"
 
 sudo "$debootstrap" --arch=i386 --variant=minbase --no-check-gpg \
 	--include="$include" "$suite" "$stage" "$mirror"
-printf 'deb [trusted=yes] %s %s main\n' "$mirror" "$suite" |
+printf 'deb [trusted=yes arch=i386] %s %s main\n' "$mirror" "$suite" |
 	sudo tee "$stage/etc/apt/sources.list" >/dev/null
 sudo chroot "$stage" dpkg --audit
 sudo chroot "$stage" apt-get update

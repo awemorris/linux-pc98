@@ -34,8 +34,13 @@ printf 'deb [trusted=yes arch=i386] %s %s main\n' "$mirror" "$suite" |
 	sudo tee "$stage/etc/apt/sources.list" >/dev/null
 sudo chroot "$stage" dpkg --audit
 sudo chroot "$stage" apt-get update
-sudo chroot "$stage" dpkg-query -W -f='${Status}\n' net-tools |
-	grep -qx 'install ok installed'
+for package in "${packages[@]}"; do
+	if ! sudo chroot "$stage" dpkg-query -W -f='${Status}\n' "$package" |
+		grep -qx 'install ok installed'; then
+		echo "Requested rootfs package is not installed: $package" >&2
+		exit 1
+	fi
+done
 test -x "$stage/usr/sbin/ifconfig" || test -x "$stage/sbin/ifconfig" || {
 	echo "net-tools did not install ifconfig in the Debian rootfs" >&2
 	exit 1

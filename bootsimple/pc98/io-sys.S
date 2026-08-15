@@ -192,7 +192,7 @@ kernel_found:
 	movl	%eax, file_size
 	/* bootsimple deliberately has no logo or menu. */
 
-	/* A20 and unreal-mode FS for copying above 1 MiB. */
+	/* A20 and the GDT used to access memory above 1 MiB. */
 	xorb	%al, %al
 	outb	%al, $0xf2
 	movb	$0x02, %al
@@ -210,20 +210,11 @@ kernel_found:
 	shll	$4, %eax
 	addl	$gdt, %eax
 	movl	%eax, gdt_desc+2
-	lgdt	gdt_desc
-	cli
-	movl	%cr0, %eax
-	orl	$1, %eax
-	movl	%eax, %cr0
-	movw	$BOOT_DS, %ax
-	movw	%ax, %fs
-	movl	%cr0, %eax
-	andl	$0xfffffffe, %eax
-	movl	%eax, %cr0
 	/*
-	 * Keep the unreal-mode 4 GiB limits, but normalize the visible real-mode
-	 * selectors.  A BIOS that saves and restores FS/GS with push/pop will then
-	 * reload base zero instead of BOOT_DS << 4.
+	 * Do not keep a flat FS live across BIOS calls.  Some option ROMs save and
+	 * restore FS in real mode, which destroys its protected-mode descriptor
+	 * cache.  flat_fs_begin reconstructs that cache immediately before each
+	 * high-memory access and keeps interrupts disabled until flat_fs_end.
 	 */
 	xorw	%ax, %ax
 	movw	%ax, %fs
@@ -247,6 +238,7 @@ kernel_found:
 prepare_boot_params:
 	movw	$phase_params_message, %si
 	call	show_status
+	call	flat_fs_begin
 	movl	$BP_ADDR, %edi
 	movb	$0xff, %fs:0x210(%edi)
 	movl	$CMDLINE, %fs:0x228(%edi)
@@ -323,6 +315,7 @@ prepare_boot_params:
 	movb	$3, %fs:0x1e8(%edi)
 6:
 	call	copy_command_line
+	call	flat_fs_end
 
 	movw	$starting_direct_message, %si
 	call	show_status
@@ -523,6 +516,7 @@ elf_copy_next:
 	jae	elf_copy_size_ready
 	movl	remaining, %edx
 elf_copy_size_ready:
+	call	flat_fs_begin
 	movl	cur_dest, %edi
 	xorl	%esi, %esi
 	movl	%edx, %ecx
@@ -547,6 +541,7 @@ elf_copy_bytes:
 	decl	%ecx
 	jnz	elf_copy_bytes
 elf_copy_account:
+	call	flat_fs_end
 	addl	%edx, cur_dest
 	subl	%edx, remaining
 	addl	%edx, loaded_bytes
@@ -558,6 +553,7 @@ elf_copy_account:
 
 elf_zero_segment:
 	call	update_transfer_display
+	call	flat_fs_begin
 	movw	elf_segment_ptr, %si
 	movl	12(%si), %ecx		/* p_memsz - p_filesz */
 	subl	8(%si), %ecx
@@ -582,6 +578,7 @@ elf_zero_bytes:
 	decl	%ecx
 	jnz	elf_zero_bytes
 elf_segment_done:
+	call	flat_fs_end
 	call	update_transfer_display
 	addw	$16, elf_segment_ptr
 	decb	elf_segments_left
@@ -594,6 +591,7 @@ elf_load_done:
 clear_boot_params:
 	pushl	%ecx
 	pushl	%edi
+	call	flat_fs_begin
 	movl	$BP_ADDR, %edi
 	movl	$1024, %ecx
 1:
@@ -601,8 +599,43 @@ clear_boot_params:
 	addl	$4, %edi
 	decl	%ecx
 	jnz	1b
+	call	flat_fs_end
 	popl	%edi
 	popl	%ecx
+	ret
+
+/*
+ * Rebuild a flat FS/GS cache for one uninterrupted high-memory operation.
+ * The caller must pair this with flat_fs_end and must not call a BIOS service
+ * while the flat selectors are live.  Correctness therefore does not depend
+ * on a BIOS, option ROM, or interrupt handler preserving unreal-mode state.
+ */
+flat_fs_begin:
+	pushl	%eax
+	pushfw
+	popw	%cs:flat_saved_flags
+	cli
+	lgdt	%cs:gdt_desc
+	movl	%cr0, %eax
+	orl	$1, %eax
+	movl	%eax, %cr0
+	movw	$BOOT_DS, %ax
+	movw	%ax, %fs
+	movw	%ax, %gs
+	movl	%cr0, %eax
+	andl	$0xfffffffe, %eax
+	movl	%eax, %cr0
+	popl	%eax
+	ret
+
+flat_fs_end:
+	pushw	%ax
+	xorw	%ax, %ax
+	movw	%ax, %fs
+	movw	%ax, %gs
+	popw	%ax
+	pushw	%cs:flat_saved_flags
+	popfw
 	ret
 
 /* Clear all text VRAM and the standard GDC B/R/G/I graphics planes. */
@@ -1354,6 +1387,8 @@ gdt_end:
 gdt_desc:
 	.word	gdt_end - gdt - 1
 	.long	0
+flat_saved_flags:
+	.word	0
 
 vmlinux_name:
 	.ascii	"VMLINUX    "

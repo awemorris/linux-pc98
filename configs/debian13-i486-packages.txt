@@ -24,5 +24,6 @@ runit-helper
 
 # Minimal X11 desktop used for PC-98 graphics validation.
 xorg
+xserver-xorg-video-cirrus
 xterm
 twm

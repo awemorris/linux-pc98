@@ -59,7 +59,8 @@ require_command()
 ensure_layout()
 {
     mkdir -p "$DOWNLOAD_DIR" "$SOURCE_DIR" "$DEPS_BUILD_DIR" \
-        "$ROOT_DIR/bin" "$ROOT_DIR/lib/pkgconfig" "$ROOT_DIR/share/pkgconfig" \
+        "$ROOT_DIR/bin" "$ROOT_DIR/include" "$ROOT_DIR/lib/pkgconfig" \
+        "$ROOT_DIR/share/pkgconfig" \
         "$STAMP_DIR" "$QEMU_BUILD_DIR" "$STAGE_DIR" "$DIST_DIR" \
         "$LICENSE_DIR" "$RELEASE_DIR"
 }
@@ -164,6 +165,9 @@ fetch()
 
 fetch_all()
 {
+    fetch "$MINGW_W64_WHPX_HEADERS_ARCHIVE" \
+        "$MINGW_W64_WHPX_HEADERS_URL" \
+        "$MINGW_W64_WHPX_HEADERS_SHA256"
     fetch "$ZLIB_ARCHIVE" "$ZLIB_URL" "$ZLIB_SHA256"
     fetch "$LIBFFI_ARCHIVE" "$LIBFFI_URL" "$LIBFFI_SHA256"
     fetch "$PCRE2_ARCHIVE" "$PCRE2_URL" "$PCRE2_SHA256"
@@ -175,6 +179,31 @@ fetch_all()
     fetch "$SLIRP_ARCHIVE" "$SLIRP_URL" "$SLIRP_SHA256"
     fetch "$LIBUSB_ARCHIVE" "$LIBUSB_URL" "$LIBUSB_SHA256"
     fetch "$KEYCODEMAPDB_ARCHIVE" "$KEYCODEMAPDB_URL" "$KEYCODEMAPDB_SHA256"
+}
+
+install_whpx_headers()
+{
+    local stamp="mingw-w64-whpx-headers-$MINGW_W64_WHPX_HEADERS_VERSION"
+    local archive="$DOWNLOAD_DIR/$MINGW_W64_WHPX_HEADERS_ARCHIVE"
+    local member="mingw-w64-v$MINGW_W64_WHPX_HEADERS_VERSION/mingw-w64-headers/include/winhvplatformdefs.h"
+    local destination="$ROOT_DIR/include/winhvplatformdefs.h"
+    local temporary="$destination.tmp"
+
+    if is_built "$stamp" && [[ -f "$destination" ]]; then
+        return
+    fi
+
+    log "Installing MinGW-w64 $MINGW_W64_WHPX_HEADERS_VERSION WHPX definitions"
+    if ! tar -xOf "$archive" "$member" >"$temporary"; then
+        rm -f -- "$temporary"
+        die "WHPX definitions were not found in $MINGW_W64_WHPX_HEADERS_ARCHIVE"
+    fi
+    if ! grep -q 'WHvCapabilityCodeVmxBasic' "$temporary"; then
+        rm -f -- "$temporary"
+        die "WHPX definitions are too old in $MINGW_W64_WHPX_HEADERS_ARCHIVE"
+    fi
+    mv "$temporary" "$destination"
+    mark_built "$stamp"
 }
 
 extract()
@@ -472,6 +501,7 @@ build_deps()
     if [[ "${DOWNLOAD_ONLY:-0}" == 1 ]]; then
         return
     fi
+    install_whpx_headers
     extract_all
     build_zlib
     fixup_zlib_import_library
@@ -518,6 +548,10 @@ build_qemu()
     ensure_layout
     check_tools
     write_toolchain_files
+    fetch "$MINGW_W64_WHPX_HEADERS_ARCHIVE" \
+        "$MINGW_W64_WHPX_HEADERS_URL" \
+        "$MINGW_W64_WHPX_HEADERS_SHA256"
+    install_whpx_headers
     [[ -x "$QEMU_SOURCE_DIR/configure" ]] ||
         die "QEMU source tree not found at $QEMU_SOURCE_DIR"
     [[ -f "$ROOT_DIR/lib/pkgconfig/glib-2.0.pc" ]] ||
@@ -546,7 +580,7 @@ build_qemu()
             --without-default-features \
             --enable-system \
             --enable-tcg \
-            --disable-whpx \
+            --enable-whpx \
             --enable-qcow1 \
             --enable-vvfat \
             --enable-sdl \
@@ -698,6 +732,8 @@ make_dist()
         printf 'QEMU commit: %s\n' "$qemu_commit"
         printf 'Target: %s\n' "$TARGET"
         "$CC" --version | sed -n '1p'
+        printf 'MinGW-w64 WHPX headers: %s\n' \
+            "$MINGW_W64_WHPX_HEADERS_VERSION"
         printf 'zlib: %s\n' "$ZLIB_VERSION"
         printf 'libffi: %s\n' "$LIBFFI_VERSION"
         printf 'PCRE2: %s\n' "$PCRE2_VERSION"

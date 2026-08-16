@@ -1,0 +1,4 @@
+#!/bin/sh
+
+twm &
+exec xterm -geometry 80x24+20+20

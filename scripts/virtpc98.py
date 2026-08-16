@@ -9,8 +9,10 @@ Copyright (C) 2026 Awe Morris
 """
 
 import configparser
+import json
 import os
 import shutil
+import socket
 import struct
 import subprocess
 import sys
@@ -1497,14 +1499,19 @@ CPU_ARG = {
     "Intel 64-bit": "core2duo",
 }
 SMP_CPU_CHOICES = CPU_CHOICES[4:]
-CORE_CHOICES = ("1", "2", "3", "4")
+CORE_CHOICES = ("1", "2", "3", "4", "5", "6", "7", "8")
 
-GRAPHICS_GDC = "GDC (640x400)"
-GRAPHICS_CIRRUS = "GDC (640x400) + Cirrus (-1024x768)"
-GRAPHICS_PEGC = ("GDC (640x400) + PEGC (-640x480) + "
-                 "Cirrus (-1024x768)")
+GRAPHICS_GDC = "GDC (640x480 16-color)"
+GRAPHICS_PEGC = "PEGC (640x480 256-color)"
+GRAPHICS_CIRRUS = ("Cirrus Core Graph (640x480 True Color - "
+                   "1024x768 256-color)")
 PC9801_GRAPHICS = (GRAPHICS_GDC,)
-PC9821_GRAPHICS = (GRAPHICS_GDC, GRAPHICS_CIRRUS, GRAPHICS_PEGC)
+PC9821_GRAPHICS = (GRAPHICS_GDC, GRAPHICS_PEGC, GRAPHICS_CIRRUS)
+
+LEGACY_GRAPHICS_GDC = "GDC (640x400)"
+LEGACY_GRAPHICS_CIRRUS = "GDC (640x400) + Cirrus (-1024x768)"
+LEGACY_GRAPHICS_PEGC = ("GDC (640x400) + PEGC (-640x480) + "
+                        "Cirrus (-1024x768)")
 
 
 def machine_value(value):
@@ -1600,7 +1607,10 @@ def graphics_value(value):
     """Normalize the short CLI spellings while preserving GUI labels."""
     value = str(value or GRAPHICS_CIRRUS).strip()
     aliases = {"gdc": GRAPHICS_GDC, "cirrus": GRAPHICS_CIRRUS,
-               "pegc": GRAPHICS_PEGC}
+               "pegc": GRAPHICS_PEGC,
+               LEGACY_GRAPHICS_GDC.lower(): GRAPHICS_GDC,
+               LEGACY_GRAPHICS_CIRRUS.lower(): GRAPHICS_CIRRUS,
+               LEGACY_GRAPHICS_PEGC.lower(): GRAPHICS_PEGC}
     return aliases.get(value.lower(), value)
 
 
@@ -1613,8 +1623,92 @@ def qemu_machine(cfg):
         raise ValueError("%s is not available on %s" % (graphics, machine))
     if machine == "pc9801":
         return machine
-    return "%s,pegc=%s" % (machine,
-                            "on" if graphics == GRAPHICS_PEGC else "off")
+    return "%s,pegc=%s,coregraph=%s" % (
+        machine,
+        "on" if graphics == GRAPHICS_PEGC else "off",
+        "on" if graphics == GRAPHICS_CIRRUS else "off")
+
+
+def free_tcp_port():
+    """Reserve an ephemeral localhost port number for QEMU's QMP server."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+    finally:
+        sock.close()
+
+
+class QmpClient:
+    """Small synchronous QMP client used only for removable media."""
+
+    def __init__(self, port):
+        self.port = port
+        self.sock = None
+        self.reader = None
+        self.lock = threading.Lock()
+        self.serial = 0
+
+    def connect(self, process, timeout=8.0):
+        deadline = time.monotonic() + timeout
+        last_error = None
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError("QEMU exited before QMP became ready")
+            try:
+                self.sock = socket.create_connection(
+                    ("127.0.0.1", self.port), timeout=0.5)
+                self.sock.settimeout(5.0)
+                self.reader = self.sock.makefile("r", encoding="utf-8")
+                greeting = self._read_message()
+                if "QMP" not in greeting:
+                    raise RuntimeError("invalid QMP greeting")
+                self.command("qmp_capabilities")
+                return
+            except (OSError, RuntimeError, ValueError) as err:
+                last_error = err
+                self.close()
+                time.sleep(0.1)
+        raise RuntimeError("QMP did not become ready: %s" % last_error)
+
+    def _read_message(self):
+        line = self.reader.readline()
+        if not line:
+            raise RuntimeError("QMP connection closed")
+        return json.loads(line)
+
+    def command(self, execute, arguments=None):
+        with self.lock:
+            self.serial += 1
+            request = {"execute": execute, "id": self.serial}
+            if arguments:
+                request["arguments"] = arguments
+            wire = (json.dumps(request, separators=(",", ":")) + "\n")
+            self.sock.sendall(wire.encode("utf-8"))
+            while True:
+                reply = self._read_message()
+                # Events may arrive between a request and its reply.
+                if reply.get("id") != self.serial:
+                    continue
+                if "error" in reply:
+                    error = reply["error"]
+                    raise RuntimeError(error.get("desc") or str(error))
+                return reply.get("return")
+
+    def close(self):
+        reader, sock = self.reader, self.sock
+        self.reader = None
+        self.sock = None
+        if reader is not None:
+            try:
+                reader.close()
+            except OSError:
+                pass
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
 
 
 def qemu_command(cfg):
@@ -1638,11 +1732,12 @@ def qemu_command(cfg):
         argv += ["-accel", "whpx"]
     if cfg.get("roms"):
         argv += ["-L", cfg["roms"]]
-    floppies = [cfg[k] for k in ("fdd1", "fdd2") if cfg.get(k)]
-    for unit, image in enumerate(floppies):
-        # a lone drive needs no unit; two of them do
-        spec = "if=floppy,unit=%d," % unit if len(floppies) > 1 else "if=floppy,"
-        argv += ["-drive", spec + drive_backing(image)]
+    for unit, key in enumerate(("fdd1", "fdd2")):
+        image = cfg.get(key)
+        if image:
+            # A stable backend name lets the GUI address this drive over QMP.
+            argv += ["-drive", "if=floppy,unit=%d,id=%s," % (unit, key)
+                     + drive_backing(image)]
     disks = [(k, cfg.get(k)) for k in ("hdd1", "hdd2", "mount") if cfg.get(k)]
     for unit, (key, value) in enumerate(disks[:2]):
         if key == "mount":
@@ -1679,6 +1774,9 @@ def qemu_command(cfg):
         # the guest sits behind QEMU's own NAT; no host privileges needed
         argv += ["-netdev", "user,id=lan",
                  "-device", "pc98-lgy98,netdev=lan"]
+    if cfg.get("_qmp_port"):
+        argv += ["-qmp", "tcp:127.0.0.1:%d,server=on,wait=off"
+                 % cfg["_qmp_port"]]
     if cfg.get("extra"):
         argv += cfg["extra"].split()
     return argv, notes
@@ -2581,8 +2679,9 @@ Booting
 
   --snapshot prevents QEMU from writing changes back to disk images.
 
-  --graphics selects GDC, GDC + Cirrus, or GDC + PEGC + Cirrus.  PEGC is
-  available only on PC-9821 and uses QEMU's compatible BIOS.
+  --graphics selects GDC (640x480 16-color), PEGC (640x480 256-color), or
+  Cirrus Core Graph (640x480 True Color through 1024x768 256-color).  PEGC
+  is available only on PC-9821 and uses QEMU's compatible BIOS.
 
   --sound fits one board: 86 is the PC-9801-86 (FM and PCM), wss is the
   Mate-X built-in Sound System.  The default is 86.
@@ -2737,6 +2836,8 @@ def gui():
             self.columnconfigure(0, weight=1)
             self.busy = False
             self.process = None
+            self.qmp = None
+            self.qmp_drives = set()
             self.saved_roms = ""
 
             book = ttk.Notebook(self)
@@ -2792,8 +2893,16 @@ def gui():
         def add_clear(self, frame, row, key):
             """Every field gets one, in the same column, so it is findable."""
             ttk.Button(frame, text="Clear", width=7,
-                       command=lambda: self.vars[key].set("")).grid(
+                       command=lambda: self.clear_row(key)).grid(
                 row=row, column=4, padx=(4, 0), pady=2)
+
+        def clear_row(self, key):
+            """Clear a field, ejecting a running VM's floppy first."""
+            if key not in ("fdd1", "fdd2") or self.process is None:
+                self.vars[key].set("")
+                return
+            self.work(lambda log: self.eject_floppy(key, log),
+                      done=lambda: self.vars[key].set(""))
 
         def add_row(self, frame, row, key, text, browse, types, device):
             """One labelled path field with its buttons; returns the next row."""
@@ -2876,6 +2985,11 @@ def gui():
             ttk.Checkbutton(storage, text="No modify",
                             variable=self.snapshot).grid(
                 row=inner, column=1, columnspan=4, sticky="w", pady=(2, 0))
+
+            special = self.add_group(left, 1, "Special Keys")
+            ttk.Button(special, text="Ctrl-Alt-Del",
+                       command=self.send_ctrl_alt_del).grid(
+                row=0, column=0, columnspan=5, sticky="w")
 
             hardware = self.add_group(right, 0, "Hardware")
             ttk.Label(hardware, text="Machine", width=LABEL_WIDTH).grid(
@@ -3042,7 +3156,12 @@ def gui():
                     else filedialog.askopenfilename(filetypes=types,
                                                     parent=self))
             if path:
-                self.vars[key].set(os.path.normpath(path))
+                path = os.path.normpath(path)
+                if key in ("fdd1", "fdd2") and self.process is not None:
+                    self.work(lambda log: self.change_floppy(key, path, log),
+                              done=lambda: self.vars[key].set(path))
+                    return
+                self.vars[key].set(path)
                 if key == "qemu":
                     self.cpu_selected()
                     path = self.vars["qemu"].get()
@@ -3150,6 +3269,49 @@ def gui():
                        lan=NETWORK_ARG.get(self.network.get(), ""))
             return cfg
 
+        def qmp_command(self, execute, arguments):
+            qmp = self.qmp
+            if qmp is None:
+                raise RuntimeError("QMP is not ready yet")
+            return qmp.command(execute, arguments)
+
+        def send_ctrl_alt_del(self):
+            if self.qmp is None:
+                self.write("Ctrl-Alt-Del is available while QEMU is running")
+                return
+            self.work(self.send_ctrl_alt_del_qmp)
+
+        def send_ctrl_alt_del_qmp(self, log):
+            self.qmp_command("send-key", {
+                "keys": [
+                    {"type": "qcode", "data": "ctrl"},
+                    {"type": "qcode", "data": "alt"},
+                    {"type": "qcode", "data": "delete"},
+                ],
+            })
+            log("Ctrl-Alt-Del sent")
+
+        def change_floppy(self, key, path, log):
+            if key not in self.qmp_drives:
+                raise RuntimeError(
+                    "%s was empty at startup; start with a disk in this slot"
+                    % key.upper())
+            fmt = "qcow2" if path.lower().endswith(".qcow2") else "raw"
+            self.qmp_command("blockdev-change-medium", {
+                # The -drive backend ID is stable even when the medium changes.
+                "device": key, "filename": path, "format": fmt,
+                "read-only-mode": "retain", "force": True,
+            })
+            log("%s changed to %s" % (key.upper(), path))
+
+        def eject_floppy(self, key, log):
+            if key not in self.qmp_drives:
+                raise RuntimeError(
+                    "%s was empty at startup; it has no QMP backend" % key.upper())
+            self.qmp_command("blockdev-open-tray",
+                             {"device": key, "force": True})
+            log("%s ejected" % key.upper())
+
         def start(self):
             if self.process is not None:
                 return
@@ -3211,7 +3373,10 @@ def gui():
                              daemon=True).start()
 
         def run_qemu(self, cfg):
+            qmp = None
             try:
+                cfg = dict(cfg)
+                cfg["_qmp_port"] = free_tcp_port()
                 argv, notes = qemu_command(cfg)
                 for note in notes:
                     self.post(note)
@@ -3220,12 +3385,27 @@ def gui():
                 self.process = subprocess.Popen(
                     argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     **no_window())
+                self.qmp_drives = {key for key in ("fdd1", "fdd2")
+                                   if cfg.get(key)}
+                qmp = QmpClient(cfg["_qmp_port"])
+                try:
+                    qmp.connect(self.process)
+                    self.qmp = qmp
+                    self.post("QMP ready; FDD ... exchanges media, Clear ejects")
+                except Exception as err:
+                    qmp.close()
+                    qmp = None
+                    self.post("QMP unavailable: %s" % err)
                 for line in self.process.stdout:
                     self.post(line.decode("utf-8", "replace").rstrip())
                 self.post("qemu exited (%s)" % self.process.wait())
             except Exception as err:
                 self.post("%s: %s" % (type(err).__name__, err))
             finally:
+                self.qmp = None
+                self.qmp_drives = set()
+                if qmp is not None:
+                    qmp.close()
                 self.process = None
                 self.after(0, self.idle)
 
@@ -3615,7 +3795,8 @@ def gui():
                 self.cores.set(str(core_count(saved.get("cores", "1"))))
             except ValueError:
                 self.cores.set("1")
-            self.update_graphics_choices(saved.get("graphics", GRAPHICS_CIRRUS))
+            self.update_graphics_choices(graphics_value(
+                saved.get("graphics", GRAPHICS_CIRRUS)))
             self.memory.set(saved.get("memory", "64M"))
             self.extra.set(saved.get("extra", ""))
             # settings written before FM and PCM were told apart say "sound",

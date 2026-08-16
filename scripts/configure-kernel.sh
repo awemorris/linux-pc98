@@ -285,12 +285,16 @@ if [ "$device_profile" = pc98 ]; then
 	make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 fi
 if [ "$kernel_version" = 7.1 ]; then
-	# Core-Graph varies between PC-98 models and can freeze an untested
-	# machine during modeset.  Keep it out of the i386/i486 kernels.  The
-	# Debian/i686 build provides an explicitly loaded module with no modalias.
+	# Core-Graph has no standard PCI framebuffer BAR.  The Debian/i486 image
+	# needs its fbdev driver built in so /dev/fb0 exists before Xorg probes
+	# video.  Keep the i686 variant explicitly loaded and the tiny i386
+	# research kernel free of automatic modesetting.
 	if [ "$cpu_family" = 686 ]; then
 		"$source/scripts/config" --file "$kernel_build/.config" \
 			--module FB_PC98_CIRRUS
+	elif [ "$cpu_family" = 486 ]; then
+		"$source/scripts/config" --file "$kernel_build/.config" \
+			--enable FB_PC98_CIRRUS
 	else
 		"$source/scripts/config" --file "$kernel_build/.config" \
 			--disable FB_PC98_CIRRUS

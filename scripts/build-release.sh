@@ -40,8 +40,12 @@ busybox_root="$repo/build/i386-video/buildroot/output/target"
 debian_root="$repo/build/boot98/debian13-i486-root"
 busybox_cache=busybox-i386-video-buildroot-2026.05
 debian_manifest="$repo/configs/debian13-i486-packages.txt"
-debian_manifest_sha256="$(sha256sum "$debian_manifest" | awk '{print $1}')"
-debian_cache="debian13-i486-trixie-${debian_manifest_sha256:0:12}"
+debian_xorg_config="$repo/configs/xorg/20-pc98-coregraph.conf"
+debian_xinitrc="$repo/configs/xorg/pc98-xinitrc"
+debian_profile_sha256="$(sha256sum "$debian_manifest" "$debian_xorg_config" \
+	"$debian_xinitrc" |
+	sha256sum | awk '{print $1}')"
+debian_cache="debian13-i486-trixie-${debian_profile_sha256:0:12}"
 
 ensure_rootfs()
 {
@@ -62,7 +66,7 @@ ensure_debian_rootfs()
 	if test -f "$target/etc/linux-pc98-rootfs-profile"; then
 		current="$(cat "$target/etc/linux-pc98-rootfs-profile")"
 	fi
-	if test "$current" != "$debian_manifest_sha256"; then
+	if test "$current" != "$debian_profile_sha256"; then
 		case "$target" in
 			"$repo"/build/*) ;;
 			*) echo "Refusing to replace rootfs outside build/: $target" >&2; exit 1 ;;
@@ -72,8 +76,8 @@ ensure_debian_rootfs()
 	fi
 	ensure_rootfs debian13-i486 "$cache" "$target" bin/sh
 	test "$(cat "$target/etc/linux-pc98-rootfs-profile" 2>/dev/null || true)" = \
-		"$debian_manifest_sha256" || {
-		echo "Debian rootfs profile does not match $debian_manifest" >&2
+		"$debian_profile_sha256" || {
+		echo "Debian rootfs profile does not match its package and Xorg configuration" >&2
 		exit 1
 	}
 }

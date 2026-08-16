@@ -1353,12 +1353,14 @@ def fdd_format_of(path):
 
 SETTINGS = "virtpc98.ini"
 SECTION = "virtpc98"
-# The Windows package ships both system emulators.  Prefer x86_64, while
-# keeping the i386 names as a fallback for older and hand-made packages.
-QEMU_NAMES = ("qemu-system-x86_64.exe", "qemu-system-x86_64w.exe",
-              "qemu-system-x86_64",
-              "qemu-system-i386.exe", "qemu-system-i386w.exe",
-              "qemu-system-i386")
+# The Windows package ships both system emulators.  Use i386 for the period
+# CPU choices and switch to x86_64 only for Intel 64-bit.
+QEMU_X86_64_NAMES = ("qemu-system-x86_64.exe",
+                     "qemu-system-x86_64w.exe",
+                     "qemu-system-x86_64")
+QEMU_I386_NAMES = ("qemu-system-i386.exe", "qemu-system-i386w.exe",
+                   "qemu-system-i386")
+QEMU_NAMES = QEMU_I386_NAMES + QEMU_X86_64_NAMES
 COMPAT_ROM_DIR = os.path.join("share", "pc98bios")
 ROM_NAMES = ("bios-xa7c9w", "roms", "bios")
 ROM_FILES = ("pc98bank0.bin", "pc98font.bin")
@@ -1477,6 +1479,26 @@ def relaunch_elevated():
 MACHINE_CHOICES = ("PC-9801", "PC-9821")
 MACHINE_ARG = {"PC-9801": "pc9801", "PC-9821": "pc9821"}
 
+CPU_CHOICES = ("386SX", "386DX", "486DX", "Pentium", "Pentium 2",
+               "Pentium 3", "Pentium 4", "Intel 64-bit")
+CPU_DEFAULT = "486DX"
+CPU_ARG = {
+    # QEMU has one 80386 model; the SX/DX distinction is the external bus,
+    # which its PC-98 machine does not expose as a separate CPU property.
+    "386SX": "386",
+    "386DX": "386",
+    "486DX": "486",
+    "Pentium": "pentium",
+    "Pentium 2": "pentium2",
+    "Pentium 3": "pentium3",
+    # QEMU has no named Pentium 4 model.  Its qemu32 feature set with family
+    # 15 gives the PC-9821 SMP validation the intended NetBurst-class CPU.
+    "Pentium 4": "qemu32,family=15,model=2,stepping=9",
+    "Intel 64-bit": "core2duo",
+}
+SMP_CPU_CHOICES = CPU_CHOICES[4:]
+CORE_CHOICES = ("1", "2", "3", "4")
+
 GRAPHICS_GDC = "GDC (640x400)"
 GRAPHICS_CIRRUS = "GDC (640x400) + Cirrus (-1024x768)"
 GRAPHICS_PEGC = ("GDC (640x400) + PEGC (-640x480) + "
@@ -1496,6 +1518,82 @@ def machine_value(value):
     if lowered in ("pc9821", "9821"):
         return "pc9821"
     raise ValueError("unknown PC-98 machine: %s" % value)
+
+
+def cpu_label(value):
+    """Normalize saved/CLI CPU spellings to a GUI label."""
+    value = str(value or CPU_DEFAULT).strip()
+    if value in CPU_CHOICES:
+        return value
+    aliases = {
+        "386": "386DX", "386sx": "386SX", "386dx": "386DX",
+        "486": "486DX", "486dx": "486DX", "pentium": "Pentium",
+        "pentium2": "Pentium 2", "pentium 2": "Pentium 2",
+        "pentium3": "Pentium 3", "pentium 3": "Pentium 3",
+        "pentium4": "Pentium 4", "pentium 4": "Pentium 4",
+        "core2duo": "Intel 64-bit", "qemu64": "Intel 64-bit",
+        "x86_64": "Intel 64-bit", "intel64": "Intel 64-bit",
+        "intel 64-bit": "Intel 64-bit",
+    }
+    normalized = aliases.get(value.lower())
+    if normalized:
+        return normalized
+    raise ValueError("unknown CPU: %s" % value)
+
+
+def core_count(value):
+    """Return a supported PC-98 CPU count."""
+    try:
+        cores = int(str(value or "1").strip())
+    except ValueError:
+        raise ValueError("Cores must be a number from 1 to 4")
+    if cores < 1 or cores > 4:
+        raise ValueError("Cores must be a number from 1 to 4")
+    return cores
+
+
+def validate_cpu_config(cfg):
+    """Validate and normalize the machine, CPU and SMP selections."""
+    machine = machine_value(cfg.get("machine"))
+    cpu = cpu_label(cfg.get("cpu"))
+    cores = core_count(cfg.get("cores"))
+    if cores > 1 and machine != "pc9821":
+        raise ValueError("Cores greater than 1 require PC-9821")
+    if cores > 1 and cpu not in SMP_CPU_CHOICES:
+        raise ValueError("Cores greater than 1 require Pentium 2 or later")
+    return machine, cpu, cores
+
+
+def qemu_executable(path, cpu):
+    """Select the matching system emulator when both binaries are shipped."""
+    base = os.path.basename(path).lower()
+    x64_names = tuple(name.lower() for name in QEMU_X86_64_NAMES)
+    i386_names = tuple(name.lower() for name in QEMU_I386_NAMES)
+    wants_x64 = cpu == "Intel 64-bit"
+    wanted = QEMU_X86_64_NAMES if wants_x64 else QEMU_I386_NAMES
+    if base in (x64_names if wants_x64 else i386_names):
+        return path
+    replacements = ({
+        "qemu-system-i386.exe": "qemu-system-x86_64.exe",
+        "qemu-system-i386w.exe": "qemu-system-x86_64w.exe",
+        "qemu-system-i386": "qemu-system-x86_64",
+    } if wants_x64 else {
+        "qemu-system-x86_64.exe": "qemu-system-i386.exe",
+        "qemu-system-x86_64w.exe": "qemu-system-i386w.exe",
+        "qemu-system-x86_64": "qemu-system-i386",
+    })
+    sibling_name = replacements.get(base)
+    if sibling_name:
+        sibling = os.path.join(os.path.dirname(path), sibling_name)
+        if os.path.isfile(sibling):
+            return sibling
+        found = find(wanted)
+        if found:
+            return found
+        if wants_x64:
+            raise ValueError("Intel 64-bit requires qemu-system-x86_64")
+    # A custom executable or wrapper cannot be identified by its basename.
+    return path
 
 
 def graphics_value(value):
@@ -1526,9 +1624,14 @@ def qemu_command(cfg):
     channel as hard disks, so the 1st/2nd disk and a mounted folder compete
     for those; the secondary channel is the CD-ROM's.
     """
-    argv = [cfg["qemu"], "-M", qemu_machine(cfg),
+    _machine, cpu, cores = validate_cpu_config(cfg)
+    argv = [qemu_executable(cfg["qemu"], cpu),
+            "-M", qemu_machine(cfg),
+            "-cpu", CPU_ARG[cpu], "-smp", str(cores),
             "-m", cfg.get("memory") or "64M"]
     notes = []
+    if cfg.get("snapshot"):
+        argv.append("-snapshot")
     if cfg.get("kvm"):
         argv += ["-accel", "kvm"]
     elif cfg.get("hyperv"):
@@ -2463,6 +2566,7 @@ Booting
                [--serial=PORT] [--mount=DIR] [--roms=DIR]
                [--memory=64M] [--kvm] [--hyperv] [--qemu=PATH]
                [--machine=pc9801|pc9821]
+               [--cpu=486] [--cores=1] [--snapshot]
                [--graphics=gdc|cirrus|pegc]
                [--sound=86|wss|none] [--lan] [--dry-run]
 
@@ -2470,6 +2574,12 @@ Booting
   under TCG, which is the tested path.
 
   --machine selects PC-9801 or PC-9821; the default is PC-9821.
+
+  --cpu selects 386sx, 386dx, 486, pentium, pentium2, pentium3,
+  pentium4, or intel64.  --cores accepts 1 through 4.  More than one core
+  requires PC-9821 and Pentium 2 or later.
+
+  --snapshot prevents QEMU from writing changes back to disk images.
 
   --graphics selects GDC, GDC + Cirrus, or GDC + PEGC + Cirrus.  PEGC is
   available only on PC-9821 and uses QEMU's compatible BIOS.
@@ -2490,7 +2600,8 @@ Booting
 def boot_cli(opts, log):
     cfg = {k: opts.get(k, "") for k in
            ("qemu", "roms", "hdd1", "hdd2", "fdd1", "fdd2", "cd", "mount")
-           + SCSI_KEYS + ("serial", "memory", "machine", "graphics", "extra")}
+           + SCSI_KEYS + ("serial", "memory", "machine", "cpu", "cores",
+                          "graphics", "extra")}
     board = str(opts.get("sound") or "86").lower()
     if "no_sound" in opts:
         board = "none"
@@ -2499,6 +2610,7 @@ def boot_cli(opts, log):
     cfg["lan"] = "nat" if "lan" in opts else ""
     cfg["kvm"] = "kvm" in opts
     cfg["hyperv"] = "hyperv" in opts
+    cfg["snapshot"] = "snapshot" in opts
     if not cfg["qemu"]:
         cfg["qemu"] = find(QEMU_NAMES)
     if not cfg["qemu"]:
@@ -2734,8 +2846,11 @@ def gui():
             self.vars["serial"] = tk.StringVar()
             self.compat = tk.BooleanVar(value=True)
             self.machine = tk.StringVar(value=MACHINE_CHOICES[1])
+            self.cpu = tk.StringVar(value=CPU_DEFAULT)
+            self.cores = tk.StringVar(value=CORE_CHOICES[0])
             self.memory = tk.StringVar(value="64M")
             self.graphics = tk.StringVar(value=GRAPHICS_CIRRUS)
+            self.snapshot = tk.BooleanVar(value=False)
             self.extra = tk.StringVar()
             self.sound = tk.StringVar(value=SOUND_CHOICES[0][0])
             self.kvm = tk.BooleanVar(value=False)
@@ -2758,6 +2873,9 @@ def gui():
             inner = 0
             for spec in STORAGE_ROWS:
                 inner = self.add_row(storage, inner, *spec)
+            ttk.Checkbutton(storage, text="No modify",
+                            variable=self.snapshot).grid(
+                row=inner, column=1, columnspan=4, sticky="w", pady=(2, 0))
 
             hardware = self.add_group(right, 0, "Hardware")
             ttk.Label(hardware, text="Machine", width=LABEL_WIDTH).grid(
@@ -2769,52 +2887,67 @@ def gui():
                                   sticky="ew", pady=2)
             self.machine_box.bind("<<ComboboxSelected>>",
                                   self.machine_selected)
+            ttk.Label(hardware, text="CPU", width=LABEL_WIDTH).grid(
+                row=1, column=0, sticky="w", pady=2)
+            self.cpu_box = ttk.Combobox(
+                hardware, textvariable=self.cpu, state="readonly",
+                values=CPU_CHOICES)
+            self.cpu_box.grid(row=1, column=1, columnspan=4,
+                              sticky="ew", pady=2)
+            self.cpu_box.bind("<<ComboboxSelected>>", self.cpu_selected)
+            ttk.Label(hardware, text="Cores", width=LABEL_WIDTH).grid(
+                row=2, column=0, sticky="w", pady=2)
+            self.cores_box = ttk.Combobox(
+                hardware, textvariable=self.cores, state="readonly",
+                values=CORE_CHOICES)
+            self.cores_box.grid(row=2, column=1, columnspan=4,
+                                sticky="ew", pady=2)
             row = 1
             ttk.Label(hardware, text="Memory", width=LABEL_WIDTH).grid(
-                row=1, column=0, sticky="w", pady=2)
+                row=3, column=0, sticky="w", pady=2)
             self.mem_scale = ttk.Scale(hardware, from_=0,
                                        to=len(MEMORY_STEPS) - 1,
                                        orient="horizontal",
                                        command=self.slide_memory)
-            self.mem_scale.grid(row=1, column=1, sticky="ew", pady=2)
+            self.mem_scale.grid(row=3, column=1, sticky="ew", pady=2)
             # free text on purpose: the slider covers the usual sizes and
             # the box still takes anything -m would
             ttk.Entry(hardware, textvariable=self.memory, width=9).grid(
-                row=1, column=3, padx=(4, 0), pady=2)
+                row=3, column=3, padx=(4, 0), pady=2)
             self.memory.trace_add("write", self.memory_edited)
             self.memory_edited()
             ttk.Label(hardware, text="Graphics", width=LABEL_WIDTH).grid(
-                row=2, column=0, sticky="w", pady=2)
+                row=4, column=0, sticky="w", pady=2)
             self.graphics_box = ttk.Combobox(
                 hardware, textvariable=self.graphics, state="readonly",
                 values=PC9821_GRAPHICS)
-            self.graphics_box.grid(row=2, column=1, columnspan=4,
+            self.graphics_box.grid(row=4, column=1, columnspan=4,
                                    sticky="ew", pady=2)
             self.graphics_box.bind("<<ComboboxSelected>>",
                                    self.graphics_selected)
             ttk.Label(hardware, text="Serial Port", width=LABEL_WIDTH).grid(
-                row=3, column=0, sticky="w", pady=2)
+                row=5, column=0, sticky="w", pady=2)
             self.serial_box = ttk.Combobox(hardware,
                                            textvariable=self.vars["serial"])
-            self.serial_box.grid(row=3, column=1, sticky="ew", pady=2)
+            self.serial_box.grid(row=5, column=1, sticky="ew", pady=2)
             # Scan sits where the other rows keep Drive...: both go looking
             # for real hardware
             ttk.Button(hardware, text="Scan", width=9,
                        command=self.scan_serial).grid(
-                row=3, column=3, padx=(4, 0), pady=2)
-            self.add_clear(hardware, 3, "serial")
+                row=5, column=3, padx=(4, 0), pady=2)
+            self.add_clear(hardware, 5, "serial")
             ttk.Label(hardware, text="Sound", width=LABEL_WIDTH).grid(
-                row=4, column=0, sticky="w", pady=2)
+                row=6, column=0, sticky="w", pady=2)
             # a fixed set of boards, so the field is a choice and not free text
             ttk.Combobox(hardware, textvariable=self.sound, state="readonly",
                          values=[c[0] for c in SOUND_CHOICES]).grid(
-                row=4, column=1, columnspan=4, sticky="ew", pady=2)
+                row=6, column=1, columnspan=4, sticky="ew", pady=2)
             ttk.Label(hardware, text="Network", width=LABEL_WIDTH).grid(
-                row=5, column=0, sticky="w", pady=2)
+                row=7, column=0, sticky="w", pady=2)
             self.network = tk.StringVar(value=NETWORK_CHOICES[0])
             ttk.Combobox(hardware, textvariable=self.network,
                          state="readonly", values=NETWORK_CHOICES).grid(
-                row=5, column=1, columnspan=4, sticky="ew", pady=2)
+                row=7, column=1, columnspan=4, sticky="ew", pady=2)
 
             path = self.add_group(right, row, "Path")
             row += 1
@@ -2869,6 +3002,16 @@ def gui():
         def machine_selected(self, _event=None):
             self.update_graphics_choices()
 
+        def cpu_selected(self, _event=None):
+            qemu = self.vars["qemu"].get()
+            if not qemu:
+                return
+            try:
+                self.vars["qemu"].set(qemu_executable(
+                    qemu, cpu_label(self.cpu.get())))
+            except ValueError as err:
+                self.write(str(err))
+
         def graphics_selected(self, _event=None):
             # Full PEGC is implemented by the compatibility BIOS and QEMU
             # deliberately rejects it with a vendor ROM dump.
@@ -2900,8 +3043,11 @@ def gui():
                                                     parent=self))
             if path:
                 self.vars[key].set(os.path.normpath(path))
-                if key == "qemu" and self.compat.get():
-                    self.vars["roms"].set(compat_roms(path))
+                if key == "qemu":
+                    self.cpu_selected()
+                    path = self.vars["qemu"].get()
+                    if self.compat.get():
+                        self.vars["roms"].set(compat_roms(path))
 
         def pick_drive(self, key, kind):
             """Point a boot row at a real drive instead of an image file."""
@@ -2995,8 +3141,10 @@ def gui():
             cfg = {k: v.get().strip() for k, v in self.vars.items()}
             fm, pcm = sound_parts(self.sound.get())
             cfg.update(machine=self.machine.get(),
+                       cpu=self.cpu.get(), cores=self.cores.get(),
                        memory=self.memory.get().strip(),
                        graphics=self.graphics.get(),
+                       snapshot=self.snapshot.get(),
                        extra=self.extra.get().strip(), fm=fm, pcm=pcm,
                        kvm=self.kvm.get(), hyperv=self.hyperv.get(),
                        lan=NETWORK_ARG.get(self.network.get(), ""))
@@ -3012,6 +3160,12 @@ def gui():
             if not any(cfg[k] for k in ("hdd1", "hdd2", "fdd1", "fdd2",
                                         "cd", "mount") + SCSI_KEYS):
                 self.write("select something to boot from")
+                return
+            try:
+                # Validate before saving settings or starting the worker.
+                qemu_command(cfg)
+            except ValueError as err:
+                self.write("invalid hardware configuration: %s" % err)
                 return
             # any real drive at all needs raw access rights first
             raw = [cfg[k] for k in ("hdd1", "hdd2", "fdd1", "fdd2", "cd")
@@ -3453,6 +3607,14 @@ def gui():
                            "pc9821": MACHINE_CHOICES[1]}.get(
                                machine.lower(), MACHINE_CHOICES[1])
             self.machine.set(machine)
+            try:
+                self.cpu.set(cpu_label(saved.get("cpu", CPU_DEFAULT)))
+            except ValueError:
+                self.cpu.set(CPU_DEFAULT)
+            try:
+                self.cores.set(str(core_count(saved.get("cores", "1"))))
+            except ValueError:
+                self.cores.set("1")
             self.update_graphics_choices(saved.get("graphics", GRAPHICS_CIRRUS))
             self.memory.set(saved.get("memory", "64M"))
             self.extra.set(saved.get("extra", ""))
@@ -3469,8 +3631,11 @@ def gui():
                 and whpx_available() and not self.kvm.get())
             if not self.vars["qemu"].get():
                 self.vars["qemu"].set(find(QEMU_NAMES))
+            self.cpu_selected()
             self.compat.set(parser.getboolean(SECTION, "compat",
                                               fallback=True))
+            self.snapshot.set(parser.getboolean(SECTION, "snapshot",
+                                                fallback=False))
             self.saved_roms = saved.get("roms", "") or default_roms(
                 self.vars["qemu"].get())
             self.apply_compat()
@@ -3492,8 +3657,10 @@ def gui():
             parser = configparser.ConfigParser(interpolation=None)
             parser[SECTION] = dict(
                 state, compat=str(self.compat.get()).lower(),
-                machine=self.machine.get(), memory=self.memory.get(),
+                machine=self.machine.get(), cpu=self.cpu.get(),
+                cores=self.cores.get(), memory=self.memory.get(),
                 graphics=self.graphics.get(),
+                snapshot=str(self.snapshot.get()).lower(),
                 extra=self.extra.get(),
                 fm=str(fm).lower(), pcm=str(pcm).lower(),
                 kvm=str(self.kvm.get()).lower(),

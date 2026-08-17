@@ -1505,8 +1505,10 @@ GRAPHICS_GDC = "GDC (640x480 16-color)"
 GRAPHICS_PEGC = "PEGC (640x480 256-color)"
 GRAPHICS_CIRRUS = ("Cirrus Core Graph (640x480 True Color - "
                    "1024x768 256-color)")
+GRAPHICS_PEGC_CIRRUS = "PEGC + Cirrus Core Graph"
 PC9801_GRAPHICS = (GRAPHICS_GDC,)
-PC9821_GRAPHICS = (GRAPHICS_GDC, GRAPHICS_PEGC, GRAPHICS_CIRRUS)
+PC9821_GRAPHICS = (GRAPHICS_GDC, GRAPHICS_PEGC, GRAPHICS_CIRRUS,
+                   GRAPHICS_PEGC_CIRRUS)
 
 LEGACY_GRAPHICS_GDC = "GDC (640x400)"
 LEGACY_GRAPHICS_CIRRUS = "GDC (640x400) + Cirrus (-1024x768)"
@@ -1553,9 +1555,9 @@ def core_count(value):
     try:
         cores = int(str(value or "1").strip())
     except ValueError:
-        raise ValueError("Cores must be a number from 1 to 4")
-    if cores < 1 or cores > 4:
-        raise ValueError("Cores must be a number from 1 to 4")
+        raise ValueError("Cores must be a number from 1 to 8")
+    if cores < 1 or cores > 8:
+        raise ValueError("Cores must be a number from 1 to 8")
     return cores
 
 
@@ -1608,10 +1610,18 @@ def graphics_value(value):
     value = str(value or GRAPHICS_CIRRUS).strip()
     aliases = {"gdc": GRAPHICS_GDC, "cirrus": GRAPHICS_CIRRUS,
                "pegc": GRAPHICS_PEGC,
+               "pegc-cirrus": GRAPHICS_PEGC_CIRRUS,
+               "pegc+cirrus": GRAPHICS_PEGC_CIRRUS,
+               "cirrus+pegc": GRAPHICS_PEGC_CIRRUS,
                LEGACY_GRAPHICS_GDC.lower(): GRAPHICS_GDC,
                LEGACY_GRAPHICS_CIRRUS.lower(): GRAPHICS_CIRRUS,
-               LEGACY_GRAPHICS_PEGC.lower(): GRAPHICS_PEGC}
+               LEGACY_GRAPHICS_PEGC.lower(): GRAPHICS_PEGC_CIRRUS}
     return aliases.get(value.lower(), value)
+
+
+def graphics_has_pegc(value):
+    """Return whether the selected PC-9821 display exposes PEGC."""
+    return graphics_value(value) in (GRAPHICS_PEGC, GRAPHICS_PEGC_CIRRUS)
 
 
 def qemu_machine(cfg):
@@ -1625,8 +1635,9 @@ def qemu_machine(cfg):
         return machine
     return "%s,pegc=%s,coregraph=%s" % (
         machine,
-        "on" if graphics == GRAPHICS_PEGC else "off",
-        "on" if graphics == GRAPHICS_CIRRUS else "off")
+        "on" if graphics_has_pegc(graphics) else "off",
+        "on" if graphics in (GRAPHICS_CIRRUS,
+                              GRAPHICS_PEGC_CIRRUS) else "off")
 
 
 def free_tcp_port():
@@ -2665,7 +2676,7 @@ Booting
                [--memory=64M] [--kvm] [--hyperv] [--qemu=PATH]
                [--machine=pc9801|pc9821]
                [--cpu=486] [--cores=1] [--snapshot]
-               [--graphics=gdc|cirrus|pegc]
+               [--graphics=gdc|cirrus|pegc|pegc-cirrus]
                [--sound=86|wss|none] [--lan] [--dry-run]
 
   --kvm and --hyperv are experimental; without them the guest runs
@@ -2674,14 +2685,15 @@ Booting
   --machine selects PC-9801 or PC-9821; the default is PC-9821.
 
   --cpu selects 386sx, 386dx, 486, pentium, pentium2, pentium3,
-  pentium4, or intel64.  --cores accepts 1 through 4.  More than one core
+  pentium4, or intel64.  --cores accepts 1 through 8.  More than one core
   requires PC-9821 and Pentium 2 or later.
 
   --snapshot prevents QEMU from writing changes back to disk images.
 
-  --graphics selects GDC (640x480 16-color), PEGC (640x480 256-color), or
-  Cirrus Core Graph (640x480 True Color through 1024x768 256-color).  PEGC
-  is available only on PC-9821 and uses QEMU's compatible BIOS.
+  --graphics selects GDC (640x480 16-color), PEGC (640x480 256-color),
+  Cirrus Core Graph (640x480 True Color through 1024x768 256-color), or
+  PEGC + Cirrus Core Graph.  PEGC is available only on PC-9821 and uses
+  QEMU's compatible BIOS.
 
   --sound fits one board: 86 is the PC-9801-86 (FM and PCM), wss is the
   Mate-X built-in Sound System.  The default is 86.
@@ -3129,7 +3141,7 @@ def gui():
         def graphics_selected(self, _event=None):
             # Full PEGC is implemented by the compatibility BIOS and QEMU
             # deliberately rejects it with a vendor ROM dump.
-            if self.graphics.get() == GRAPHICS_PEGC and not self.compat.get():
+            if graphics_has_pegc(self.graphics.get()) and not self.compat.get():
                 self.compat.set(True)
                 self.apply_compat()
                 self.write("PEGC selected: using the compatible BIOS")
@@ -3238,7 +3250,8 @@ def gui():
             return picked[0] if picked else ""
 
         def apply_compat(self):
-            if not self.compat.get() and self.graphics.get() == GRAPHICS_PEGC:
+            if not self.compat.get() and graphics_has_pegc(
+                    self.graphics.get()):
                 self.compat.set(True)
                 self.write("PEGC requires the compatible BIOS")
                 return
@@ -3820,7 +3833,7 @@ def gui():
             self.saved_roms = saved.get("roms", "") or default_roms(
                 self.vars["qemu"].get())
             self.apply_compat()
-            if self.graphics.get() == GRAPHICS_PEGC:
+            if graphics_has_pegc(self.graphics.get()):
                 self.graphics_selected()
             roms = self.vars["roms"].get()
             if not self.compat.get() and roms and not all(

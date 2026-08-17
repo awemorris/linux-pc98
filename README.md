@@ -509,10 +509,10 @@ Debian archive on i486DX, Pentium, and Pentium MMX systems.
 Linux 7.1 uses the `pc98` device profile by default. It retains the PCI core
 required by `pc9821`, the PC-98 IDE and framebuffer drivers, and standard
 USB 1.x/2.0 UHCI/OHCI/EHCI host controllers. The framebuffer console is
-built in. The Debian/i686 configuration keeps the Core-Graph Cirrus driver
-as a module, while the i386 and i486 configurations disable it completely.
-This prevents an untested model from replacing the working GDC console or
-freezing during boot. The USB module set is limited to generic HID,
+built in. The Debian/i486 configuration builds in the Core-Graph Cirrus driver
+so `/dev/fb0` is available before Xorg starts, the Debian/i686 configuration
+keeps it as an explicitly loaded module, and the i386 configuration disables
+it. The USB module set is limited to generic HID,
 mass-storage, CDC Ethernet/NCM, ACM serial, and printer classes. The fixed
 module allow-list is stored in
 `configs/pc9800-modules.list`; it does not depend on the build host's loaded
@@ -630,31 +630,36 @@ minimum of 64 MiB RAM on both the i486DX and i686 paths.
 
 ## Console and framebuffer drivers
 
-The boot console starts on the PC-98 GDC 80x25 text console. In a Debian/i686
-installation on a confirmed Core-Graph machine, loading `pc98cirrusfb`
-selects an 800x600x16 framebuffer by default and fbcon takes over.
+The boot console starts on the PC-98 GDC 80x25 text console. On a confirmed
+Core-Graph machine, `pc98cirrusfb` selects the V13-tested 640x480x24
+framebuffer by default and fbcon takes over. It accepts the NEC path-08h WAB
+interface ID range `0x58` through `0x5d`, used by physical Core-Graph variants.
 `FRAMEBUFFER_CONSOLE_DETECT_PRIMARY` is disabled because the non-PnP Cirrus
 child is not a conventional PCI VGA function. Japanese glyph support is not
 required to reach the Debian direct shell.
 
 The PC-98 framebuffer drivers are:
 
-- `pc98cirrusfb` for the qemu-pc98 Core-Graph Cirrus GD5440; the Debian/i686
-  configuration provides this as an explicitly loaded module, while i386
-  and i486 set it to `n`
+- `pc98cirrusfb` for the qemu-pc98 and physical Core-Graph Cirrus GD5440;
+  the Debian/i486 configuration builds it in, the Debian/i686 configuration
+  provides it as an explicitly loaded module, and i386 sets it to `n`
 - `pc98tridentfb` for the integrated Trident TGUI9660/9680/9682 used by
   NEC Mate R systems; this remains an optional module
 
 The driver is deliberately limited to the fixed-interface Core-Graph path;
 PCI GD754x/755x laptop LCD support remains outside its scope. The 1 MiB
-Core-Graph framebuffer supports exactly `640x480-24`,
-`800x600-16`, and `1024x768-8`. The default prioritizes usable colour depth
-for X11. The module exports no hardware alias and is not listed in any
-modules-load configuration, so udev cannot select it automatically. On a
-confirmed machine, load it immediately before X with
+Core-Graph framebuffer supports the three recovered StratoHAL mode streams:
+`640x480-8`, `640x480-16`, and `640x480-24`. The default uses the NEC
+path-08h 640x480x24 register stream confirmed by StratoHAL on physical V13
+hardware. The last 256 bytes of the 1 MiB aperture are reserved for the
+Cirrus MMIO registers and are not exposed as framebuffer memory. The module
+exports no hardware alias and is not listed in any modules-load configuration,
+so udev cannot select the i686 module automatically. On a confirmed i686
+machine, load it immediately before X with
 `modprobe pc98cirrusfb`; select another initial mode with
-`modprobe pc98cirrusfb mode=<mode>`. An fbdev client can also request one of
-these exact resolution/depth pairs with `FBIOPUT_VSCREENINFO`.
+`modprobe pc98cirrusfb mode=<mode>`. The i486 image probes the built-in driver
+automatically. An fbdev client can also request one of these exact
+resolution/depth pairs with `FBIOPUT_VSCREENINFO`.
 
 ## Native input devices
 

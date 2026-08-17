@@ -13,12 +13,12 @@ Profiles:
   busybox-i386-ide      bootsimple, i386 BusyBox, IDE H=8/S=17
   busybox-i386-scsi92   bootsimple, i386 BusyBox, 92 SCSI H=8/S=32
   busybox-i386-scsi55   bootsimple, i386 BusyBox, 55 SCSI H=8/S=17
-  debian13-i486-ide     zedBSD, Debian/i486, IDE H=8/S=17
+  debian13-i486-ide     bootsimple, Debian/i486, IDE H=8/S=17
   debian13-i486-scsi92  zedBSD, Debian/i486, 92 SCSI H=8/S=32
   debian13-i486-scsi55  zedBSD, Debian/i486, 55 SCSI H=8/S=17
 
 New images use a 128 MiB FAT16 BOOT partition. Debian/zedBSD images contain
-a 64 MiB zedBSD /swapfile; bootsimple BusyBox images do not.
+a 64 MiB zedBSD /swapfile; bootsimple images do not.
 
 Options:
   --kernel FILE         use a specific uncompressed ELF kernel
@@ -128,6 +128,7 @@ done
 heads=8
 sectors=17
 cpu_family=""
+image_bootloader=""
 default_rootfs=""
 default_kernel=""
 default_swap=128
@@ -136,12 +137,14 @@ kernel_extra_args=""
 
 case "$profile" in
 	busybox-i386-ide)
+		image_bootloader=bootsimple
 		cpu_family=386
 		root_mb=20
 		default_swap=8
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
 		;;
 	busybox-i386-scsi92)
+		image_bootloader=bootsimple
 		cpu_family=386
 		sectors=32
 		root_device=PARTLABEL=LINUXROOT
@@ -151,6 +154,7 @@ case "$profile" in
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
 		;;
 	busybox-i386-scsi55)
+		image_bootloader=bootsimple
 		cpu_family=386
 		root_device=PARTLABEL=LINUXROOT
 		kernel_extra_args="rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=async-pio"
@@ -159,16 +163,23 @@ case "$profile" in
 		default_kernel="$repo/build/i386-video/kernel/vmlinux.boot"
 		;;
 	debian13-i486-ide)
+		image_bootloader=bootsimple
+		root_device=PARTLABEL=DEBIAN13
+		kernel_extra_args="rootwait"
 		default_rootfs="$repo/build/boot98/debian13-i486-root"
 		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
 		;;
 	debian13-i486-scsi92)
+		image_bootloader=zedbsd
 		sectors=32
+		root_device=PARTLABEL=DEBIAN13
 		kernel_extra_args="rootwait pc9801_scsi=92,mode=dma"
 		default_rootfs="$repo/build/boot98/debian13-i486-root"
 		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
 		;;
 	debian13-i486-scsi55)
+		image_bootloader=zedbsd
+		root_device=PARTLABEL=DEBIAN13
 		kernel_extra_args="rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=async-pio"
 		default_rootfs="$repo/build/boot98/debian13-i486-root"
 		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
@@ -186,19 +197,19 @@ rootfs="${rootfs:-$default_rootfs}"
 swap_mb="${swap_mb:-$default_swap}"
 boot_mb="${boot_mb:-128}"
 bootsimple_cmdline="vdso=0 console=tty0 earlyprintk=pc9800 root=$root_device rootfstype=ext4 rw sysctl.vm.min_free_kbytes=64 sysctl.vm.dirty_background_bytes=32768 sysctl.vm.dirty_bytes=65536 sysctl.vm.vfs_cache_pressure=200 sysctl.vm.swappiness=100 sysctl.vm.page-cluster=0${kernel_extra_args:+ $kernel_extra_args}"
-case "$profile" in
-	busybox-*)
+case "$image_bootloader" in
+	bootsimple)
 		zedbsd_swapfile_mb="${zedbsd_swapfile_mb:-0}"
 		test -z "$cfg" || {
-			echo "--config is only valid for zedBSD/Debian images" >&2
+			echo "--config is only valid for zedBSD images" >&2
 			exit 2
 		}
 		test "$zedbsd_swapfile_mb" = 0 || {
-			echo "bootsimple BusyBox images do not use a zedBSD swapfile" >&2
+			echo "bootsimple images do not use a zedBSD swapfile" >&2
 			exit 2
 		}
 		;;
-	debian13-*) zedbsd_swapfile_mb="${zedbsd_swapfile_mb:-64}" ;;
+	zedbsd) zedbsd_swapfile_mb="${zedbsd_swapfile_mb:-64}" ;;
 esac
 case "$zedbsd_swapfile_mb" in
 	0 | 32 | 64) ;;
@@ -229,15 +240,15 @@ if test -n "$base_image"; then
 		exit 1
 	fi
 
-	case "$profile" in
-		busybox-*)
+	case "$image_bootloader" in
+		bootsimple)
 			"$repo/bootsimple/install-image.sh" \
 				--profile "$profile" --partition 1 \
 				--heads "$heads" --sectors "$sectors" \
 				--cmdline "$bootsimple_cmdline" \
 				"$output" "$kernel"
 			;;
-		debian13-*)
+		zedbsd)
 			DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
 				ZEDBSD_SWAP_SIZE_MIB="$zedbsd_swapfile_mb" \
 				"$repo/scripts/update-boot98-image.sh" \
@@ -274,6 +285,9 @@ else
 			fi
 			;;
 		debian13-i486-ide | debian13-i486-scsi92 | debian13-i486-scsi55)
+			BOOTLOADER="$image_bootloader" \
+			BOOTSIMPLE_PROFILE="$profile" \
+			BOOTSIMPLE_CMDLINE="$bootsimple_cmdline" \
 			SWAP_MB="$swap_mb" DISK_HEADS="$heads" \
 				DISK_SECTORS="$sectors" \
 				ZEDBSD_SWAP_SIZE_MIB="$zedbsd_swapfile_mb" \

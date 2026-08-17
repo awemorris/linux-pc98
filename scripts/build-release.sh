@@ -42,8 +42,10 @@ busybox_cache=busybox-i386-video-buildroot-2026.05
 debian_manifest="$repo/configs/debian13-i486-packages.txt"
 debian_xorg_config="$repo/configs/xorg/20-pc98-coregraph.conf"
 debian_xinitrc="$repo/configs/xorg/pc98-xinitrc"
+debian_xoppai_source="$repo/demos/xoppai/xoppai.c"
+debian_xoppai_builder="$repo/scripts/build-xoppai.sh"
 debian_profile_sha256="$(sha256sum "$debian_manifest" "$debian_xorg_config" \
-	"$debian_xinitrc" |
+	"$debian_xinitrc" "$debian_xoppai_source" "$debian_xoppai_builder" |
 	sha256sum | awk '{print $1}')"
 debian_cache="debian13-i486-trixie-${debian_profile_sha256:0:12}"
 
@@ -162,7 +164,8 @@ for profile in debian13-i486-ide debian13-i486-scsi55 debian13-i486-scsi92; do
 	"$repo/build.sh" release-image "$profile" --jobs "$jobs"
 done
 QEMU="${QEMU:-$repo/external/qemu-pc98/build/qemu-system-i386}" \
-	PC98_BIOS_DIR="${PC98_BIOS_DIR:-$repo/external/qemu-pc98/roms/pc98bios}" \
+PC98_BIOS_DIR="${PC98_BIOS_DIR:-$repo/external/qemu-pc98/roms/pc98bios}" \
+ZEDBSD_TEST_BASE="$release_dir/linux-pc98-i486dx-debian13-scsi55.img" \
 	"$repo/bootloader/tests/test-linux-handoff.sh"
 for debian_image in \
 	linux-pc98-i486dx-debian13-ide.img \

@@ -4,7 +4,6 @@ set -euo pipefail
 PATH="/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-. "$repo/scripts/zedbsd-env.sh"
 bootloader_dir="$repo/external/zedBSD/build/pc98"
 rootfs="${1:?usage: $0 ROOTFS OUTPUT [VMLINUX]}"
 output="${2:?usage: $0 ROOTFS OUTPUT [VMLINUX]}"
@@ -14,6 +13,20 @@ heads="${DISK_HEADS:-8}"
 sectors="${DISK_SECTORS:-17}"
 swap_mb="${SWAP_MB:-128}"
 root_password="${ROOT_PASSWORD:-pc98}"
+bootloader="${BOOTLOADER:-zedbsd}"
+bootsimple_profile="${BOOTSIMPLE_PROFILE:-}"
+bootsimple_cmdline="${BOOTSIMPLE_CMDLINE:-}"
+
+case "$bootloader" in
+	bootsimple)
+		test -n "$bootsimple_profile" || {
+			echo "BOOTSIMPLE_PROFILE is required" >&2; exit 2; }
+		test -n "$bootsimple_cmdline" || {
+			echo "BOOTSIMPLE_CMDLINE is required" >&2; exit 2; }
+		;;
+	zedbsd) . "$repo/scripts/zedbsd-env.sh" ;;
+	*) echo "Unsupported Debian bootloader: $bootloader" >&2; exit 2 ;;
+esac
 
 test -d "$rootfs" || {
 	echo "Root filesystem not found: $rootfs" >&2
@@ -96,13 +109,17 @@ cleanup()
 }
 trap cleanup EXIT INT TERM
 
-"$repo/external/zedBSD/build.sh" all pc98
+if test "$bootloader" = zedbsd; then
+	"$repo/external/zedBSD/build.sh" all pc98
+fi
 mkdir -p "$(dirname "$output")" "$mount_dir"
 truncate -s "$total_bytes" "$output"
-dd if="$bootloader_dir/ipl-lba0.bin" of="$output" bs=512 count=1 \
-	conv=notrunc status=none
-dd if="$bootloader_dir/ipl-lba2.bin" of="$output" bs=512 seek=2 count=14 \
-	conv=notrunc status=none
+if test "$bootloader" = zedbsd; then
+	dd if="$bootloader_dir/ipl-lba0.bin" of="$output" bs=512 count=1 \
+		conv=notrunc status=none
+	dd if="$bootloader_dir/ipl-lba2.bin" of="$output" bs=512 seek=2 count=14 \
+		conv=notrunc status=none
+fi
 python3 - "$output" "$boot_last_cylinder" "$root_start_cylinder" \
 	"$root_last_cylinder" "$swap_start_cylinder" \
 	"$swap_last_cylinder" "$heads" "$sectors" <<'PY'
@@ -145,11 +162,13 @@ with open(image, "r+b") as stream:
     stream.write(table)
 PY
 
-printf '%s\n' \
-	'echo Booting Debian 13 i486...' \
-	'kernel VMLINUX' \
-	"arg root=PARTLABEL=DEBIAN13 rootfstype=ext4 rw rootwait${kernel_extra_args:+ $kernel_extra_args}" \
-	'boot' >"$cfg"
+if test "$bootloader" = zedbsd; then
+	printf '%s\n' \
+		'echo Booting Debian 13 i486...' \
+		'kernel VMLINUX' \
+		"arg root=PARTLABEL=DEBIAN13 rootfstype=ext4 rw rootwait${kernel_extra_args:+ $kernel_extra_args}" \
+		'boot' >"$cfg"
+fi
 
 truncate -s "$root_bytes" "$root_image"
 mkfs.ext4 -q -F -L DEBIAN13 "$root_image"
@@ -222,12 +241,23 @@ mkswap --quiet --label PC98SWAP "$swap_image"
 dd if="$swap_image" of="$output" bs=512 seek="$swap_start" \
 	conv=notrunc,sparse,fdatasync status=progress
 
-DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
-	"$repo/external/zedBSD/scripts/install-image.sh" --install-disk-stubs \
-	"$output" "$kernel" "$cfg"
-printf 'Installing graphical menu and Remacs overlay...\n'
-DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
-	"$repo/bootloader/install-fs.sh" --partition 1 "$output"
+case "$bootloader" in
+	bootsimple)
+		"$repo/bootsimple/install-image.sh" \
+			--profile "$bootsimple_profile" --partition 1 \
+			--heads "$heads" --sectors "$sectors" \
+			--cmdline "$bootsimple_cmdline" \
+			"$output" "$kernel"
+		;;
+	zedbsd)
+		DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
+			"$repo/external/zedBSD/scripts/install-image.sh" \
+			--install-disk-stubs "$output" "$kernel" "$cfg"
+		printf 'Installing graphical menu and Remacs overlay...\n'
+		DISK_HEADS="$heads" DISK_SECTORS="$sectors" \
+			"$repo/bootloader/install-fs.sh" --partition 1 "$output"
+		;;
+esac
 
 sha256sum "$output"
 printf 'BOOT98 Debian 13 i486 image: %s\n' "$output"
@@ -236,3 +266,4 @@ printf 'Geometry: C=%d H=%d S=%d, root=/dev/sda2, swap=/dev/sda3 (%d MiB)\n' \
 printf 'Partition bytes: BOOT=%d, root=%d, swap=%d\n' \
 	"$((boot_sectors * 512))" "$root_bytes" "$swap_bytes"
 printf 'Login: root / %s\n' "$root_password"
+printf 'Bootloader: %s\n' "$bootloader"

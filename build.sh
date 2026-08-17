@@ -41,6 +41,7 @@ Primary commands:
   bootloader-test NAME        run a zedBSD QEMU test (e.g. noct-repl, hdd-boot)
   remacs                      build bootloader/fs/apps/emacs.nap
   remacs-test                 run the bytecode editor under headless QEMU
+  xoppai [options]            build the interactive X11 omega-curve demo
   noct build|clean            build Noct or remove the zedBSD pc98 build tree
   boot-install [options]      destructively create a BOOT partition environment
   dos-loader                  rebuild LINUX98.EXE and INST.EXE (OpenWatcom)
@@ -261,6 +262,7 @@ case "$command" in
 		;;
 	remacs) "$repo/bootloader/build-remacs.sh" "$@" ;;
 	remacs-test) "$repo/bootloader/tests/test-remacs.sh" "$@" ;;
+	xoppai) "$repo/scripts/build-xoppai.sh" "$@" ;;
 	noct) build_noct "$@" ;;
 	boot-install) "$repo/bootloader/install-product.sh" "$@" ;;
 	dos-loader)

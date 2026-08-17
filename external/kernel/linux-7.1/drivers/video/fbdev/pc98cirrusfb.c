@@ -6,10 +6,9 @@
  * relocated VGA registers and a selectable high linear aperture. It is not
  * a PCI Cirrus function, so the generic cirrusfb PCI probe cannot bind it.
  *
- * The PC-98 routing sequence and 640x480 mode streams are based on the
- * zlib-licensed StratoHAL 98disp_cirrus.c implementation by Awe Morris and
- * Keiichi Tabata.  The 800x600 and 1024x768 timings follow the same Cirrus
- * register construction used by the generic Linux cirrusfb driver.
+ * The PC-98 routing sequence and 640x480 mode streams are direct ports from
+ * the zlib-licensed StratoHAL 98disp_cirrus.c implementation, used here with
+ * the author's explicit permission and with its provenance retained.
  */
 
 #include <linux/fb.h>
@@ -26,7 +25,8 @@
 #define WAB_REG_ID		0x00
 #define WAB_REG_LINEAR		0x02
 #define WAB_REG_RELAY		0x03
-#define COREGRAPH_ID		0x5b
+#define COREGRAPH_ID_MIN	0x58
+#define COREGRAPH_ID_MAX	0x5d
 
 #define PC98_GDC_MODE		0x0068
 #define PC98_VRAM_SWITCH	0x006a
@@ -34,12 +34,15 @@
 #define CIRRUS_SLEEP		0x0ca3
 
 #define CIRRUS_IO		0x0ca0
-#define CIRRUS_CRTC		0x0da4
-#define CIRRUS_STATUS		0x0daa
+#define CIRRUS_CRTC_COLOR	0x0da4
+#define CIRRUS_STATUS_COLOR	0x0daa
+#define CIRRUS_CRTC_MONO	0x0ba4
+#define CIRRUS_STATUS_MONO	0x0baa
 
 #define PC98CIRRUS_LFB_PHYS	0xf0000000UL
 #define PC98CIRRUS_LFB_SIZE	(1024 * 1024)
-#define PC98CIRRUS_DEFAULT_MODE	"800x600-16"
+#define PC98CIRRUS_LFB_SAFE_SIZE (PC98CIRRUS_LFB_SIZE - 0x100)
+#define PC98CIRRUS_DEFAULT_MODE	"640x480-24"
 
 struct pc98cirrus_mode {
 	const char *name;
@@ -61,11 +64,7 @@ struct pc98cirrus_mode {
 	u8 crtc[0x1c];
 };
 
-/*
- * These are the three useful 1 MiB Core-Graph modes.  The 640x480 stream is
- * NEC's path-08h stream verbatim.  The two larger modes retain its board and
- * pixel-format programming, with standard VESA 60 Hz CRTC/VCLK timings.
- */
+/* NEC's three recovered Core-Graph path-08h 640x480 streams, verbatim. */
 static const struct pc98cirrus_mode pc98cirrus_modes[] = {
 	{
 		.name = "640x480-24",
@@ -86,41 +85,40 @@ static const struct pc98cirrus_mode pc98cirrus_modes[] = {
 			0xff, 0x00, 0x90, 0x32
 		},
 	}, {
-		.name = "800x600-16",
-		.xres = 800, .yres = 600, .pitch = 1600, .bpp = 16,
-		.misc = 0x0f, .hdr = 0xe1, .pixclock = 25000,
-		.left_margin = 88, .right_margin = 40,
-		.upper_margin = 23, .lower_margin = 1,
-		.hsync_len = 128, .vsync_len = 4,
-		.sync = FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
+		.name = "640x480-16",
+		.xres = 640, .yres = 480, .pitch = 1280, .bpp = 16,
+		.misc = 0xe3, .hdr = 0xe1, .pixclock = 39721,
+		.left_margin = 48, .right_margin = 16,
+		.upper_margin = 33, .lower_margin = 10,
+		.hsync_len = 96, .vsync_len = 2,
 		.seq = {
 			0x01, 0x01, 0x0f, 0x00, 0x0e, 0x13, 0x00,
-			0x6d, 0x48, 0x56, 0x51, 0x30, 0x58, 0x40,
-			0x3e, 0x23, 0x3d, 0xba, 0x20
+			0x6d, 0x48, 0x56, 0x60, 0x30, 0x58, 0x40,
+			0x3e, 0x23, 0x3d, 0x3b, 0x20
 		},
 		.crtc = {
-			0x7f, 0x63, 0x64, 0x84, 0x6a, 0x1a, 0x72, 0xf0,
-			0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x59, 0x6d, 0x57, 0xc8, 0x00, 0x58, 0x72, 0xc3,
-			0xff, 0x00, 0x20, 0x22
+			0x5f, 0x4f, 0x50, 0x84, 0x53, 0x9f, 0x0b, 0x3e,
+			0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0xe5, 0x87, 0xdf, 0xa0, 0x00, 0xe7, 0x04, 0xe3,
+			0xff, 0x00, 0x90, 0x22
 		},
 	}, {
-		.name = "1024x768-8",
-		.xres = 1024, .yres = 768, .pitch = 1024, .bpp = 8,
-		.misc = 0xcf, .hdr = 0x20, .pixclock = 15385,
-		.left_margin = 160, .right_margin = 24,
-		.upper_margin = 29, .lower_margin = 3,
-		.hsync_len = 136, .vsync_len = 6,
+		.name = "640x480-8",
+		.xres = 640, .yres = 480, .pitch = 640, .bpp = 8,
+		.misc = 0xe3, .hdr = 0x20, .pixclock = 39721,
+		.left_margin = 48, .right_margin = 16,
+		.upper_margin = 33, .lower_margin = 10,
+		.hsync_len = 96, .vsync_len = 2,
 		.seq = {
 			0x01, 0x01, 0x0f, 0x00, 0x0e, 0x11, 0x00,
-			0x66, 0x48, 0x56, 0x3b, 0x30, 0x58, 0x40,
-			0x3b, 0x23, 0x3d, 0x9a, 0x20
+			0x66, 0x48, 0x56, 0x60, 0x30, 0x58, 0x40,
+			0x3b, 0x23, 0x3d, 0x3b, 0x20
 		},
 		.crtc = {
-			0xa3, 0x7f, 0x80, 0x88, 0x84, 0x95, 0x24, 0xfd,
-			0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x02, 0x68, 0xff, 0x80, 0x00, 0x00, 0x24, 0xc3,
-			0xff, 0x00, 0xe0, 0x22
+			0x5f, 0x4f, 0x50, 0x84, 0x54, 0x80, 0x0b, 0x3e,
+			0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0xe5, 0x87, 0xdf, 0x50, 0x00, 0xe7, 0x04, 0xe3,
+			0xff, 0x00, 0x90, 0x22
 		},
 	},
 };
@@ -140,8 +138,10 @@ struct pc98cirrusfb {
 
 static struct pc98cirrusfb *pc98cirrus;
 static char *mode_option = PC98CIRRUS_DEFAULT_MODE;
+static u16 cirrus_crtc = CIRRUS_CRTC_COLOR;
+static u16 cirrus_status = CIRRUS_STATUS_COLOR;
 module_param_named(mode, mode_option, charp, 0444);
-MODULE_PARM_DESC(mode, "Video mode: 640x480-24, 800x600-16 or 1024x768-8");
+MODULE_PARM_DESC(mode, "Video mode: 640x480-8, 640x480-16 or 640x480-24");
 
 static void wab_write(u8 index, u8 value)
 {
@@ -181,14 +181,25 @@ static u8 gfx_read(u8 index)
 
 static void crtc_write(u8 index, u8 value)
 {
-	outb(index, CIRRUS_CRTC);
-	outb(value, CIRRUS_CRTC + 1);
+	outb(index, cirrus_crtc);
+	outb(value, cirrus_crtc + 1);
 }
 
 static u8 crtc_read(u8 index)
 {
-	outb(index, CIRRUS_CRTC);
-	return inb(CIRRUS_CRTC + 1);
+	outb(index, cirrus_crtc);
+	return inb(cirrus_crtc + 1);
+}
+
+static void pc98cirrus_select_crtc(u8 misc)
+{
+	if (misc & 1) {
+		cirrus_crtc = CIRRUS_CRTC_COLOR;
+		cirrus_status = CIRRUS_STATUS_COLOR;
+	} else {
+		cirrus_crtc = CIRRUS_CRTC_MONO;
+		cirrus_status = CIRRUS_STATUS_MONO;
+	}
 }
 
 static void hidden_dac_write(u8 value)
@@ -277,15 +288,19 @@ static void pc98cirrus_restore_board_state(struct pc98cirrusfb *cfb)
 	}
 	wab_write(WAB_REG_LINEAR, cfb->saved_linear);
 	wab_write(WAB_REG_RELAY, cfb->saved_relay);
-	outb(cfb->saved_sleep, CIRRUS_SLEEP);
+	/* FFh means the relocated VGA block was gated when state was saved. */
+	if (cfb->saved_sleep != 0xff)
+		outb(cfb->saved_sleep, CIRRUS_SLEEP);
 }
 
 static bool pc98cirrus_validate_identity(void)
 {
-	u8 old_sr06 = cl_seq_read(0x06);
+	u8 old_sr06;
 	u8 sr06;
 	u8 cr27;
 
+	pc98cirrus_select_crtc(misc_read());
+	old_sr06 = cl_seq_read(0x06);
 	cl_seq_write(0x06, 0x12);
 	sr06 = cl_seq_read(0x06);
 	cr27 = sr06 == 0x12 ? crtc_read(0x27) : 0xff;
@@ -328,6 +343,7 @@ static int pc98cirrus_set_mode(const struct pc98cirrus_mode *mode)
 	cl_seq_write(0x0f, (cl_seq_read(0x0f) & 0xdf) | 0x20);
 
 	outb(mode->misc, CIRRUS_IO + 2);
+	pc98cirrus_select_crtc(mode->misc);
 	gfx_write(0x06, 0x05);
 	cl_seq_write(0x00, 0x03);
 
@@ -341,12 +357,12 @@ static int pc98cirrus_set_mode(const struct pc98cirrus_mode *mode)
 	 * Match the NEC stream exactly: reset the flip-flop once, then emit
 	 * uninterrupted index/data pairs before enabling attribute video.
 	 */
-	inb(CIRRUS_STATUS);
+	inb(cirrus_status);
 	for (i = 0; i < ARRAY_SIZE(attr_value); i++) {
 		outb(i, CIRRUS_IO);
 		outb(attr_value[i], CIRRUS_IO);
 	}
-	inb(CIRRUS_STATUS);
+	inb(cirrus_status);
 	outb(0x20, CIRRUS_IO);
 
 	hidden_dac_write(mode->hdr);
@@ -453,6 +469,21 @@ static void pc98cirrus_set_var(struct fb_var_screeninfo *var,
 	}
 }
 
+static int pc98cirrus_clear_visible(struct pc98cirrusfb *cfb,
+				    const struct pc98cirrus_mode *mode)
+{
+	size_t visible = (size_t)mode->pitch * mode->yres;
+
+	/* SR17 places MMIO in the final 256 bytes of the 1 MiB aperture. */
+	if (visible > PC98CIRRUS_LFB_SAFE_SIZE) {
+		pr_err(DRV_NAME ": visible framebuffer %zu exceeds safe LFB %u\n",
+		       visible, PC98CIRRUS_LFB_SAFE_SIZE);
+		return -EINVAL;
+	}
+	memset_io(cfb->vram, 0, visible);
+	return 0;
+}
+
 static int pc98cirrusfb_check_var(struct fb_var_screeninfo *var,
 				  struct fb_info *info)
 {
@@ -490,7 +521,9 @@ static int pc98cirrusfb_set_par(struct fb_info *info)
 	if (ret)
 		return ret;
 
-	memset_io(cfb->vram, 0, mode->pitch * mode->yres);
+	ret = pc98cirrus_clear_visible(cfb, mode);
+	if (ret)
+		return ret;
 	spin_lock_irqsave(&cfb->reg_lock, flags);
 	cl_seq_write(0x01, 0x01);
 	spin_unlock_irqrestore(&cfb->reg_lock, flags);
@@ -583,8 +616,13 @@ static int __init pc98cirrusfb_init(void)
 	}
 
 	coregraph_id = wab_read(WAB_REG_ID);
-	if (coregraph_id != COREGRAPH_ID)
+	pr_info(DRV_NAME ": WAB interface ID=%02x\n", coregraph_id);
+	if (coregraph_id < COREGRAPH_ID_MIN ||
+	    coregraph_id > COREGRAPH_ID_MAX) {
+		pr_info(DRV_NAME ": unsupported WAB interface ID=%02x\n",
+			coregraph_id);
 		return -ENODEV;
+	}
 
 	info = framebuffer_alloc(sizeof(*cfb), NULL);
 	if (!info)
@@ -600,8 +638,16 @@ static int __init pc98cirrusfb_init(void)
 		coregraph_id, cfb->saved_linear, cfb->saved_relay);
 	pr_info(DRV_NAME ": saved sleep=%02x\n", cfb->saved_sleep);
 
-	outb(cfb->saved_sleep | 1, CIRRUS_SLEEP);
-	wab_write(WAB_REG_RELAY, 1);
+	/*
+	 * A cold Linux handoff can leave the relocated VGA block completely
+	 * gated (sleep reads FFh).  Run the V13-tested NEC path-08h gate before
+	 * touching SR06/CR27.  StratoHAL uses this exact 68h/6Ah/reg03/5Fh/CA3h
+	 * sequence immediately before its Core-Graph mode stream.
+	 */
+	pc98cirrus_gate_enter();
+	cfb->gate_active = true;
+	pr_info(DRV_NAME ": after gate sleep=%02x reg03=%02x\n",
+		inb(CIRRUS_SLEEP), wab_read(WAB_REG_RELAY));
 	if (!pc98cirrus_validate_identity()) {
 		ret = -ENODEV;
 		goto err_restore;
@@ -612,9 +658,6 @@ static int __init pc98cirrusfb_init(void)
 		ret = -EIO;
 		goto err_restore;
 	}
-	pc98cirrus_gate_enter();
-	cfb->gate_active = true;
-
 	ret = pc98cirrus_set_mode(mode);
 	if (ret)
 		goto err_restore;
@@ -630,12 +673,14 @@ static int __init pc98cirrusfb_init(void)
 		goto err_release_mem;
 	}
 
-	memset_io(cfb->vram, 0, mode->pitch * mode->yres);
+	ret = pc98cirrus_clear_visible(cfb, mode);
+	if (ret)
+		goto err_unmap;
 	cl_seq_write(0x01, 0x01);
 
 	strscpy(info->fix.id, "PC98 CoreGraph", sizeof(info->fix.id));
 	info->fix.smem_start = PC98CIRRUS_LFB_PHYS;
-	info->fix.smem_len = PC98CIRRUS_LFB_SIZE;
+	info->fix.smem_len = PC98CIRRUS_LFB_SAFE_SIZE;
 	info->fix.type = FB_TYPE_PACKED_PIXELS;
 	info->fix.visual = mode->bpp == 8 ? FB_VISUAL_PSEUDOCOLOR :
 					      FB_VISUAL_TRUECOLOR;
@@ -646,7 +691,7 @@ static int __init pc98cirrusfb_init(void)
 	info->var.height = -1;
 	info->var.width = -1;
 	info->screen_base = cfb->vram;
-	info->screen_size = PC98CIRRUS_LFB_SIZE;
+	info->screen_size = PC98CIRRUS_LFB_SAFE_SIZE;
 	info->fbops = &pc98cirrusfb_ops;
 	info->pseudo_palette = cfb->pseudo_palette;
 	info->flags = FBINFO_HWACCEL_DISABLED;

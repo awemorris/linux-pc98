@@ -8,6 +8,9 @@ mirror="${DEBIAN_I486_MIRROR:-https://noctvm.io/debian-i486/packages}"
 package_manifest="${DEBIAN_PACKAGE_MANIFEST:-$repo/configs/debian13-i486-packages.txt}"
 xorg_cirrus_config="$repo/configs/xorg/20-pc98-coregraph.conf"
 xinitrc="$repo/configs/xorg/pc98-xinitrc"
+xoppai_source="$repo/demos/xoppai/xoppai.c"
+xoppai_builder="$repo/scripts/build-xoppai.sh"
+xoppai_output="${XOPPAI_OUTPUT:-$repo/build/xoppai/xoppai}"
 debootstrap="${DEBOOTSTRAP:-$(command -v debootstrap 2>/dev/null || true)}"
 
 test -f "$package_manifest" || {
@@ -20,6 +23,14 @@ test -f "$xorg_cirrus_config" || {
 }
 test -f "$xinitrc" || {
 	echo "PC-98 X session startup file not found: $xinitrc" >&2
+	exit 1
+}
+test -f "$xoppai_source" || {
+	echo "xoppai source not found: $xoppai_source" >&2
+	exit 1
+}
+test -x "$xoppai_builder" || {
+	echo "xoppai builder not found: $xoppai_builder" >&2
 	exit 1
 }
 mapfile -t packages < <(sed -e 's/[[:space:]]*#.*$//' \
@@ -47,7 +58,8 @@ for package in "${x11_profile_packages[@]}"; do
 	fi
 done
 include="${DEBIAN_INCLUDE:-$(IFS=,; echo "${packages[*]}")}"
-profile_sha256="$(sha256sum "$package_manifest" "$xorg_cirrus_config" "$xinitrc" |
+profile_sha256="$(sha256sum "$package_manifest" "$xorg_cirrus_config" "$xinitrc" \
+	"$xoppai_source" "$xoppai_builder" |
 	sha256sum | awk '{print $1}')"
 
 if test -z "$debootstrap" && test -x /usr/sbin/debootstrap; then
@@ -56,6 +68,7 @@ fi
 test -x "$debootstrap" || { echo "debootstrap is required" >&2; exit 1; }
 test ! -e "$stage" || { echo "Refusing to overwrite rootfs: $stage" >&2; exit 1; }
 mkdir -p "$(dirname "$stage")"
+"$xoppai_builder" --output "$xoppai_output"
 
 sudo "$debootstrap" --arch=i386 --variant=minbase --no-check-gpg \
 	--include="$include" "$suite" "$stage" "$mirror"
@@ -66,6 +79,7 @@ sudo chroot "$stage" apt-get update
 sudo install -D -m 0644 "$xorg_cirrus_config" \
 	"$stage/etc/X11/xorg.conf.d/20-pc98-coregraph.conf"
 sudo install -D -m 0755 "$xinitrc" "$stage/root/.xinitrc"
+sudo install -D -m 0755 "$xoppai_output" "$stage/usr/bin/xoppai"
 for package in "${packages[@]}"; do
 	if ! sudo chroot "$stage" dpkg-query -W -f='${Status}\n' "$package" |
 		grep -qx 'install ok installed'; then
@@ -97,6 +111,10 @@ test -x "$stage/usr/bin/xterm" || {
 }
 test -x "$stage/usr/bin/twm" || {
 	echo "twm is missing from the Debian rootfs" >&2
+	exit 1
+}
+test -x "$stage/usr/bin/xoppai" || {
+	echo "xoppai is missing from the Debian rootfs" >&2
 	exit 1
 }
 test -f "$stage/usr/lib/xorg/modules/drivers/fbdev_drv.so" || {

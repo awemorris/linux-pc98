@@ -946,7 +946,7 @@ diff --git a/block/partitions/Kconfig b/block/partitions/Kconfig
 +
 +config NEC98_PARTITION
 +	bool "NEC PC-9800 partition table support"
-+	depends on PARTITION_ADVANCED && X86_PC9800
++	depends on X86_PC9800
 +	default y
 +	help
 +	  Say Y to read the 16-entry partition table stored in sector 1 of
@@ -995,7 +995,7 @@ diff --git a/block/partitions/nec98.c b/block/partitions/nec98.c
 new file mode 100644
 --- /dev/null
 +++ b/block/partitions/nec98.c
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,222 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * NEC PC-9800 fixed-disk partition table support
@@ -1010,6 +1010,7 @@ new file mode 100644
 + */
 +
 +#include <linux/hdreg.h>
++#include <linux/string.h>
 +#include <linux/unaligned.h>
 +
 +#include <asm/pc9800.h>
@@ -1019,6 +1020,8 @@ new file mode 100644
 +#define NEC98_PARTITION_SECTOR	1
 +#define NEC98_PARTITIONS	16
 +#define NEC98_ENTRY_SIZE	32
++#define NEC98_IPL_MAGIC_OFFSET	4
++#define NEC98_IPL_MAGIC		"IPL1"
 +struct nec98_partition {
 +	u8 mid;
 +	u8 sid;
@@ -1062,31 +1065,66 @@ new file mode 100644
 +	return true;
 +}
 +
-+static bool nec98_table_valid(const struct nec98_partition *table,
-+			      unsigned int heads, unsigned int sectors)
++static void nec98_set_partition_name(struct parsed_partitions *state, int slot,
++				     const struct nec98_partition *entry)
 +{
++	struct partition_meta_info *info = &state->parts[slot].info;
++	size_t length = sizeof(entry->name);
++
++	while (length && (entry->name[length - 1] == ' ' ||
++			  entry->name[length - 1] == '\0'))
++		length--;
++	if (!length)
++		return;
++	length = min(length, sizeof(info->volname) - 1);
++	memcpy(info->volname, entry->name, length);
++	info->volname[length] = '\0';
++	state->parts[slot].has_info = true;
++}
++
++static bool nec98_table_valid(const struct nec98_partition *table,
++			      unsigned int heads, unsigned int sectors,
++			      sector_t capacity)
++{
++	sector_t starts[NEC98_PARTITIONS], ends[NEC98_PARTITIONS];
 +	bool found = false;
-+	int i;
++	int count = 0;
++	int i, j;
 +
 +	for (i = 0; i < NEC98_PARTITIONS; i++) {
 +		const struct nec98_partition *entry = &table[i];
-+		u16 start_cylinder, end_cylinder;
++		sector_t ipl, start, end;
++		u16 ipl_cylinder, start_cylinder, end_cylinder;
 +
 +		if (!entry->mid && !entry->sid)
 +			continue;
 +		if (!entry->mid || !entry->sid ||
 +		    get_unaligned_le16(entry->reserved))
 +			return false;
++		ipl_cylinder = get_unaligned_le16(&entry->ipl_cylinder);
 +		start_cylinder = get_unaligned_le16(&entry->start_cylinder);
 +		end_cylinder = get_unaligned_le16(&entry->end_cylinder);
-+		if (start_cylinder > end_cylinder ||
-+		    !nec98_chs_valid(entry->ipl_head, entry->ipl_sector,
++		if (!nec98_chs_valid(entry->ipl_head, entry->ipl_sector,
 +				       heads, sectors) ||
 +		    !nec98_chs_valid(entry->start_head, entry->start_sector,
 +				       heads, sectors) ||
 +		    !nec98_chs_valid(entry->end_head, entry->end_sector,
 +				       heads, sectors))
 +			return false;
++		ipl = nec98_chs_to_lba(ipl_cylinder, entry->ipl_head,
++					 entry->ipl_sector, heads, sectors);
++		start = nec98_chs_to_lba(start_cylinder, entry->start_head,
++					   entry->start_sector, heads, sectors);
++		end = nec98_chs_to_lba(end_cylinder, entry->end_head,
++					 entry->end_sector, heads, sectors);
++		if (ipl > start || start > end || end >= capacity)
++			return false;
++		for (j = 0; j < count; j++)
++			if (start <= ends[j] && starts[j] <= end)
++				return false;
++		starts[count] = start;
++		ends[count] = end;
++		count++;
 +		found = true;
 +	}
 +
@@ -1100,6 +1138,7 @@ new file mode 100644
 +	unsigned int heads, sectors;
 +	sector_t capacity = get_capacity(state->disk);
 +	Sector boot_sector, table_sector;
++	bool has_ipl_magic, has_mbr_signature;
 +	int found = 0;
 +	int i;
 +
@@ -1115,21 +1154,28 @@ new file mode 100644
 +		}
 +	}
 +
-+	/* Genuine NEC IPLs and this project's free IPL both end in 55 AA. */
++	/*
++	 * Some later PC-9821 firmware requires the trailing 55 AA marker even on
++	 * native disks.  IPL1 identifies this project's PC-98-aware IPL, so prefer
++	 * the LBA 1 NEC98 table when both markers are present.  This also supports
++	 * older unsigned native images and the PC/AT + PC-98 unified loader.
++	 * Without IPL1, leave a 55 AA disk for the MSDOS parser below us.
++	 */
 +	boot = read_part_sector(state, 0, &boot_sector);
 +	if (!boot)
 +		return -1;
-+	if (get_unaligned_le16(boot + 510) != 0xaa55) {
-+		put_dev_sector(boot_sector);
-+		return 0;
-+	}
++	has_ipl_magic = !memcmp(boot + NEC98_IPL_MAGIC_OFFSET,
++				NEC98_IPL_MAGIC, sizeof(NEC98_IPL_MAGIC) - 1);
++	has_mbr_signature = get_unaligned_le16(boot + 510) == 0xaa55;
 +	put_dev_sector(boot_sector);
++	if (has_mbr_signature && !has_ipl_magic)
++		return 0;
 +
 +	table = read_part_sector(state, NEC98_PARTITION_SECTOR, &table_sector);
 +	if (!table)
 +		return -1;
 +	if (!nec98_table_valid((const struct nec98_partition *)table,
-+			       heads, sectors)) {
++			       heads, sectors, capacity)) {
 +		put_dev_sector(table_sector);
 +		return 0;
 +	}
@@ -1161,6 +1207,7 @@ new file mode 100644
 +			end = capacity - 1;
 +
 +		put_partition(state, i + 1, start, end - start + 1);
++		nec98_set_partition_name(state, i + 1, entry);
 +		found++;
 +	}
 +
@@ -1482,13 +1529,13 @@ diff --git a/drivers/block/Kconfig b/drivers/block/Kconfig
 +	depends on !ATA
 +	help
 +	  Small polling PIO driver for the built-in NEC PC-9800 IDE interface.
-+	  It exposes the master disk as /dev/hd98a without using libata or the
-+	  SCSI core.  The driver supports 512-byte LBA28 reads, writes and cache
-+	  flushes and is intended for low-memory i386 systems booting from CF.
++	  It exposes the master and slave disks as /dev/hda and /dev/hdb without
++	  using libata or the SCSI core.  The driver supports 512-byte LBA28
++	  reads, writes and cache flushes and is intended for low-memory i386
++	  systems booting from CF.
 +
-+	  Use the libata PATA_PC9800 driver instead when ATAPI, slave drives,
-+	  hotplug, detailed error recovery, or disks larger than 128 GiB are
-+	  required.
++	  Use the libata PATA_PC9800 driver instead when ATAPI, hotplug, detailed
++	  error recovery, or disks larger than 128 GiB are required.
 +
  config AMIGA_FLOPPY
  	tristate "Amiga floppy support"
@@ -1508,15 +1555,16 @@ diff --git a/drivers/block/pc98_ide.c b/drivers/block/pc98_ide.c
 new file mode 100644
 --- /dev/null
 +++ b/drivers/block/pc98_ide.c
-@@ -0,0 +1,395 @@
+@@ -0,0 +1,469 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Minimal block driver for the NEC PC-9800 built-in IDE interface.
 + *
 + * This is intentionally a small, fixed-configuration alternative to the
 + * libata/SCSI-disk path for memory-constrained i386 machines.  It supports
-+ * one master ATA disk, 512-byte LBA28/CHS PIO reads and writes, and cache flush.
-+ * The device interrupt is disabled and commands are polled synchronously.
++ * the master and slave ATA disks, 512-byte LBA28/CHS PIO reads and writes,
++ * and cache flush.  The device interrupt is disabled and commands are polled
++ * synchronously.
 + *
 + * Hardware mapping derived from the Linux/98 project PC-9800 IDE driver.
 + * Copyright (C) 1997-2000 Linux/98 project,
@@ -1528,13 +1576,17 @@ new file mode 100644
 +#include <linux/blkdev.h>
 +#include <linux/delay.h>
 +#include <linux/highmem.h>
++#include <linux/hdreg.h>
 +#include <linux/io.h>
 +#include <linux/ioport.h>
 +#include <linux/module.h>
++#include <linux/spinlock.h>
++
++#include <asm/pc9800.h>
 +
 +#define DRV_NAME		"pc98ide"
-+#define PC98IDE_DISK_NAME	"hd98a"
 +#define PC98IDE_MINORS		16
++#define PC98IDE_DEVICES		2
 +
 +#define PC98IDE_BANK		0x0432
 +#define PC98IDE_DATA		0x0640
@@ -1581,10 +1633,14 @@ new file mode 100644
 +	u8 sectors_per_track;
 +	bool lba_supported;
 +	bool flush_supported;
++	u8 unit;
++	bool present;
++	bool registered;
 +};
 +
-+static struct pc98ide_device pc98ide;
++static struct pc98ide_device pc98ide[PC98IDE_DEVICES];
 +static int pc98ide_major;
++static DEFINE_SPINLOCK(pc98ide_lock);
 +
 +static int pc98ide_wait(bool drq)
 +{
@@ -1613,7 +1669,7 @@ new file mode 100644
 +	inb(PC98IDE_ALTSTATUS);
 +}
 +
-+static int pc98ide_select_sector(u32 lba)
++static int pc98ide_select_sector(struct pc98ide_device *dev, u32 lba)
 +{
 +	u32 track, cylinder;
 +	u8 head, sector;
@@ -1623,8 +1679,9 @@ new file mode 100644
 +	if (ret)
 +		return ret;
 +
-+	if (pc98ide.lba_supported) {
-+		outb(ATA_DEV_LBA | ((lba >> 24) & 0x0f), PC98IDE_DEVICE);
++	if (dev->lba_supported) {
++		outb(ATA_DEV_LBA | (dev->unit << 4) |
++		     ((lba >> 24) & 0x0f), PC98IDE_DEVICE);
 +		pc98ide_400ns_delay();
 +		outb(1, PC98IDE_NSECTOR);
 +		outb(lba, PC98IDE_LBAL);
@@ -1633,14 +1690,14 @@ new file mode 100644
 +		return 0;
 +	}
 +
-+	track = lba / pc98ide.sectors_per_track;
-+	sector = lba % pc98ide.sectors_per_track + 1;
-+	head = track % pc98ide.heads;
-+	cylinder = track / pc98ide.heads;
-+	if (cylinder >= pc98ide.cylinders)
++	track = lba / dev->sectors_per_track;
++	sector = lba % dev->sectors_per_track + 1;
++	head = track % dev->heads;
++	cylinder = track / dev->heads;
++	if (cylinder >= dev->cylinders)
 +		return -ERANGE;
 +
-+	outb(0xa0 | head, PC98IDE_DEVICE);
++	outb(0xa0 | (dev->unit << 4) | head, PC98IDE_DEVICE);
 +	pc98ide_400ns_delay();
 +	outb(1, PC98IDE_NSECTOR);
 +	outb(sector, PC98IDE_LBAL);
@@ -1649,15 +1706,16 @@ new file mode 100644
 +	return 0;
 +}
 +
-+static int pc98ide_rw_sector(sector_t sector, void *buffer, bool write)
++static int pc98ide_rw_sector(struct pc98ide_device *dev, sector_t sector,
++			    void *buffer, bool write)
 +{
 +	int ret;
 +
-+	if (sector >= pc98ide.sectors ||
-+	    (pc98ide.lba_supported && sector > 0x0fffffff))
++	if (sector >= dev->sectors ||
++	    (dev->lba_supported && sector > 0x0fffffff))
 +		return -EIO;
 +
-+	ret = pc98ide_select_sector((u32)sector);
++	ret = pc98ide_select_sector(dev, (u32)sector);
 +	if (ret)
 +		return ret;
 +
@@ -1675,17 +1733,17 @@ new file mode 100644
 +	return 0;
 +}
 +
-+static int pc98ide_flush(void)
++static int pc98ide_flush(struct pc98ide_device *dev)
 +{
 +	int ret;
 +
-+	if (!pc98ide.flush_supported)
++	if (!dev->flush_supported)
 +		return 0;
 +
 +	ret = pc98ide_wait(false);
 +	if (ret)
 +		return ret;
-+	outb(ATA_DEV_LBA, PC98IDE_DEVICE);
++	outb(ATA_DEV_LBA | (dev->unit << 4), PC98IDE_DEVICE);
 +	pc98ide_400ns_delay();
 +	outb(ATA_CMD_FLUSH, PC98IDE_COMMAND);
 +	return pc98ide_wait(false);
@@ -1694,6 +1752,7 @@ new file mode 100644
 +static blk_status_t pc98ide_queue_rq(struct blk_mq_hw_ctx *hctx,
 +				     const struct blk_mq_queue_data *bd)
 +{
++	struct pc98ide_device *dev = hctx->queue->queuedata;
 +	struct request *rq = bd->rq;
 +	struct req_iterator iter;
 +	struct bio_vec bvec;
@@ -1701,15 +1760,13 @@ new file mode 100644
 +	blk_status_t status = BLK_STS_OK;
 +	bool write;
 +
-+	/*
-+	 * The single hardware queue has depth one and this polling request is
-+	 * completed before queue_rq() returns, so blk-mq already serializes all
-+	 * access.  In particular, do not disable interrupts around slow PIO.
-+	 */
++	/* Each disk has a depth-one blk-mq queue, but both share one ATA bus. */
++	if (!spin_trylock(&pc98ide_lock))
++		return BLK_STS_RESOURCE;
 +	blk_mq_start_request(rq);
 +
 +	if (req_op(rq) == REQ_OP_FLUSH) {
-+		if (pc98ide_flush())
++		if (pc98ide_flush(dev))
 +			status = BLK_STS_IOERR;
 +		goto done;
 +	}
@@ -1732,7 +1789,8 @@ new file mode 100644
 +		mapping = kmap_local_page(bvec.bv_page);
 +		buffer = (u8 *)mapping + bvec.bv_offset;
 +		for (offset = 0; offset < bvec.bv_len; offset += 512) {
-+			if (pc98ide_rw_sector(sector++, buffer + offset, write)) {
++			if (pc98ide_rw_sector(dev, sector++, buffer + offset,
++					       write)) {
 +				status = BLK_STS_IOERR;
 +				break;
 +			}
@@ -1743,11 +1801,12 @@ new file mode 100644
 +	}
 +
 +	if (status == BLK_STS_OK && write && (rq->cmd_flags & REQ_FUA) &&
-+	    pc98ide_flush())
++	    pc98ide_flush(dev))
 +		status = BLK_STS_IOERR;
 +
 +done:
 +	blk_mq_end_request(rq, status);
++	spin_unlock(&pc98ide_lock);
 +	return BLK_STS_OK;
 +}
 +
@@ -1755,29 +1814,43 @@ new file mode 100644
 +	.queue_rq = pc98ide_queue_rq,
 +};
 +
++static int pc98ide_getgeo(struct gendisk *disk, struct hd_geometry *geo)
++{
++	struct pc98ide_device *dev = disk->private_data;
++	unsigned int heads = dev->heads ? dev->heads : 8;
++	unsigned int sectors = dev->sectors_per_track ?
++		dev->sectors_per_track : 17;
++	sector_t cylinders = dev->sectors;
++
++	pc9800_get_boot_disk_geometry_for(0x80, dev->unit, &heads, &sectors);
++	sector_div(cylinders, heads * sectors);
++	geo->heads = heads;
++	geo->sectors = sectors;
++	geo->cylinders = min_t(sector_t, cylinders, 0xffff);
++	geo->start = 0;
++	return 0;
++}
++
 +static const struct block_device_operations pc98ide_fops = {
 +	.owner = THIS_MODULE,
++	.getgeo = pc98ide_getgeo,
 +};
 +
-+static int __init pc98ide_identify(void)
++static int __init pc98ide_identify(struct pc98ide_device *dev)
 +{
 +	u16 id[256];
 +	u16 heads, sectors_per_track;
 +	u32 sectors;
 +	int ret;
 +
-+	outb(0, PC98IDE_BANK);
-+	outb(ATA_CTL_NIEN | ATA_CTL_SRST, PC98IDE_CONTROL);
-+	udelay(10);
-+	outb(ATA_CTL_NIEN, PC98IDE_CONTROL);
-+	udelay(2000);
-+
 +	ret = pc98ide_wait(false);
 +	if (ret)
 +		return ret;
 +
-+	outb(ATA_DEV_LBA, PC98IDE_DEVICE);
++	outb(ATA_DEV_LBA | (dev->unit << 4), PC98IDE_DEVICE);
 +	pc98ide_400ns_delay();
++	if (inb(PC98IDE_STATUS) == 0 || inb(PC98IDE_STATUS) == 0xff)
++		return -ENODEV;
 +	outb(ATA_CMD_IDENTIFY, PC98IDE_COMMAND);
 +	if (inb(PC98IDE_STATUS) == 0)
 +		return -ENODEV;
@@ -1786,26 +1859,27 @@ new file mode 100644
 +		return ret;
 +	insw(PC98IDE_DATA, id, 256);
 +
-+	pc98ide.lba_supported = !!(id[49] & ATA_ID_LBA);
-+	if (pc98ide.lba_supported) {
++	dev->lba_supported = !!(id[49] & ATA_ID_LBA);
++	if (dev->lba_supported) {
 +		sectors = (u32)id[ATA_ID_LBA_CAPACITY] |
 +			  ((u32)id[ATA_ID_LBA_CAPACITY + 1] << 16);
 +		if (!sectors)
 +			return -ENODEV;
-+		pc98ide.sectors = min_t(sector_t, sectors, 0x10000000ULL);
++		dev->sectors = min_t(sector_t, sectors, 0x10000000ULL);
 +	} else {
-+		pc98ide.cylinders = id[1];
++		dev->cylinders = id[1];
 +		heads = id[3];
 +		sectors_per_track = id[6];
-+		if (!pc98ide.cylinders || !heads || heads > 16 ||
++		if (!dev->cylinders || !heads || heads > 16 ||
 +		    !sectors_per_track || sectors_per_track > 255)
 +			return -ENODEV;
-+		pc98ide.heads = heads;
-+		pc98ide.sectors_per_track = sectors_per_track;
-+		pc98ide.sectors = (sector_t)pc98ide.cylinders *
-+			pc98ide.heads * pc98ide.sectors_per_track;
++		dev->heads = heads;
++		dev->sectors_per_track = sectors_per_track;
++		dev->sectors = (sector_t)dev->cylinders *
++			dev->heads * dev->sectors_per_track;
 +	}
-+	pc98ide.flush_supported = id[ATA_ID_COMMAND_SET_1] & ATA_ID_FLUSH;
++	dev->flush_supported = id[ATA_ID_COMMAND_SET_1] & ATA_ID_FLUSH;
++	dev->present = true;
 +	return 0;
 +}
 +
@@ -1814,6 +1888,60 @@ new file mode 100644
 +	release_region(PC98IDE_BANK, 1);
 +	release_region(PC98IDE_CONTROL, 1);
 +	release_region(PC98IDE_DATA, 16);
++}
++
++static void pc98ide_unregister_device(struct pc98ide_device *dev)
++{
++	if (!dev->registered)
++		return;
++	del_gendisk(dev->disk);
++	put_disk(dev->disk);
++	blk_mq_free_tag_set(&dev->tag_set);
++	dev->disk = NULL;
++	dev->registered = false;
++}
++
++static int __init pc98ide_register_device(struct pc98ide_device *dev,
++					  struct queue_limits *limits)
++{
++	char name[DISK_NAME_LEN];
++	int ret;
++
++	ret = blk_mq_alloc_sq_tag_set(&dev->tag_set, &pc98ide_mq_ops, 1, 0);
++	if (ret)
++		return ret;
++
++	dev->disk = blk_mq_alloc_disk(&dev->tag_set, limits, dev);
++	if (IS_ERR(dev->disk)) {
++		ret = PTR_ERR(dev->disk);
++		dev->disk = NULL;
++		blk_mq_free_tag_set(&dev->tag_set);
++		return ret;
++	}
++
++	snprintf(name, sizeof(name), "hd%c", 'a' + dev->unit);
++	dev->disk->major = pc98ide_major;
++	dev->disk->first_minor = dev->unit * PC98IDE_MINORS;
++	dev->disk->minors = PC98IDE_MINORS;
++	dev->disk->fops = &pc98ide_fops;
++	dev->disk->private_data = dev;
++	strscpy(dev->disk->disk_name, name, sizeof(dev->disk->disk_name));
++	set_capacity(dev->disk, dev->sectors);
++
++	ret = add_disk(dev->disk);
++	if (ret) {
++		put_disk(dev->disk);
++		dev->disk = NULL;
++		blk_mq_free_tag_set(&dev->tag_set);
++		return ret;
++	}
++	dev->registered = true;
++
++	pr_info(DRV_NAME ": %s: %llu sectors (%llu MiB), %s polling PIO\n",
++		name, (unsigned long long)dev->sectors,
++		(unsigned long long)(dev->sectors >> 11),
++		dev->lba_supported ? "LBA28" : "CHS");
++	return 0;
 +}
 +
 +static int __init pc98ide_init(void)
@@ -1826,7 +1954,8 @@ new file mode 100644
 +		.max_segment_size = PAGE_SIZE,
 +		.features = BLK_FEAT_WRITE_CACHE,
 +	};
-+	int ret;
++	unsigned int found = 0;
++	int i, ret;
 +
 +	if (!request_region(PC98IDE_DATA, 16, DRV_NAME))
 +		return -EBUSY;
@@ -1840,9 +1969,22 @@ new file mode 100644
 +		return -EBUSY;
 +	}
 +
-+	ret = pc98ide_identify();
-+	if (ret)
++	/* Reset both devices once, then identify master and slave separately. */
++	outb(0, PC98IDE_BANK);
++	outb(ATA_CTL_NIEN | ATA_CTL_SRST, PC98IDE_CONTROL);
++	udelay(10);
++	outb(ATA_CTL_NIEN, PC98IDE_CONTROL);
++	udelay(2000);
++
++	for (i = 0; i < PC98IDE_DEVICES; i++) {
++		pc98ide[i].unit = i;
++		if (!pc98ide_identify(&pc98ide[i]))
++			found++;
++	}
++	if (!found) {
++		ret = -ENODEV;
 +		goto out_regions;
++	}
 +
 +	pc98ide_major = register_blkdev(0, DRV_NAME);
 +	if (pc98ide_major < 0) {
@@ -1850,40 +1992,18 @@ new file mode 100644
 +		goto out_regions;
 +	}
 +
-+	ret = blk_mq_alloc_sq_tag_set(&pc98ide.tag_set, &pc98ide_mq_ops, 1, 0);
-+	if (ret)
-+		goto out_major;
-+
-+	pc98ide.disk = blk_mq_alloc_disk(&pc98ide.tag_set, &limits, &pc98ide);
-+	if (IS_ERR(pc98ide.disk)) {
-+		ret = PTR_ERR(pc98ide.disk);
-+		goto out_tags;
++	for (i = 0; i < PC98IDE_DEVICES; i++) {
++		if (!pc98ide[i].present)
++			continue;
++		ret = pc98ide_register_device(&pc98ide[i], &limits);
++		if (ret)
++			goto out_devices;
 +	}
-+
-+	pc98ide.disk->major = pc98ide_major;
-+	pc98ide.disk->first_minor = 0;
-+	pc98ide.disk->minors = PC98IDE_MINORS;
-+	pc98ide.disk->fops = &pc98ide_fops;
-+	pc98ide.disk->private_data = &pc98ide;
-+	strscpy(pc98ide.disk->disk_name, PC98IDE_DISK_NAME,
-+		sizeof(pc98ide.disk->disk_name));
-+	set_capacity(pc98ide.disk, pc98ide.sectors);
-+
-+	ret = add_disk(pc98ide.disk);
-+	if (ret)
-+		goto out_disk;
-+
-+	pr_info(DRV_NAME ": %s: %llu sectors (%llu MiB), %s polling PIO\n",
-+		PC98IDE_DISK_NAME, (unsigned long long)pc98ide.sectors,
-+		(unsigned long long)(pc98ide.sectors >> 11),
-+		pc98ide.lba_supported ? "LBA28" : "CHS");
 +	return 0;
 +
-+out_disk:
-+	put_disk(pc98ide.disk);
-+out_tags:
-+	blk_mq_free_tag_set(&pc98ide.tag_set);
-+out_major:
++out_devices:
++	while (--i >= 0)
++		pc98ide_unregister_device(&pc98ide[i]);
 +	unregister_blkdev(pc98ide_major, DRV_NAME);
 +out_regions:
 +	pc98ide_release_regions();
@@ -1892,9 +2012,10 @@ new file mode 100644
 +
 +static void __exit pc98ide_exit(void)
 +{
-+	del_gendisk(pc98ide.disk);
-+	put_disk(pc98ide.disk);
-+	blk_mq_free_tag_set(&pc98ide.tag_set);
++	int i;
++
++	for (i = PC98IDE_DEVICES - 1; i >= 0; i--)
++		pc98ide_unregister_device(&pc98ide[i]);
 +	unregister_blkdev(pc98ide_major, DRV_NAME);
 +	pc98ide_release_regions();
 +}
@@ -2967,8 +3088,7 @@ diff --git a/drivers/scsi/pc980155.c b/drivers/scsi/pc980155.c
 new file mode 100644
 --- /dev/null
 +++ b/drivers/scsi/pc980155.c
-@@ -0,0 +1,519 @@
-+// SPDX-License-Identifier: GPL-2.0-only
+@@ -0,0 +1,635 @@
 +/*
 + * PC-9801-55/92 compatible WD33C93A SCSI host adapter driver
 + *
@@ -2983,6 +3103,8 @@ new file mode 100644
 + * limited to current SCSI APIs, PC-98 boot geometry, selectable 55/92 board
 + * profiles and the low-memory bounce buffer which replaces the removed
 + * unchecked_isa_dma SCSI host facility.
++ *
++ * SPDX-License-Identifier: GPL-2.0-only
 + */
 +
 +#include <linux/delay.h>
@@ -3017,6 +3139,8 @@ new file mode 100644
 +#define PC9801_DMA_MASK                 0x0015
 +#define PC9801_DMA_MODE                 0x0017
 +#define PC9801_DMA_CLEAR_FF             0x0019
++#define PC9801_DMA_BOUND                0x0029
++#define PC9801_DMA_ACCESS               0x0439
 +
 +#ifndef CMD_PER_LUN
 +#define CMD_PER_LUN                     2
@@ -3049,6 +3173,8 @@ new file mode 100644
 +static int pc980155_dma_override = -1;
 +static u8 pc980155_clock = WD33C93_FS_8_10;
 +static enum pc980155_profile pc980155_profile = PC980155_PROFILE_92;
++/* Match the Linux/98 2.6.7 driver unless async PIO is requested explicitly. */
++static bool pc980155_async_pio;
 +
 +module_param(io, uint, 0444);
 +MODULE_PARM_DESC(io, "PC-9801-55/92 base I/O port (default: probe 0xcc0-0xcf0)");
@@ -3116,6 +3242,16 @@ new file mode 100644
 +			default:
 +				pr_warn(DRV_NAME ": unsupported %s\n", option);
 +			}
++		} else if (!strcmp(option, "mode=async-pio")) {
++			/*
++			 * Diagnostic and compatibility path for adapters whose DMA or
++			 * synchronous-transfer wiring is not yet known to work.  Data
++			 * travels through the WD33C93 WD_DATA register at SASR/SCMD;
++			 * this does not use QEMU's optional base+6 data port.
++			 */
++			pc980155_async_pio = true;
++		} else if (!strcmp(option, "mode=dma")) {
++			pc980155_async_pio = false;
 +		} else if (*option) {
 +			pr_warn(DRV_NAME ": unknown option %s\n", option);
 +		}
@@ -3210,6 +3346,18 @@ new file mode 100644
 +	outb(channel | 0x04, PC9801_DMA_MASK);
 +}
 +
++/* Raw current-count readback from the PC-98 DMA controller (N-1 semantics). */
++static unsigned int pc9801_dma_count_readback(unsigned int channel)
++{
++	u16 count_port = 0x0003 + channel * 4;
++	unsigned int remaining;
++
++	outb(0, PC9801_DMA_CLEAR_FF);
++	remaining = inb(count_port);
++	remaining |= inb(count_port) << 8;
++	return remaining;
++}
++
 +static unsigned int pc980155_transfer_residual(wd33c93_regs regs)
 +{
 +	unsigned int residual;
@@ -3246,6 +3394,7 @@ new file mode 100644
 +			       virt_to_phys(hdata->dma_buffer), len, mode);
 +	release_dma_lock(flags);
 +	pc980155_dma_enable(host->base);
++	wd33c93_trace('D', inb(host->base), 0, 0, dir_in, cmd->cmnd[0], len);
 +	return 0;
 +}
 +
@@ -3253,12 +3402,26 @@ new file mode 100644
 +			      struct scsi_cmnd *cmd, int status)
 +{
 +	struct pc980155_hostdata *hdata = shost_priv(host);
++	unsigned int dmac_count;
 +	unsigned long flags;
 +
 +	pc980155_dma_disable(host->base);
 +	flags = claim_dma_lock();
 +	pc980155_mask_dma(host->dma_channel);
++	dmac_count = pc9801_dma_count_readback(host->dma_channel);
 +	release_dma_lock(flags);
++
++	/*
++	 * 'S' events carry the DMA-controller current-count readback in the
++	 * sr/phs fields (high/low byte, N-1 semantics: 0xffff after a fully
++	 * completed transfer).  A WD transfer counter of zero combined with a
++	 * DMAC count that has not expired identifies a stalled final host-side
++	 * DACK cycle.
++	 */
++	if (hdata->dma_len)
++		wd33c93_trace('S', inb(host->base), dmac_count >> 8, dmac_count,
++			      status, cmd ? cmd->cmnd[0] : 0xff,
++			      pc980155_transfer_residual(hdata->wh.regs));
 +
 +	if (cmd && status && hdata->dma_dir_in && hdata->dma_len) {
 +		struct scsi_pointer *scsi_pointer = WD33C93_scsi_pointer(cmd);
@@ -3284,12 +3447,39 @@ new file mode 100644
 +{
 +	struct Scsi_Host *host = dev_id;
 +	unsigned long flags;
++	unsigned int pass;
 +
 +	if (!(inb(host->base) & ASR_INT))
 +		return IRQ_NONE;
 +
 +	spin_lock_irqsave(host->host_lock, flags);
-+	wd33c93_intr(host);
++	for (pass = 0; pass < 8; pass++) {
++		unsigned int wait;
++		u8 asr;
++
++		wd33c93_intr(host);
++		if (!pc980155_async_pio)
++			goto out;
++
++		/*
++		 * transfer_pio() deliberately returns with the interrupt for the
++		 * following SCSI phase pending.  On the PC-98 edge-triggered PIC,
++		 * that edge can occur before this handler sends its EOI.  Wait for
++		 * the WD33C93 command-in-progress indication to clear, then consume
++		 * the pending STATUS/MESSAGE IN/DISCONNECT phases here.
++		 */
++		for (wait = 0; wait < 1000; wait++) {
++			asr = inb(host->base);
++			if (!(asr & ASR_INT))
++				goto out;
++			if (!(asr & ASR_BSY))
++				break;
++			udelay(1);
++		}
++		if (wait == 1000)
++			break;
++	}
++out:
 +	spin_unlock_irqrestore(host->host_lock, flags);
 +	return IRQ_HANDLED;
 +}
@@ -3423,6 +3613,22 @@ new file mode 100644
 +		goto err_buffer;
 +	}
 +
++	/*
++	 * Linux/98's boot98/setup.S programmed the PC-98 DMA controller before
++	 * kernel entry: it cleared 0x439 bit 2 (allow DMA above 1 MiB) and set
++	 * every channel's bank-boundary register to the 16 MiB auto-increment
++	 * mode, because the controller powers up in the 64 KiB boundary mode.
++	 * The BOOT98 loader restores only the 0x439 clear, so restore the bank
++	 * boundary programming here.  Also report the physical buffer address
++	 * and the 0x439 value so a photographed boot screen shows whether the
++	 * 1 MiB confinement is still active on the tested machine.
++	 */
++	for (i = 0; i < 4; i++)
++		outb(0x0c | i, PC9801_DMA_BOUND);
++	pr_info(DRV_NAME ": DMA buffer phys %#lx, port 0x439 reads %#x\n",
++		(unsigned long)virt_to_phys(hdata->dma_buffer),
++		inb(PC9801_DMA_ACCESS));
++
 +	/* Match the Linux/98 driver: enable the board and let wd33c93.c reset
 +	 * and initialise the controller before the SCSI mid-layer scans it.
 +	 */
@@ -3430,14 +3636,45 @@ new file mode 100644
 +	pc980155_int_enable(regs);
 +	wd33c93_init(pc980155_host, regs, pc980155_dma_setup,
 +		      pc980155_dma_stop, pc980155_clock);
++	/*
++	 * The Linux/98 2.6.7 core defaulted to no_sync = 0xff ("sync
++	 * defaults to off"), so the historical PC-9801-55/92 driver always
++	 * ran asynchronous transfers.  The modern wd33c93 core leaves this
++	 * to the board driver (a2091/a3000/gvp11/mvme147 all set 0xff);
++	 * without it the DMA path negotiates synchronous transfers, which
++	 * these boards and the historical driver never used.
++	 */
++	hdata->wh.no_sync = 0xff;
++	if (pc980155_async_pio) {
++		/*
++		 * wd33c93_init() deliberately owns the generic defaults.  Override
++		 * them before scsi_scan_host() starts the first command so every
++		 * target negotiates an offset of zero and transfer_bytes() selects
++		 * the standard WD33C93 polled-PIO path.  Disable level-2 combination
++		 * commands so the original controller exposes every bus phase to the
++		 * driver.  Do not grant disconnect privilege in this compatibility
++		 * mode.  The historical 55-board driver normally ran one command at a
++		 * time and did not need disconnect/reselect; keeping the target
++		 * connected also avoids losing the STATUS/MESSAGE IN transition on
++		 * early WD33C93/55-board combinations.
++		 */
++		hdata->wh.no_dma = 1;
++		hdata->wh.disconnect = DIS_NEVER;
++		hdata->wh.level2 = L2_NONE;
++		for (i = 0; i < 8; i++)
++			hdata->wh.sync_stat[i] = SS_UNSET;
++	}
 +
 +	error = scsi_add_host(pc980155_host, NULL);
 +	if (error)
 +		goto err_irq_enabled;
 +
-+	pr_info(DRV_NAME ": I/O %#lx, IRQ %u, DMA %u, SCSI ID %u; %s profile\n",
++	pr_info(DRV_NAME ": I/O %#lx, IRQ %u, DMA %u, SCSI ID %u; %s profile, %s\n",
 +		base_io, irq, dma, scsi_id,
-+		pc980155_profile == PC980155_PROFILE_55 ? "55" : "92");
++		pc980155_profile == PC980155_PROFILE_55 ? "55" : "92",
++		pc980155_async_pio ?
++			"asynchronous PIO (level 2 and disconnect disabled)" :
++			"DMA");
 +	pr_info(DRV_NAME ": probing SCSI targets 0-6; absent targets may take several seconds\n");
 +	scsi_scan_host(pc980155_host);
 +	return 0;
@@ -3491,8 +3728,7 @@ diff --git a/drivers/scsi/pc980155.h b/drivers/scsi/pc980155.h
 new file mode 100644
 --- /dev/null
 +++ b/drivers/scsi/pc980155.h
-@@ -0,0 +1,62 @@
-+/* SPDX-License-Identifier: GPL-2.0-only */
+@@ -0,0 +1,63 @@
 +/*
 + * PC-9801-55 SCSI host adapter register access
 + *
@@ -3502,6 +3738,8 @@ new file mode 100644
 + * Copyright (C) 2026 Awe Morris
 + *
 + * Ported from Linux/98 2.6.7 to Linux 7.1 in the Awe Morris port.
++ *
++ * SPDX-License-Identifier: GPL-2.0-only
 + */
 +
 +#ifndef __PC980155_H
@@ -3557,18 +3795,83 @@ new file mode 100644
 diff --git a/drivers/scsi/wd33c93.c b/drivers/scsi/wd33c93.c
 --- a/drivers/scsi/wd33c93.c
 +++ b/drivers/scsi/wd33c93.c
-@@ -74,6 +74,7 @@
+@@ -73,7 +73,9 @@
+ #include <linux/delay.h>
  #include <linux/init.h>
  #include <linux/interrupt.h>
++#include <linux/jiffies.h>
  #include <linux/blkdev.h>
 +#include <linux/io.h>
  
  #include <scsi/scsi.h>
  #include <scsi/scsi_cmnd.h>
-@@ -162,6 +163,74 @@
+@@ -162,6 +164,137 @@
  
  static void wd33c93_execute(struct Scsi_Host *instance);
  
++/*
++ * Bounded event ring for the PC-9801-55/92 hardware investigation.  Every
++ * serviced interrupt and board DMA transition is recorded; nothing is
++ * printed during normal operation.  The ring is dumped only on unexpected
++ * disconnect, unknown interrupt, abort, or host reset, so the GDC console
++ * shows the events immediately preceding a failure.
++ */
++#define WD33C93_TRACE_ENTRIES	32
++#define WD33C93_TRACE_DUMP	16
++
++struct wd33c93_trace_entry {
++	u32 seq;
++	u32 count;
++	u32 msec;
++	u8 ev, asr, sr, phs;
++	u8 state, cdb;
++};
++
++static struct wd33c93_trace_entry wd33c93_trace_ring[WD33C93_TRACE_ENTRIES];
++static u32 wd33c93_trace_seq;
++
++void
++wd33c93_trace(u8 ev, u8 asr, u8 sr, u8 phs, u8 state, u8 cdb, u32 count)
++{
++	struct wd33c93_trace_entry *e =
++		&wd33c93_trace_ring[wd33c93_trace_seq % WD33C93_TRACE_ENTRIES];
++
++	e->seq = wd33c93_trace_seq++;
++	e->msec = jiffies_to_msecs(jiffies);
++	e->ev = ev;
++	e->asr = asr;
++	e->sr = sr;
++	e->phs = phs;
++	e->state = state;
++	e->cdb = cdb;
++	e->count = count;
++}
++EXPORT_SYMBOL(wd33c93_trace);
++
++void
++wd33c93_trace_dump(const char *reason)
++{
++	u32 first = 0, i, prev_msec = 0;
++	bool have_prev = false;
++
++	if (wd33c93_trace_seq > WD33C93_TRACE_DUMP)
++		first = wd33c93_trace_seq - WD33C93_TRACE_DUMP;
++	printk("wd33c93 trace (%s), %u events:\n", reason, wd33c93_trace_seq);
++	for (i = first; i < wd33c93_trace_seq; i++) {
++		struct wd33c93_trace_entry *e =
++			&wd33c93_trace_ring[i % WD33C93_TRACE_ENTRIES];
++
++		if (e->seq != i)
++			continue;
++		printk(" %u:%c +%u asr=%02x sr=%02x phs=%02x st=%u cdb=%02x cnt=%u\n",
++		       e->seq, e->ev, have_prev ? e->msec - prev_msec : 0,
++		       e->asr, e->sr, e->phs, e->state, e->cdb, e->count);
++		prev_msec = e->msec;
++		have_prev = true;
++	}
++}
++EXPORT_SYMBOL(wd33c93_trace_dump);
++
 +#ifdef CONFIG_WD33C93_PIO
 +/*
 + * Port-I/O access path restored from the Linux/98 2.6.7 WD33C93 core.
@@ -3640,7 +3943,7 @@ diff --git a/drivers/scsi/wd33c93.c b/drivers/scsi/wd33c93.c
  static inline uchar
  read_wd33c93(const wd33c93_regs regs, uchar reg_num)
  {
-@@ -228,6 +297,7 @@
+@@ -228,6 +361,7 @@
  	for (i = 0; i < len; i++)
  		*regs.SCMD = cmnd[i];
  }
@@ -3648,6 +3951,148 @@ diff --git a/drivers/scsi/wd33c93.c b/drivers/scsi/wd33c93.c
  
  static inline uchar
  read_1_byte(const wd33c93_regs regs)
+@@ -416,6 +550,7 @@
+ 	    (struct WD33C93_hostdata *) instance->hostdata;
+ 	const wd33c93_regs regs = hostdata->regs;
+ 	struct scsi_cmnd *cmd, *prev;
++	int i;
+ 
+ 	DB(DB_EXECUTE, printk("EX("))
+ 	if (hostdata->selecting || hostdata->connected) {
+@@ -522,6 +657,17 @@
+ 
+  no:
+ 
++	/*
++	 * An abnormally ended transfer (stalled DMA handshake, unexpected
++	 * disconnect) can leave residue in the WD33C93 data-register FIFO.
++	 * Without this flush the stale byte is emitted on the bus as the
++	 * first COMMAND-phase byte of the next command, shifting the whole
++	 * CDB; a physical PC-9801-55 trace showed REQUEST SENSE turning into
++	 * a bogus READ(6) exactly this way.
++	 */
++	for (i = 0; i < 16 && (read_aux_stat(regs) & ASR_DBR); i++)
++		read_wd33c93(regs, WD_DATA);
++
+ 	write_wd33c93(regs, WD_SOURCE_ID, scsi_pointer->phase ? SRCID_ER : 0);
+ 
+ 	write_wd33c93(regs, WD_TARGET_LUN, (u8)cmd->device->lun);
+@@ -626,6 +772,7 @@
+ 	     int data_in_dir, struct WD33C93_hostdata *hostdata)
+ {
+ 	uchar asr;
++	int remaining = cnt;
+ 
+ 	DB(DB_TRANSFER,
+ 	   printk("(%p,%d,%s:", buf, cnt, data_in_dir ? "in" : "out"))
+@@ -636,14 +783,25 @@
+ 	if (data_in_dir) {
+ 		do {
+ 			asr = read_aux_stat(regs);
+-			if (asr & ASR_DBR)
++			/*
++			 * Some real WD33C93 revisions keep DBR asserted when the
++			 * final transfer byte and the phase-change interrupt overlap.
++			 * Never acknowledge more bytes than were programmed in the
++			 * transfer counter: doing so consumes status/message bytes as
++			 * data (or overruns the caller's buffer on DATA OUT).
++			 */
++			if ((asr & ASR_DBR) && remaining) {
+ 				*buf++ = read_wd33c93(regs, WD_DATA);
++				remaining--;
++			}
+ 		} while (!(asr & ASR_INT));
+ 	} else {
+ 		do {
+ 			asr = read_aux_stat(regs);
+-			if (asr & ASR_DBR)
++			if ((asr & ASR_DBR) && remaining) {
+ 				write_wd33c93(regs, WD_DATA, *buf++);
++				remaining--;
++			}
+ 		} while (!(asr & ASR_INT));
+ 	}
+ 
+@@ -755,6 +913,9 @@
+ 	scsi_pointer = WD33C93_scsi_pointer(cmd);
+ 	sr = read_wd33c93(regs, WD_SCSI_STATUS);	/* clear the interrupt */
+ 	phs = read_wd33c93(regs, WD_COMMAND_PHASE);
++
++	wd33c93_trace('I', asr, sr, phs, hostdata->state,
++		      cmd ? cmd->cmnd[0] : 0xff, read_wd33c93_count(regs));
+ 
+ 	DB(DB_INTR, printk("{%02x:%02x-", asr, sr))
+ 
+@@ -1182,6 +1343,8 @@
+ 
+ 	case CSR_UNEXP_DISC:
+ 
++		wd33c93_trace_dump("CSR_UNEXP_DISC");
++
+ /* I think I've seen this after a request-sense that was in response
+  * to an error condition, but not sure. We certainly need to do
+  * something when we get this interrupt - the question is 'what?'.
+@@ -1264,7 +1427,16 @@
+ 
+ 			break;
+ 		default:
+-			printk("*** Unexpected DISCONNECT interrupt! ***");
++			printk("*** Unexpected DISCONNECT: state=%u cdb=%02x "
++			       "status=%02x message=%02x phase=%02x residual=%u/%d "
++			       "disconnect=%u level2=%u ***",
++			       hostdata->state, cmd ? cmd->cmnd[0] : 0xff,
++			       cmd ? scsi_pointer->Status : 0xff,
++			       cmd ? scsi_pointer->Message : 0xff, phs,
++			       cmd ? scsi_pointer->this_residual : 0,
++			       cmd ? scsi_pointer->buffers_residual : 0,
++			       hostdata->disconnect, hostdata->level2);
++			wd33c93_trace_dump("unexpected CSR_DISC");
+ 			hostdata->state = S_UNCONNECTED;
+ 		}
+ 
+@@ -1434,6 +1606,7 @@
+ 
+ 	default:
+ 		printk("--UNKNOWN INTERRUPT:%02x:%02x:%02x--", asr, sr, phs);
++		wd33c93_trace_dump("unknown interrupt");
+ 		spin_unlock_irqrestore(&hostdata->lock, flags);
+ 	}
+ 
+@@ -1518,6 +1691,7 @@
+ 	spin_lock_irq(instance->host_lock);
+ 	hostdata = (struct WD33C93_hostdata *) instance->hostdata;
+ 
++	wd33c93_trace_dump("host reset");
+ 	printk("scsi%d: reset. ", instance->host_no);
+ 	disable_irq(instance->irq);
+ 
+@@ -1601,6 +1775,7 @@
+ 		uchar sr, asr;
+ 		unsigned long timeout;
+ 
++		wd33c93_trace_dump("abort");
+ 		printk("scsi%d: Aborting connected command - ",
+ 		       instance->host_no);
+ 
+diff --git a/drivers/scsi/wd33c93.h b/drivers/scsi/wd33c93.h
+--- a/drivers/scsi/wd33c93.h
++++ b/drivers/scsi/wd33c93.h
+@@ -329,6 +329,15 @@
+ #define PR_STOP      1<<7
+ 
+ 
++/*
++ * Bounded event trace for the PC-9801-55/92 hardware investigation.  One
++ * entry is recorded per serviced WD interrupt ('I') and per board DMA
++ * setup/stop transition ('D'/'S'); the ring is printed only on unexpected
++ * disconnect, unknown interrupt, abort, or host reset.
++ */
++void wd33c93_trace(u8 ev, u8 asr, u8 sr, u8 phs, u8 state, u8 cdb, u32 count);
++void wd33c93_trace_dump(const char *reason);
++
+ void wd33c93_init (struct Scsi_Host *instance, const wd33c93_regs regs,
+          dma_setup_t setup, dma_stop_t stop, int clock_freq);
+ int wd33c93_abort (struct scsi_cmnd *cmd);
 diff --git a/drivers/tty/serial/Kconfig b/drivers/tty/serial/Kconfig
 --- a/drivers/tty/serial/Kconfig
 +++ b/drivers/tty/serial/Kconfig
@@ -4739,7 +5184,7 @@ diff --git a/drivers/video/fbdev/pc98cirrusfb.c b/drivers/video/fbdev/pc98cirrus
 new file mode 100644
 --- /dev/null
 +++ b/drivers/video/fbdev/pc98cirrusfb.c
-@@ -0,0 +1,700 @@
+@@ -0,0 +1,745 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * NEC PC-9821 Core-Graph Cirrus framebuffer
@@ -4748,10 +5193,9 @@ new file mode 100644
 + * relocated VGA registers and a selectable high linear aperture. It is not
 + * a PCI Cirrus function, so the generic cirrusfb PCI probe cannot bind it.
 + *
-+ * The PC-98 routing sequence and 640x480 mode streams are based on the
-+ * zlib-licensed StratoHAL 98disp_cirrus.c implementation by Awe Morris and
-+ * Keiichi Tabata.  The 800x600 and 1024x768 timings follow the same Cirrus
-+ * register construction used by the generic Linux cirrusfb driver.
++ * The PC-98 routing sequence and 640x480 mode streams are direct ports from
++ * the zlib-licensed StratoHAL 98disp_cirrus.c implementation, used here with
++ * the author's explicit permission and with its provenance retained.
 + */
 +
 +#include <linux/fb.h>
@@ -4768,7 +5212,8 @@ new file mode 100644
 +#define WAB_REG_ID		0x00
 +#define WAB_REG_LINEAR		0x02
 +#define WAB_REG_RELAY		0x03
-+#define COREGRAPH_ID		0x5b
++#define COREGRAPH_ID_MIN	0x58
++#define COREGRAPH_ID_MAX	0x5d
 +
 +#define PC98_GDC_MODE		0x0068
 +#define PC98_VRAM_SWITCH	0x006a
@@ -4776,12 +5221,15 @@ new file mode 100644
 +#define CIRRUS_SLEEP		0x0ca3
 +
 +#define CIRRUS_IO		0x0ca0
-+#define CIRRUS_CRTC		0x0da4
-+#define CIRRUS_STATUS		0x0daa
++#define CIRRUS_CRTC_COLOR	0x0da4
++#define CIRRUS_STATUS_COLOR	0x0daa
++#define CIRRUS_CRTC_MONO	0x0ba4
++#define CIRRUS_STATUS_MONO	0x0baa
 +
 +#define PC98CIRRUS_LFB_PHYS	0xf0000000UL
 +#define PC98CIRRUS_LFB_SIZE	(1024 * 1024)
-+#define PC98CIRRUS_DEFAULT_MODE	"800x600-16"
++#define PC98CIRRUS_LFB_SAFE_SIZE (PC98CIRRUS_LFB_SIZE - 0x100)
++#define PC98CIRRUS_DEFAULT_MODE	"640x480-24"
 +
 +struct pc98cirrus_mode {
 +	const char *name;
@@ -4803,11 +5251,7 @@ new file mode 100644
 +	u8 crtc[0x1c];
 +};
 +
-+/*
-+ * These are the three useful 1 MiB Core-Graph modes.  The 640x480 stream is
-+ * NEC's path-08h stream verbatim.  The two larger modes retain its board and
-+ * pixel-format programming, with standard VESA 60 Hz CRTC/VCLK timings.
-+ */
++/* NEC's three recovered Core-Graph path-08h 640x480 streams, verbatim. */
 +static const struct pc98cirrus_mode pc98cirrus_modes[] = {
 +	{
 +		.name = "640x480-24",
@@ -4828,41 +5272,40 @@ new file mode 100644
 +			0xff, 0x00, 0x90, 0x32
 +		},
 +	}, {
-+		.name = "800x600-16",
-+		.xres = 800, .yres = 600, .pitch = 1600, .bpp = 16,
-+		.misc = 0x0f, .hdr = 0xe1, .pixclock = 25000,
-+		.left_margin = 88, .right_margin = 40,
-+		.upper_margin = 23, .lower_margin = 1,
-+		.hsync_len = 128, .vsync_len = 4,
-+		.sync = FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
++		.name = "640x480-16",
++		.xres = 640, .yres = 480, .pitch = 1280, .bpp = 16,
++		.misc = 0xe3, .hdr = 0xe1, .pixclock = 39721,
++		.left_margin = 48, .right_margin = 16,
++		.upper_margin = 33, .lower_margin = 10,
++		.hsync_len = 96, .vsync_len = 2,
 +		.seq = {
 +			0x01, 0x01, 0x0f, 0x00, 0x0e, 0x13, 0x00,
-+			0x6d, 0x48, 0x56, 0x51, 0x30, 0x58, 0x40,
-+			0x3e, 0x23, 0x3d, 0xba, 0x20
++			0x6d, 0x48, 0x56, 0x60, 0x30, 0x58, 0x40,
++			0x3e, 0x23, 0x3d, 0x3b, 0x20
 +		},
 +		.crtc = {
-+			0x7f, 0x63, 0x64, 0x84, 0x6a, 0x1a, 0x72, 0xf0,
-+			0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-+			0x59, 0x6d, 0x57, 0xc8, 0x00, 0x58, 0x72, 0xc3,
-+			0xff, 0x00, 0x20, 0x22
++			0x5f, 0x4f, 0x50, 0x84, 0x53, 0x9f, 0x0b, 0x3e,
++			0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++			0xe5, 0x87, 0xdf, 0xa0, 0x00, 0xe7, 0x04, 0xe3,
++			0xff, 0x00, 0x90, 0x22
 +		},
 +	}, {
-+		.name = "1024x768-8",
-+		.xres = 1024, .yres = 768, .pitch = 1024, .bpp = 8,
-+		.misc = 0xcf, .hdr = 0x20, .pixclock = 15385,
-+		.left_margin = 160, .right_margin = 24,
-+		.upper_margin = 29, .lower_margin = 3,
-+		.hsync_len = 136, .vsync_len = 6,
++		.name = "640x480-8",
++		.xres = 640, .yres = 480, .pitch = 640, .bpp = 8,
++		.misc = 0xe3, .hdr = 0x20, .pixclock = 39721,
++		.left_margin = 48, .right_margin = 16,
++		.upper_margin = 33, .lower_margin = 10,
++		.hsync_len = 96, .vsync_len = 2,
 +		.seq = {
 +			0x01, 0x01, 0x0f, 0x00, 0x0e, 0x11, 0x00,
-+			0x66, 0x48, 0x56, 0x3b, 0x30, 0x58, 0x40,
-+			0x3b, 0x23, 0x3d, 0x9a, 0x20
++			0x66, 0x48, 0x56, 0x60, 0x30, 0x58, 0x40,
++			0x3b, 0x23, 0x3d, 0x3b, 0x20
 +		},
 +		.crtc = {
-+			0xa3, 0x7f, 0x80, 0x88, 0x84, 0x95, 0x24, 0xfd,
-+			0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-+			0x02, 0x68, 0xff, 0x80, 0x00, 0x00, 0x24, 0xc3,
-+			0xff, 0x00, 0xe0, 0x22
++			0x5f, 0x4f, 0x50, 0x84, 0x54, 0x80, 0x0b, 0x3e,
++			0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++			0xe5, 0x87, 0xdf, 0x50, 0x00, 0xe7, 0x04, 0xe3,
++			0xff, 0x00, 0x90, 0x22
 +		},
 +	},
 +};
@@ -4882,8 +5325,10 @@ new file mode 100644
 +
 +static struct pc98cirrusfb *pc98cirrus;
 +static char *mode_option = PC98CIRRUS_DEFAULT_MODE;
++static u16 cirrus_crtc = CIRRUS_CRTC_COLOR;
++static u16 cirrus_status = CIRRUS_STATUS_COLOR;
 +module_param_named(mode, mode_option, charp, 0444);
-+MODULE_PARM_DESC(mode, "Video mode: 640x480-24, 800x600-16 or 1024x768-8");
++MODULE_PARM_DESC(mode, "Video mode: 640x480-8, 640x480-16 or 640x480-24");
 +
 +static void wab_write(u8 index, u8 value)
 +{
@@ -4923,14 +5368,25 @@ new file mode 100644
 +
 +static void crtc_write(u8 index, u8 value)
 +{
-+	outb(index, CIRRUS_CRTC);
-+	outb(value, CIRRUS_CRTC + 1);
++	outb(index, cirrus_crtc);
++	outb(value, cirrus_crtc + 1);
 +}
 +
 +static u8 crtc_read(u8 index)
 +{
-+	outb(index, CIRRUS_CRTC);
-+	return inb(CIRRUS_CRTC + 1);
++	outb(index, cirrus_crtc);
++	return inb(cirrus_crtc + 1);
++}
++
++static void pc98cirrus_select_crtc(u8 misc)
++{
++	if (misc & 1) {
++		cirrus_crtc = CIRRUS_CRTC_COLOR;
++		cirrus_status = CIRRUS_STATUS_COLOR;
++	} else {
++		cirrus_crtc = CIRRUS_CRTC_MONO;
++		cirrus_status = CIRRUS_STATUS_MONO;
++	}
 +}
 +
 +static void hidden_dac_write(u8 value)
@@ -5019,15 +5475,19 @@ new file mode 100644
 +	}
 +	wab_write(WAB_REG_LINEAR, cfb->saved_linear);
 +	wab_write(WAB_REG_RELAY, cfb->saved_relay);
-+	outb(cfb->saved_sleep, CIRRUS_SLEEP);
++	/* FFh means the relocated VGA block was gated when state was saved. */
++	if (cfb->saved_sleep != 0xff)
++		outb(cfb->saved_sleep, CIRRUS_SLEEP);
 +}
 +
 +static bool pc98cirrus_validate_identity(void)
 +{
-+	u8 old_sr06 = cl_seq_read(0x06);
++	u8 old_sr06;
 +	u8 sr06;
 +	u8 cr27;
 +
++	pc98cirrus_select_crtc(misc_read());
++	old_sr06 = cl_seq_read(0x06);
 +	cl_seq_write(0x06, 0x12);
 +	sr06 = cl_seq_read(0x06);
 +	cr27 = sr06 == 0x12 ? crtc_read(0x27) : 0xff;
@@ -5070,6 +5530,7 @@ new file mode 100644
 +	cl_seq_write(0x0f, (cl_seq_read(0x0f) & 0xdf) | 0x20);
 +
 +	outb(mode->misc, CIRRUS_IO + 2);
++	pc98cirrus_select_crtc(mode->misc);
 +	gfx_write(0x06, 0x05);
 +	cl_seq_write(0x00, 0x03);
 +
@@ -5083,12 +5544,12 @@ new file mode 100644
 +	 * Match the NEC stream exactly: reset the flip-flop once, then emit
 +	 * uninterrupted index/data pairs before enabling attribute video.
 +	 */
-+	inb(CIRRUS_STATUS);
++	inb(cirrus_status);
 +	for (i = 0; i < ARRAY_SIZE(attr_value); i++) {
 +		outb(i, CIRRUS_IO);
 +		outb(attr_value[i], CIRRUS_IO);
 +	}
-+	inb(CIRRUS_STATUS);
++	inb(cirrus_status);
 +	outb(0x20, CIRRUS_IO);
 +
 +	hidden_dac_write(mode->hdr);
@@ -5195,6 +5656,21 @@ new file mode 100644
 +	}
 +}
 +
++static int pc98cirrus_clear_visible(struct pc98cirrusfb *cfb,
++				    const struct pc98cirrus_mode *mode)
++{
++	size_t visible = (size_t)mode->pitch * mode->yres;
++
++	/* SR17 places MMIO in the final 256 bytes of the 1 MiB aperture. */
++	if (visible > PC98CIRRUS_LFB_SAFE_SIZE) {
++		pr_err(DRV_NAME ": visible framebuffer %zu exceeds safe LFB %u\n",
++		       visible, PC98CIRRUS_LFB_SAFE_SIZE);
++		return -EINVAL;
++	}
++	memset_io(cfb->vram, 0, visible);
++	return 0;
++}
++
 +static int pc98cirrusfb_check_var(struct fb_var_screeninfo *var,
 +				  struct fb_info *info)
 +{
@@ -5232,7 +5708,9 @@ new file mode 100644
 +	if (ret)
 +		return ret;
 +
-+	memset_io(cfb->vram, 0, mode->pitch * mode->yres);
++	ret = pc98cirrus_clear_visible(cfb, mode);
++	if (ret)
++		return ret;
 +	spin_lock_irqsave(&cfb->reg_lock, flags);
 +	cl_seq_write(0x01, 0x01);
 +	spin_unlock_irqrestore(&cfb->reg_lock, flags);
@@ -5325,8 +5803,13 @@ new file mode 100644
 +	}
 +
 +	coregraph_id = wab_read(WAB_REG_ID);
-+	if (coregraph_id != COREGRAPH_ID)
++	pr_info(DRV_NAME ": WAB interface ID=%02x\n", coregraph_id);
++	if (coregraph_id < COREGRAPH_ID_MIN ||
++	    coregraph_id > COREGRAPH_ID_MAX) {
++		pr_info(DRV_NAME ": unsupported WAB interface ID=%02x\n",
++			coregraph_id);
 +		return -ENODEV;
++	}
 +
 +	info = framebuffer_alloc(sizeof(*cfb), NULL);
 +	if (!info)
@@ -5342,8 +5825,16 @@ new file mode 100644
 +		coregraph_id, cfb->saved_linear, cfb->saved_relay);
 +	pr_info(DRV_NAME ": saved sleep=%02x\n", cfb->saved_sleep);
 +
-+	outb(cfb->saved_sleep | 1, CIRRUS_SLEEP);
-+	wab_write(WAB_REG_RELAY, 1);
++	/*
++	 * A cold Linux handoff can leave the relocated VGA block completely
++	 * gated (sleep reads FFh).  Run the V13-tested NEC path-08h gate before
++	 * touching SR06/CR27.  StratoHAL uses this exact 68h/6Ah/reg03/5Fh/CA3h
++	 * sequence immediately before its Core-Graph mode stream.
++	 */
++	pc98cirrus_gate_enter();
++	cfb->gate_active = true;
++	pr_info(DRV_NAME ": after gate sleep=%02x reg03=%02x\n",
++		inb(CIRRUS_SLEEP), wab_read(WAB_REG_RELAY));
 +	if (!pc98cirrus_validate_identity()) {
 +		ret = -ENODEV;
 +		goto err_restore;
@@ -5354,9 +5845,6 @@ new file mode 100644
 +		ret = -EIO;
 +		goto err_restore;
 +	}
-+	pc98cirrus_gate_enter();
-+	cfb->gate_active = true;
-+
 +	ret = pc98cirrus_set_mode(mode);
 +	if (ret)
 +		goto err_restore;
@@ -5372,12 +5860,14 @@ new file mode 100644
 +		goto err_release_mem;
 +	}
 +
-+	memset_io(cfb->vram, 0, mode->pitch * mode->yres);
++	ret = pc98cirrus_clear_visible(cfb, mode);
++	if (ret)
++		goto err_unmap;
 +	cl_seq_write(0x01, 0x01);
 +
 +	strscpy(info->fix.id, "PC98 CoreGraph", sizeof(info->fix.id));
 +	info->fix.smem_start = PC98CIRRUS_LFB_PHYS;
-+	info->fix.smem_len = PC98CIRRUS_LFB_SIZE;
++	info->fix.smem_len = PC98CIRRUS_LFB_SAFE_SIZE;
 +	info->fix.type = FB_TYPE_PACKED_PIXELS;
 +	info->fix.visual = mode->bpp == 8 ? FB_VISUAL_PSEUDOCOLOR :
 +					      FB_VISUAL_TRUECOLOR;
@@ -5388,7 +5878,7 @@ new file mode 100644
 +	info->var.height = -1;
 +	info->var.width = -1;
 +	info->screen_base = cfb->vram;
-+	info->screen_size = PC98CIRRUS_LFB_SIZE;
++	info->screen_size = PC98CIRRUS_LFB_SAFE_SIZE;
 +	info->fbops = &pc98cirrusfb_ops;
 +	info->pseudo_palette = cfb->pseudo_palette;
 +	info->flags = FBINFO_HWACCEL_DISABLED;

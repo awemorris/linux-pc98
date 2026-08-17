@@ -68,7 +68,7 @@ verify_bootloader()
 {
 	local selected="$1" image="$2" sectors loader
 	case "$selected" in
-		busybox-i386-ide | busybox-i386-scsi55)
+		busybox-i386-ide | busybox-i386-scsi55 | debian13-i486-ide)
 			sectors=17 ;;
 		busybox-i386-scsi92)
 			sectors=32 ;;

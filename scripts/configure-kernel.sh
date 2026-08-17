@@ -280,7 +280,7 @@ if [ "$device_profile" = pc98 ]; then
 		# keep it out of the deliberately tiny 80386 research image.
 		"$source/scripts/config" --file "$kernel_build/.config" \
 			--enable INPUT_EVDEV \
-			--module MOUSE_PC98
+			--enable MOUSE_PC98
 	fi
 	make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 fi

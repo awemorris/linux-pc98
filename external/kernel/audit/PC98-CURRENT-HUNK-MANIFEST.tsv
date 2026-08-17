@@ -41,13 +41,13 @@ block/partitions/Kconfig	@@ -123,6 +123,16 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + 
 block/partitions/Makefile	@@ -12,6 +12,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
 block/partitions/check.h	@@ -60,6 +60,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
 block/partitions/core.c	@@ -57,6 +57,9 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
-block/partitions/nec98.c	@@ -0,0 +1,175 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+block/partitions/nec98.c	@@ -0,0 +1,222 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
 drivers/ata/Kconfig	@@ -1115,6 +1115,16 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
 drivers/ata/Makefile	@@ -106,6 +106,7 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
 drivers/ata/pata_pc9800.c	@@ -0,0 +1,262 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
 drivers/block/Kconfig	@@ -50,6 +50,20 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
 drivers/block/Makefile	@@ -12,6 +12,7 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
-drivers/block/pc98_ide.c	@@ -0,0 +1,395 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
+drivers/block/pc98_ide.c	@@ -0,0 +1,469 @@	HISTORICAL-2.6.7 + ATA-SPEC + UPSTREAM-7.1 + PROJECT-NEW
 drivers/input/keyboard/Kconfig	@@ -70,6 +70,16 @@	BSD + EXPLICIT-AWE-PERMISSION + UPSTREAM-7.1
 drivers/input/keyboard/Makefile	@@ -13,6 +13,7 @@	BSD + EXPLICIT-AWE-PERMISSION + UPSTREAM-7.1
 drivers/input/keyboard/pc98kbd.c	@@ -0,0 +1,348 @@	BSD + EXPLICIT-AWE-PERMISSION + UPSTREAM-7.1
@@ -58,11 +58,22 @@ drivers/net/ethernet/8390/Kconfig	@@ -103,6 +103,21 @@	SPEC + UPSTREAM-7.1 + PRO
 drivers/net/ethernet/8390/ne2k-lgy98.c	@@ -0,0 +1,377 @@	SPEC + UPSTREAM-7.1 + PROJECT-NEW
 drivers/scsi/Kconfig	@@ -300,6 +300,23 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
 drivers/scsi/Makefile	@@ -55,6 +55,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
-drivers/scsi/pc980155.c	@@ -0,0 +1,519 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
-drivers/scsi/pc980155.h	@@ -0,0 +1,62 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
-drivers/scsi/wd33c93.c	@@ -74,6 +74,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
-drivers/scsi/wd33c93.c	@@ -162,6 +163,74 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
-drivers/scsi/wd33c93.c	@@ -228,6 +297,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/pc980155.c	@@ -0,0 +1,635 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/pc980155.h	@@ -0,0 +1,63 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -73,7 +73,9 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -162,6 +164,137 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -228,6 +361,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -416,6 +550,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -522,6 +657,17 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -626,6 +772,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -636,14 +783,25 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -755,6 +913,9 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -1182,6 +1343,8 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -1264,7 +1427,16 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -1434,6 +1606,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -1518,6 +1691,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.c	@@ -1601,6 +1775,7 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
+drivers/scsi/wd33c93.h	@@ -329,6 +329,15 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
 drivers/tty/serial/Kconfig	@@ -1592,6 +1592,25 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
 drivers/tty/serial/Makefile	@@ -98,3 +98,4 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
 drivers/tty/serial/pc98_8251.c	@@ -0,0 +1,656 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
@@ -72,7 +83,7 @@ drivers/video/console/Makefile	@@ -8,3 +8,4 @@	HISTORICAL-2.6.7 + SPEC + UPSTREA
 drivers/video/console/pc98con.c	@@ -0,0 +1,292 @@	HISTORICAL-2.6.7 + SPEC + UPSTREAM-7.1 + PROJECT-NEW
 drivers/video/fbdev/Kconfig	@@ -86,6 +86,45 @@	STRATOHAL-ZLIB + UPSTREAM-7.1 + PROJECT-NEW
 drivers/video/fbdev/Makefile	@@ -78,6 +78,8 @@	STRATOHAL-ZLIB + UPSTREAM-7.1 + PROJECT-NEW
-drivers/video/fbdev/pc98cirrusfb.c	@@ -0,0 +1,700 @@	STRATOHAL-ZLIB + UPSTREAM-7.1 + PROJECT-NEW
+drivers/video/fbdev/pc98cirrusfb.c	@@ -0,0 +1,745 @@	STRATOHAL-ZLIB + UPSTREAM-7.1 + PROJECT-NEW
 drivers/video/fbdev/pc98tridentfb.c	@@ -0,0 +1,1017 @@	STRATOHAL-ZLIB + UPSTREAM-7.1 + PROJECT-NEW
 include/linux/console.h	@@ -132,6 +132,12 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW
 include/linux/i8253.h	@@ -14,9 +14,16 @@	HISTORICAL-2.6.7 + UPSTREAM-7.1 + PROJECT-NEW

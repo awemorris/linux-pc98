@@ -3,7 +3,8 @@
 
 The result is an intermediate two/three-partition layout (FAT16 BOOT,
 ext4 root, optional swap). It is not bootable on its own: the selected image
-profile subsequently installs either bootsimple (BusyBox) or zedBSD (Debian).
+profile subsequently installs either bootsimple or zedBSD for the selected
+BusyBox/Debian product profile.
 """
 
 import argparse

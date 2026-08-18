@@ -274,7 +274,8 @@ if [ "$device_profile" = pc98 ]; then
 		--enable NET_VENDOR_NATSEMI \
 		--enable NET_VENDOR_8390 \
 		--enable NE2K_LGY98
-	if [ "$kernel_version" = 7.1 ] && [ "$cpu_family" != 386 ]; then
+	if { [ "$kernel_version" = 7.1 ] || [ "$kernel_version" = 7.2 ]; } &&
+		[ "$cpu_family" != 386 ]; then
 		# Native keyboard and mouse both use the Linux input subsystem.
 		# evdev exposes them as /dev/input/event* for Xorg and other users;
 		# keep it out of the deliberately tiny 80386 research image.

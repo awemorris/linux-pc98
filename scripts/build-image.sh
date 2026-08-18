@@ -14,11 +14,10 @@ Profiles:
   busybox-i386-scsi92   bootsimple, i386 BusyBox, 92 SCSI H=8/S=32
   busybox-i386-scsi55   bootsimple, i386 BusyBox, 55 SCSI H=8/S=17
   debian13-i486-ide     bootsimple, Debian/i486, IDE H=8/S=17
-  debian13-i486-scsi92  zedBSD, Debian/i486, 92 SCSI H=8/S=32
-  debian13-i486-scsi55  zedBSD, Debian/i486, 55 SCSI H=8/S=17
+  debian13-i486-scsi92  bootsimple, Debian/i486, 92 SCSI H=8/S=32
+  debian13-i486-scsi55  bootsimple, Debian/i486, 55 SCSI H=8/S=17
 
-New images use a 128 MiB FAT16 BOOT partition. Debian/zedBSD images contain
-a 64 MiB zedBSD /swapfile; bootsimple images do not.
+All public images use bootsimple and a 128 MiB FAT16 BOOT partition.
 
 Options:
   --kernel FILE         use a specific uncompressed ELF kernel
@@ -170,7 +169,7 @@ case "$profile" in
 		default_kernel="$repo/build/kernel-7.2-i486/vmlinux.boot"
 		;;
 	debian13-i486-scsi92)
-		image_bootloader=zedbsd
+		image_bootloader=bootsimple
 		sectors=32
 		root_device=PARTLABEL=DEBIAN13
 		kernel_extra_args="rootwait pc9801_scsi=92,mode=dma"
@@ -178,7 +177,7 @@ case "$profile" in
 		default_kernel="$repo/build/kernel-7.2-i486/vmlinux.boot"
 		;;
 	debian13-i486-scsi55)
-		image_bootloader=zedbsd
+		image_bootloader=bootsimple
 		root_device=PARTLABEL=DEBIAN13
 		kernel_extra_args="rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=async-pio"
 		default_rootfs="$repo/build/boot98/debian13-i486-root"

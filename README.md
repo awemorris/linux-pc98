@@ -3,13 +3,12 @@ Linux/pc98 Workspace
 
 This repository contains:
 
-- Linux: 7.1, i386SX/DX and i486SX/DX port, with NEC PC-9800 machine support
+- Linux: 7.2, i386SX/DX and i486SX/DX port, with NEC PC-9800 machine support
 - Debian: 13 "trixie", i486DX port, with NEC PC-9800 utils
 - glibc: 2.41, i486DX port
 - BusyBox: i386SX port
 - qemu: 11.0, NEC PC-9800 support with compatible BIOS
-- bootsimple: assembly-only FAT16 VMLINUX loader for the BusyBox images
-- zedBSD: boot OS used by the Debian images (external/zedBSD submodule)
+- bootsimple: assembly-only FAT16 VMLINUX loader for all public images
 
 Each component is reusable for other retro PCs.
 
@@ -65,8 +64,8 @@ directly, avoiding login timeouts and memory exhaustion on slower machines.
 | `external/gcc`, `external/musl`, `external/glibc` | Toolchain submodules; versioned patch inventory in `external/patchsets/` |
 | `external/debian-i486/` | Framework and patch database for the Debian 13/i486DX package port |
 | `configs/` | Debian-derived i686 base and versioned PC-98 configurations |
-| `bootsimple/` | Assembly PC-98 IPL, FAT16 PBR, and direct VMLINUX loader for BusyBox images |
-| `external/zedBSD/` | zedBSD boot OS submodule used as the Debian image bootloader and menu |
+| `bootsimple/` | Assembly PC-98 IPL, FAT16 PBR, and direct VMLINUX loader for all public images |
+| `external/zedBSD/` | Retained zedBSD development submodule; not used by public images |
 | `external/noct/` | NoctLang submodule used to precompile Remacs for product images |
 | `bootloader/` | Linux product overlay; `fs/` mirrors its BOOT FAT placement |
 | `scripts/` | Internal build, image, test, publication scripts and disk-image tools |
@@ -123,13 +122,9 @@ passed to `apt` manually. Use `./build.sh setup --help` for unattended and
 Root privileges are used when creating the Debian staging tree, installing
 kernel modules into it, and generating the ext4 filesystem image.
 
-The Debian images retain the prebuilt
-`external/zedBSD/platform/pc98/dos/linux98.exe`, stored as `LINUX98.EXE` in
-their FAT16 boot partitions. BusyBox images do not contain this DOS loader:
-their assembly-only `IO.SYS` loads VMLINUX directly. Normal builds therefore
-do not require OpenWatcom. Maintainers rebuilding `LINUX98.EXE` must install
-OpenWatcom 1.9 and run `./build.sh dos-loader`; set `WATCOM` if it is not
-installed at `/home/awe/openwatcom-1.9`.
+All public images use bootsimple's assembly-only `IO.SYS` to load VMLINUX
+directly through the PC-98 BIOS. Normal image and release builds do not
+require OpenWatcom or the zedBSD boot OS.
 
 ### Docker build environment
 
@@ -146,9 +141,7 @@ docker run --rm -it \
 
 Pass `--build-arg HOST_UID=$(id -u) --build-arg HOST_GID=$(id -g)` when the
 host user is not UID/GID 1000. Add `--device /dev/kvm` only when a test
-explicitly uses KVM; the normal PC-98 smoke tests use TCG. OpenWatcom is not
-redistributed in the image and must be mounted separately when building
-`LINUX98.EXE`; ordinary image builds use its checked-in binary.
+explicitly uses KVM; the normal PC-98 smoke tests use TCG.
 
 ## Headless serial-console tests
 
@@ -253,10 +246,8 @@ legacy small-disk geometry H=4/S=17. Other IDE profiles use H=8/S=17. PC-9801-92
 profiles use H=8/S=32 and therefore require a separate disk image even when
 the files stored in the partitions are identical. PC-9801-55-compatible
 profiles, including WINnote98, use H=8/S=17. Every release image has a
-128 MiB FAT16 BOOT partition. Debian images put zedBSD's 64 MiB `/swapfile`
-there; BusyBox images reserve the same partition size but contain only the
-direct-loader files and VMLINUX. This swapfile is separate from the Linux
-swap partition. The old profile names ending in plain `-scsi` remain aliases
+128 MiB FAT16 BOOT partition containing only the bootsimple direct-loader
+files and VMLINUX. The old profile names ending in plain `-scsi` remain aliases
 for `-scsi92`. Partition sizes are defined in
 bytes and rounded up to whole cylinders, so changing geometry does not nearly
 double the SCSI image capacity. The i386 IDE image uses the small `pc98_ide`
@@ -264,8 +255,8 @@ driver (`/dev/hda`, with a second disk at `/dev/hdb`); i386 SCSI and both
 i486/libata images use the standard
 SCSI disk namespace (`/dev/sda`).
 
-Both bootsimple and zedBSD/`LINUX98.EXE` pass the BIOS SENSE drive number and
-logical H/S to Linux in `SETUP_PC98_DISK` setup-data records. bootsimple also
+bootsimple passes the BIOS SENSE drive number and logical H/S to Linux in
+`SETUP_PC98_DISK` setup-data records. It also
 enumerates additional BIOS IDE drives. The PC-9801-55/92 driver uses the
 record when decoding the boot disk's NEC98 partition table. For an older
 loader which does not provide it, `pc9801_scsi=55` selects the 8/17 fallback;
@@ -307,41 +298,13 @@ MaxSyncSpeed = 5
 Debug = 0
 ```
 
-BusyBox images use bootsimple. Its LBA0 enters LBA2, the selector loads the
+All public images use bootsimple. Its LBA0 enters LBA2, the selector loads the
 PBR of the FAT16 partition named BOOT, and the PBR loads contiguous `IO.SYS`
 as an ordinary FAT file. `IO.SYS` is assembly code which SENSEs the disk,
 loads the root-directory file `VMLINUX` directly as ELF32, constructs Linux
 boot parameters and PC-98 disk setup-data, then enters Linux. Each phase is
 shown on the PC-98 text screen so a real-machine stop can be localized.
 `./build.sh bootsimple-test` verifies the loader and generated-image layout.
-
-Debian images retain zedBSD as the graphical boot OS. zedBSD starts `/bin/sh`;
-the Linux product overlay supplies `/etc/zinit.rc`, the Noct menu, Emacs and
-Holoris, and starts Linux through `/bin/linux`. A bare zedBSD image has no
-startup script and enters the shell directly.
-
-`INST.EXE` performs the three raw installation operations needed after a DOS
-partitioning/formatting tool has prepared the target volume.  Keep
-`IPL-LBA0.IMG`, `IPL-LBA2.IMG`, `IPL-PART.IMG`, and `IO.SYS` beside
-`INST.EXE`. Select the
-target partition as the current DOS drive before installing the disk IPL:
-
-```dos
-C:
-A:\INST /LBA0
-A:\INST /LBA2
-A:\INST /PART C:
-```
-
-The first two operations map the current DOS drive back to its physical IDE
-disk. `/PART` copies `IO.SYS` as a hidden/system/read-only FAT16 file,
-verifies its traditional contiguous system-file layout, and installs the
-1024-byte PBR while preserving the BPB. `BOOT.SYS`, `VMLINUX`, and
-`BOOT.CFG` remain ordinary DOS file copies.
-
-Every generated BOOT partition also contains `INST.EXE`, `IPL-LBA0.IMG`,
-`IPL-LBA2.IMG`, and `IPL-PART.IMG`, so the installed image itself can be used
-as the source for installing BOOT98 onto another DOS-visible disk.
 
 A test kernel can be installed while creating an image:
 
@@ -387,7 +350,7 @@ Local archives live under `${XDG_CACHE_HOME:-~/.cache}/linux-pc98/rootfs`.
 Fetches use HTTPS and verify both SHA-256 and xz integrity. Publication writes
 only to `www/noctvm.io/debian-i486/images/pc98/rootfs/`.
 
-The v0.6.0 Release set consists of the following persistent CF/HDD images.
+The release set consists of the following persistent CF/HDD images.
 The Debian images use the full PC-98 kernel configuration and require 64 MiB.
 
 | Image | Geometry and purpose | Userland | Minimum RAM | Raw size limit |
@@ -400,11 +363,10 @@ The Debian images use the full PC-98 kernel configuration and require 64 MiB.
 | `linux-pc98-i486dx-debian13-scsi92.img.xz` | PC-9801-92 SCSI H=8/S=32 | Debian 13/i486DX | 64 MiB | below 2 GB |
 
 Public images use the GDC screen and PC-98 keyboard as the console. The same
-release also contains `vmlinux-i386`, `vmlinux-i486-debian`, `linux98.exe`,
-`inst.exe`, `ipl-lba0.bin`, `ipl-lba2.bin`, their DOS `.img` copies,
-`ipl-part.img`, `IO.SYS`, `BOOT.SYS`,
-`boot.cfg`, and
-`qemu-pc98-win64.zip`. The Windows ZIP contains both i386 and x86_64 QEMU,
+release also contains `vmlinux-i386`, `vmlinux-i486-debian`,
+`bootsimple.zip`, and `qemu-pc98-win64.zip`. The bootsimple ZIP contains the
+six release profiles, source, installer, verifier, and tests. The Windows ZIP
+contains both i386 and x86_64 QEMU,
 `virtpc98.exe`, required DLLs, and the free PC-98 BIOS/SCSI BIOS files.
 
 The i386 BusyBox kernel includes the PC-9801-55/92-compatible host adapter,
@@ -422,7 +384,7 @@ partitions.
 | LBA 1 | PC-98 sixteen-entry partition table |
 | LBA 2 through 15 | Replaceable `ipl-lba2.bin` BOOT-partition selector |
 | BOOT partition reserved sector | 1024-byte FAT16 PBR/BPB (`ipl-part.img`) |
-| BOOT partition data area | FAT16 containing contiguous `IO.SYS`, `BOOT.SYS`, `boot.cfg`, non-compressed `VMLINUX`, and `LINUX98.EXE` |
+| BOOT partition data area | FAT16 containing contiguous `IO.SYS` and non-compressed `VMLINUX` |
 | Partition 2 | ext4 root filesystem, mounted as `/dev/sda2` |
 
 Native PC-98 images carry both the `IPL1` marker at offset 4 and the `55 AA`
@@ -437,16 +399,10 @@ same partition PBR. Its IPL and data-start CHS values are identical. The PBR
 loads the contiguous FAT file `IO.SYS`; the reserved 1024 bytes are outside
 the FAT cluster area and do not duplicate any part of that file.
 
-`./build.sh boot-install --partition N IMAGE VMLINUX BOOT.CFG` destructively
-recreates only the selected BOOT partition and preserves an NEC or third-party
-disk IPL at LBA 0 and LBA 2–15. Add `--install-disk-stubs` when the distributed LBA 0
-and LBA 2–15 stubs should also be installed.
-
-The kernel no longer overrides the command line supplied by BOOT98.
-`BOOT.CFG` in each image selects the matching root device. A manually
-installed standalone configuration should therefore use
-`root=PARTLABEL=LINUXROOT` (or `/dev/hda2` for a fixed single-disk setup) for the
-i386 IDE image and `/dev/sda2` for i386 SCSI or i486/libata images.
+`bootsimple/install-image.sh` recreates the selected BOOT partition and
+installs the disk IPL, partition selector, `IO.SYS`, and `VMLINUX`. The image
+profile compiles the matching root partition and SCSI parameters into the
+bootsimple command line.
 
 DOS may install its own PBR and filesystem in Partition 1. Reformatting it
 removes `VMLINUX`, so restore the kernel afterwards if the partition is to
@@ -495,7 +451,6 @@ The main environment-variable overrides are:
 | `DEBIAN_INCLUDE` | Comma-separated packages added to the rootfs |
 | `ROOT_PASSWORD` | Initial local test password; default `pc98` |
 | `BOOT_MB` | FAT16 boot partition size for BusyBox profiles; default 128 MiB |
-| `ZEDBSD_SWAPFILE_MB` | zedBSD BOOT swapfile size for Debian images; default 64 MiB (`0`, `32`, or `64`); BusyBox bootsimple images require `0` |
 | `ROOT_MB` | ext4 root partition size; default 200 MiB |
 | `BOOT_LOGO` | Optional 80 by 120 packed 1bpp logo for the boot screen |
 | `DIST_IMAGE_NAME` | Filename inside `dist/` before the `.xz` suffix |

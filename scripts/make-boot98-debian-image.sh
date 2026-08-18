@@ -13,7 +13,7 @@ heads="${DISK_HEADS:-8}"
 sectors="${DISK_SECTORS:-17}"
 swap_mb="${SWAP_MB:-128}"
 root_password="${ROOT_PASSWORD:-pc98}"
-bootloader="${BOOTLOADER:-zedbsd}"
+bootloader="${BOOTLOADER:-bootsimple}"
 bootsimple_profile="${BOOTSIMPLE_PROFILE:-}"
 bootsimple_cmdline="${BOOTSIMPLE_CMDLINE:-}"
 

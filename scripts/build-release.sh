@@ -14,7 +14,7 @@ usage()
 Usage: ./build.sh release [--version TAG] [--jobs N]
                           [--publish-rootfs-cache] [--no-win64]
 
-Build every public image, standalone kernel, bootloader ZIP, Release note,
+Build every public image, standalone kernel, bootsimple ZIP, Release note,
 and the qemu-pc98 Windows ZIP under build/releases. Raw images are retained
 locally; the distributable disk files are the .img.xz archives.
 EOF
@@ -105,9 +105,9 @@ copy_release_file()
 mkdir -p "$release_dir"
 test -f "$note" || { echo "Release note not found: $note" >&2; exit 1; }
 # Keep the staging directory unambiguous.  These files were uploaded by older
-# releases, but current releases publish the complete loader kit as
-# bootloader.zip.
+# releases, but current releases publish bootsimple.zip only.
 rm -f -- \
+	"$release_dir"/bootloader.zip \
 	"$release_dir"/boot.bin "$release_dir"/boot.sys \
 	"$release_dir"/boot.cfg "$release_dir"/IO.SYS \
 	"$release_dir"/BOOT.SYS "$release_dir"/inst.exe \
@@ -119,11 +119,9 @@ rm -f -- \
 ensure_rootfs busybox-i386 "$busybox_cache" "$busybox_root" bin/busybox
 ensure_debian_rootfs "$debian_root" "$debian_cache"
 
-echo "Verifying current zedBSD host/build and instruction gates"
-(
-	. "$repo/scripts/zedbsd-env.sh"
-	"$zedbsd/build.sh" check pc98 noct-m5-final-opcode-check
-)
+echo "Verifying bootsimple build and failure handling"
+"$repo/build.sh" bootsimple-test build
+"$repo/build.sh" bootsimple-test failures
 
 echo "Building i386 BusyBox IDE and SCSI images"
 SKIP_ROOTFS_BUILD=1 SKIP_KERNEL_BUILD=0 JOBS="$jobs" \
@@ -163,10 +161,6 @@ fi
 for profile in debian13-i486-ide debian13-i486-scsi55 debian13-i486-scsi92; do
 	"$repo/build.sh" release-image "$profile" --jobs "$jobs"
 done
-QEMU="${QEMU:-$repo/external/qemu-pc98/build/qemu-system-i386}" \
-PC98_BIOS_DIR="${PC98_BIOS_DIR:-$repo/external/qemu-pc98/roms/pc98bios}" \
-ZEDBSD_TEST_BASE="$release_dir/linux-pc98-i486dx-debian13-scsi55.img" \
-	"$repo/bootloader/tests/test-linux-handoff.sh"
 for debian_image in \
 	linux-pc98-i486dx-debian13-ide.img \
 	linux-pc98-i486dx-debian13-scsi55.img \
@@ -191,7 +185,6 @@ done
 copy_release_file "$repo/build/i386-video/kernel/vmlinux.boot" vmlinux-i386
 copy_release_file "$repo/build/kernel-7.2-i486/vmlinux.boot" vmlinux-i486-debian
 "$repo/build.sh" bootsimple
-"$repo/build.sh" bootloader-dist
 copy_release_file "$note" RELEASE-NOTES.md
 
 if test "$build_win64" -eq 1; then
@@ -207,7 +200,7 @@ fi
 		linux-pc98-i486dx-debian13-ide.img.xz \
 		linux-pc98-i486dx-debian13-scsi55.img.xz \
 		linux-pc98-i486dx-debian13-scsi92.img.xz \
-		vmlinux-i386 vmlinux-i486-debian bootsimple.zip bootloader.zip \
+		vmlinux-i386 vmlinux-i486-debian bootsimple.zip \
 		qemu-pc98-win64.zip >SHA256SUMS
 )
 printf 'Complete %s artifact set: %s\n' "$version" "$release_dir"

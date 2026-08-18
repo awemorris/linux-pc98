@@ -24,12 +24,21 @@ for command in cmp install python3 unzip zip; do
 	}
 done
 
-common_cmdline='vdso=0 console=tty0 earlyprintk=pc9800 root=PARTLABEL=LINUXROOT rootfstype=ext4 rw sysctl.vm.min_free_kbytes=64 sysctl.vm.dirty_background_bytes=32768 sysctl.vm.dirty_bytes=65536 sysctl.vm.vfs_cache_pressure=200 sysctl.vm.swappiness=100 sysctl.vm.page-cluster=0'
-profiles=(busybox-i386-ide busybox-i386-scsi55 busybox-i386-scsi92)
+cmdline_prefix='vdso=0 console=tty0 earlyprintk=pc9800'
+cmdline_suffix='rootfstype=ext4 rw sysctl.vm.min_free_kbytes=64 sysctl.vm.dirty_background_bytes=32768 sysctl.vm.dirty_bytes=65536 sysctl.vm.vfs_cache_pressure=200 sysctl.vm.swappiness=100 sysctl.vm.page-cluster=0'
+busybox_cmdline="$cmdline_prefix root=PARTLABEL=LINUXROOT $cmdline_suffix"
+debian_cmdline="$cmdline_prefix root=PARTLABEL=DEBIAN13 $cmdline_suffix rootwait"
+profiles=(
+	busybox-i386-ide busybox-i386-scsi55 busybox-i386-scsi92
+	debian13-i486-ide debian13-i486-scsi55 debian13-i486-scsi92
+)
 cmdlines=(
-	"$common_cmdline"
-	"$common_cmdline rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=async-pio"
-	"$common_cmdline rootwait pc9801_scsi=92,mode=dma"
+	"$busybox_cmdline"
+	"$busybox_cmdline rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=async-pio"
+	"$busybox_cmdline rootwait pc9801_scsi=92,mode=dma"
+	"$debian_cmdline"
+	"$debian_cmdline pc9801_scsi=55,irq=5,dma=0,clock=12,mode=async-pio"
+	"$debian_cmdline pc9801_scsi=92,mode=dma"
 )
 
 mkdir -p "$release_dir" "$(dirname "$output")"

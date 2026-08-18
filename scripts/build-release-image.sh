@@ -68,23 +68,10 @@ verify_bootloader()
 {
 	local selected="$1" image="$2" sectors loader
 	case "$selected" in
-		busybox-i386-ide | busybox-i386-scsi55 | debian13-i486-ide)
+		busybox-i386-ide | busybox-i386-scsi55 | debian13-i486-ide | debian13-i486-scsi55)
 			sectors=17 ;;
-		busybox-i386-scsi92)
+		busybox-i386-scsi92 | debian13-i486-scsi92)
 			sectors=32 ;;
-		debian13-*)
-			test "$(od -An -tx1 -j4 -N4 "$image" | tr -d ' \n')" = \
-				49504c31 || {
-				echo "Release image lacks the IPL1 marker: $image" >&2
-				return 1
-			}
-			test "$(od -An -tx1 -j510 -N2 "$image" | tr -d ' \n')" = \
-				55aa || {
-				echo "Release image lacks the PC-9821 IPL signature: $image" >&2
-				return 1
-			}
-			printf 'Release bootloader: zedBSD (%s)\n' "$selected"
-			return ;;
 		*) return 2 ;;
 	esac
 	loader="$repo/build/bootsimple/$selected"

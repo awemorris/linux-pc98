@@ -316,7 +316,7 @@ def main() -> int:
             "## ELF payloads not owned by a Debian package",
             "",
             f"Found **{len(unowned_payloads)}** unowned ELF files. In this image these",
-            "are Linux 7.1 modules installed by `make modules_install`; they are",
+            "are Linux 7.2 modules installed by `make modules_install`; they are",
             "project build products rather than files from a `.deb` package.",
             "",
         ]

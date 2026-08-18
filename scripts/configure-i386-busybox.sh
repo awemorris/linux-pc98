@@ -2,13 +2,13 @@
 set -eu
 
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-source="$repo/external/kernel/linux-7.1"
+source="$repo/external/kernel/linux-7.2"
 console_mode="${I386_CONSOLE:-video}"
 cpu_family="${CPU_FAMILY:-386}"
 build="${I386_KERNEL_BUILD:-$repo/build/i386-busybox/kernel}"
 config="$build/.config"
-base="$repo/configs/pc9800-i386-4m6-7.1.config"
-output="${I386_CONFIG_OUTPUT:-$repo/configs/pc9800-i386-busybox-7.1.config}"
+base="$repo/configs/pc9800-i386-4m6-7.2.config"
+output="${I386_CONFIG_OUTPUT:-$repo/configs/pc9800-i386-busybox-7.2.config}"
 sc="$source/scripts/config"
 
 case "$cpu_family" in

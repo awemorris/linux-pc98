@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-kernel_version="${KERNEL_VERSION:-7.1}"
+kernel_version="${KERNEL_VERSION:-7.2}"
 source="${KERNEL_SOURCE:-$repo/external/kernel/linux-$kernel_version}"
 cpu_family="${CPU_FAMILY:-686}"
 device_profile="${DEVICE_PROFILE:-}"
@@ -98,7 +98,7 @@ make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 	--disable CMDLINE_OVERRIDE \
 	--set-str CMDLINE \
 	"$console_args earlyprintk=pc9800 root=/dev/sda2 rootfstype=ext4 rw"
-if [ "$kernel_version" = 7.1 ]; then
+if [ "$kernel_version" = 7.1 ] || [ "$kernel_version" = 7.2 ]; then
 	# Core-Graph is not a conventional PCI VGA function, so fbcon must not
 	# restrict attachment to the framebuffer it considers primary.
 	"$source/scripts/config" --file "$kernel_build/.config" \
@@ -284,7 +284,7 @@ if [ "$device_profile" = pc98 ]; then
 	fi
 	make -C "$source" O="$kernel_build" ARCH=i386 olddefconfig
 fi
-if [ "$kernel_version" = 7.1 ]; then
+if [ "$kernel_version" = 7.1 ] || [ "$kernel_version" = 7.2 ]; then
 	# Core-Graph has no standard PCI framebuffer BAR.  The Debian/i486 image
 	# needs its fbdev driver built in so /dev/fb0 exists before Xorg probes
 	# video.  Keep the i686 variant explicitly loaded and the tiny i386

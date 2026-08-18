@@ -60,7 +60,7 @@ directly, avoiding login timeouts and memory exhaustion on slower machines.
 | Path | Contents |
 | --- | --- |
 | `external/kernel/linux-2.6.7-pc98-original/` | Immutable last-complete upstream PC-9800 source snapshot from immediately before its 2004 removal |
-| `external/kernel/linux-7.1/` | Linux 7.1 source tree with the clean PC-98 port integrated |
+| `external/kernel/linux-7.2/` | Linux 7.2 source tree with the clean PC-98 port integrated |
 | `external/qemu-pc98/` | qemu-pc98 submodule used for i386 and PC-98 validation |
 | `external/gcc`, `external/musl`, `external/glibc` | Toolchain submodules; versioned patch inventory in `external/patchsets/` |
 | `external/debian-i486/` | Framework and patch database for the Debian 13/i486DX package port |
@@ -80,7 +80,7 @@ replay check.
 
 The historical Linux 2.6.7 tree is retained as immutable source and
 provenance material; it is not used by the build. The direct clean port to
-the current Linux 7.1 tree is documented in `external/kernel/audit/`.
+the current Linux 7.2 tree is documented in `external/kernel/audit/`.
 
 ## glibc 2.41 ports
 
@@ -172,7 +172,7 @@ Run `./build.sh test --help` for QEMU, BIOS, memory, and image overrides.
 
 ## Complete Debian image build
 
-Linux 7.1 is the only maintained kernel tree and the default build target:
+Linux 7.2 is the only maintained kernel tree and the default build target:
 
 ```sh
 ./build.sh debian
@@ -185,11 +185,11 @@ Pentium II or newer systems. The script then builds Linux, installs the
 modules, builds the PC-98 loaders, and creates:
 
 ```text
-build/qemu-pc98-linux-7.1.raw
+build/qemu-pc98-linux-7.2.raw
 ```
 
-The kernel is built out of tree in `build/kernel-7.1`; `external/kernel/linux-7.1/` remains
-a source-only directory. `KERNEL_VERSION=7.1` may still be specified
+The kernel is built out of tree in `build/kernel-7.2`; `external/kernel/linux-7.2/` remains
+a source-only directory. `KERNEL_VERSION=7.2` may still be specified
 explicitly for automated builds.
 
 The individual build stages can also be run separately:
@@ -480,12 +480,12 @@ The main environment-variable overrides are:
 
 | Variable | Default or purpose |
 | --- | --- |
-| `KERNEL_VERSION` | `7.1` (the maintained kernel source) |
+| `KERNEL_VERSION` | `7.2` (the maintained kernel source; set `7.1` for the retained previous tree) |
 | `KERNEL_SOURCE` | `linux-$KERNEL_VERSION` |
 | `JOBS` | `nproc`; parallel kernel build job count |
 | `KERNEL_BUILD` | `build/kernel-$KERNEL_VERSION` |
 | `CPU_FAMILY` | `686`; use `486` or `386` for the completed PC-98 low-generation ports |
-| `DEVICE_PROFILE` | Linux 7.1 defaults to `pc98`; use `full` for the full Debian driver catalogue |
+| `DEVICE_PROFILE` | Linux 7.2 defaults to `pc98`; use `full` for the full Debian driver catalogue |
 | `CONSOLE_MODE` | `video`; use `dual` only for a private GDC plus serial diagnostic build |
 | `INSTALL_MODULES` | `1`; set to `0` to skip `modules_install` |
 | `OUTPUT_IMAGE` | Version-specific raw image path |
@@ -506,7 +506,7 @@ existing rootfs from being overwritten accidentally.
 Use the separately maintained Debian/i486DX port rather than the official
 Debian archive on i486DX, Pentium, and Pentium MMX systems.
 
-Linux 7.1 uses the `pc98` device profile by default. It retains the PCI core
+Linux 7.2 uses the `pc98` device profile by default. It retains the PCI core
 required by `pc9821`, the PC-98 IDE and framebuffer drivers, and standard
 USB 1.x/2.0 UHCI/OHCI/EHCI host controllers. The framebuffer console is
 built in. The Debian/i486 configuration builds in the Core-Graph Cirrus driver
@@ -526,17 +526,17 @@ The untrimmed Debian driver catalogue remains available for comparison:
 ./build.sh kernel --cpu 686 --profile full
 ```
 
-## Linux 7.1 port status
+## Linux 7.2 port status
 
-The `external/kernel/linux-7.1/` tree is based on the official Linux v7.1 release. PC-98
+The `external/kernel/linux-7.2/` tree is based on the official Linux v7.2 release. PC-98
 support was cleanly and directly reconstructed from the official final
 Linux/PC-98 2.6.7 sources, with current APIs and independently maintained
 project code documented in `external/kernel/audit/PC98-PORTING-REPORT.md`.
-Linux 7.1 changed
+Current Linux uses
 partition-parser logging to `struct seq_buf`; the NEC98 parser follows the
 new API.
 
-Linux 7.1 supports the PC-98 `CONFIG_M386=y`, `CONFIG_M486=y`, and
+Linux 7.2 supports the PC-98 `CONFIG_M386=y`, `CONFIG_M486=y`, and
 `CONFIG_M686=y` targets. The lower-generation work restores the x86 i386 and
 i486 configurations removed by upstream Linux and supports i386SX, i386DX,
 i486SX, and i486DX hardware. The small i386 and i486 release images use a
@@ -545,7 +545,7 @@ custom Debian port.
 
 The trimmed kernel and module set build successfully. The generated
 two-partition image boots under qemu-pc98 with TCG, mounts the Debian 13 ext4
-root filesystem, reaches the login prompt, and reports Linux 7.1.0 i686.
+root filesystem, reaches the login prompt, and reports Linux 7.2.0 i686.
 
 To build and run the small BusyBox image:
 
@@ -565,7 +565,7 @@ Set `BUSYBOX_WORK` or `ROOT_STAGE` to override their default build and staging
 directories when invoking the lower-level scripts directly.
 
 The i486 image mounts its ext4 root, starts BusyBox init, reaches an
-interactive shell, and reports Linux 7.1.0-i486 under qemu-pc98 and on a
+interactive shell, and reports Linux 7.2.0-i486 under qemu-pc98 and on a
 physical PC-9821 Ra43. The i386 build has also booted on qemu-pc98 and
 physical i386 PC-98 systems.
 
@@ -596,8 +596,8 @@ driver-table entry. The adapter has been detected on physical Ra43 hardware.
 ./build.sh run
 ```
 
-Use `KERNEL_VERSION=7.1 ./build.sh run` for
-`build/qemu-pc98-linux-7.1.raw`.
+Use `KERNEL_VERSION=7.2 ./build.sh run` for
+`build/qemu-pc98-linux-7.2.raw`.
 
 This image requires the PC-98-enabled qemu-pc98 build; upstream QEMU does not
 provide the required machine and device implementations.
@@ -664,7 +664,7 @@ resolution/depth pairs with `FBIOPUT_VSCREENINFO`.
 ## Native input devices
 
 The PC-98 keyboard driver already reports keys through the Linux input
-subsystem. The normal i486/i686 Linux 7.1 profiles now enable `evdev`, so the
+subsystem. The normal i486/i686 Linux 7.2 profiles now enable `evdev`, so the
 keyboard is available as `/dev/input/event0` as well as the console keyboard.
 The native IRQ 13 PC-98 bus mouse is handled by the `pc98busmouse` module and
 reports through both mousedev and evdev after `modprobe pc98busmouse`. In the

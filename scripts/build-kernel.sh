@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-kernel_version="${KERNEL_VERSION:-7.1}"
+kernel_version="${KERNEL_VERSION:-7.2}"
 source="${KERNEL_SOURCE:-$repo/external/kernel/linux-$kernel_version}"
 default_kernel_build="$repo/build/kernel-$kernel_version"
 kernel_build="${KERNEL_BUILD:-$default_kernel_build}"

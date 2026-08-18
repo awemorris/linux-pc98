@@ -11,8 +11,8 @@ Usage: ./build.sh test PROFILE [options]
        ./build.sh test list
 
 Profiles:
-  busybox-i386    Linux 7.1/i386 + BusyBox, 8 MiB, serial shell
-  debian13-i486   Linux 7.1/i486 + Debian 13, 64 MiB, serial login
+  busybox-i386    Linux 7.2/i386 + BusyBox, 8 MiB, serial shell
+  debian13-i486   Linux 7.2/i486 + Debian 13, 64 MiB, serial login
 
 Options:
   --image FILE       run an already prepared serial-console image

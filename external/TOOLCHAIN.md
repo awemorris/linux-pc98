@@ -46,7 +46,7 @@ release tarball managed by Buildroot.
 ## glibc 2.41 genuine-i386 validation
 
 The glibc port depends on the versioned atomic service in this repository's
-Linux 7.1 tree. It is deliberately enabled only for an exact i386 build;
+Linux 7.2 tree. It is deliberately enabled only for an exact i386 build;
 i486 uses the normal glibc code and native CPU atomics.
 
 ```sh

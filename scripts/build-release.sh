@@ -152,7 +152,7 @@ done
 echo "Building the shared Debian/i486 kernel and modules"
 ROOT_STAGE="$debian_root" INSTALL_MODULES=1 \
 	"$repo/build.sh" kernel --cpu 486 --profile pc98 \
-	--output-dir "$repo/build/kernel-7.1-i486" --jobs "$jobs"
+	--output-dir "$repo/build/kernel-7.2-i486" --jobs "$jobs"
 "$repo/build.sh" rootfs-cache store "$busybox_cache" "$busybox_root" >/dev/null
 "$repo/build.sh" rootfs-cache store "$debian_cache" "$debian_root" >/dev/null
 if test "$publish_rootfs" -eq 1; then
@@ -189,7 +189,7 @@ for raw in \
 done
 
 copy_release_file "$repo/build/i386-video/kernel/vmlinux.boot" vmlinux-i386
-copy_release_file "$repo/build/kernel-7.1-i486/vmlinux.boot" vmlinux-i486-debian
+copy_release_file "$repo/build/kernel-7.2-i486/vmlinux.boot" vmlinux-i486-debian
 "$repo/build.sh" bootsimple
 "$repo/build.sh" bootloader-dist
 copy_release_file "$note" RELEASE-NOTES.md

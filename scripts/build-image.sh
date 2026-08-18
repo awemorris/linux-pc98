@@ -167,7 +167,7 @@ case "$profile" in
 		root_device=PARTLABEL=DEBIAN13
 		kernel_extra_args="rootwait"
 		default_rootfs="$repo/build/boot98/debian13-i486-root"
-		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
+		default_kernel="$repo/build/kernel-7.2-i486/vmlinux.boot"
 		;;
 	debian13-i486-scsi92)
 		image_bootloader=zedbsd
@@ -175,14 +175,14 @@ case "$profile" in
 		root_device=PARTLABEL=DEBIAN13
 		kernel_extra_args="rootwait pc9801_scsi=92,mode=dma"
 		default_rootfs="$repo/build/boot98/debian13-i486-root"
-		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
+		default_kernel="$repo/build/kernel-7.2-i486/vmlinux.boot"
 		;;
 	debian13-i486-scsi55)
 		image_bootloader=zedbsd
 		root_device=PARTLABEL=DEBIAN13
 		kernel_extra_args="rootwait pc9801_scsi=55,irq=5,dma=0,clock=12,mode=async-pio"
 		default_rootfs="$repo/build/boot98/debian13-i486-root"
-		default_kernel="$repo/build/kernel-7.1-i486/vmlinux.boot"
+		default_kernel="$repo/build/kernel-7.2-i486/vmlinux.boot"
 		;;
 	*)
 		echo "Unknown image profile: $profile" >&2

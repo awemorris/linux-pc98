@@ -19,12 +19,12 @@ case "$console_mode" in
 dual)
 	profile="i${cpu_family}-busybox"
 	default_buildroot_work="$repo/build/i386-buildroot"
-	default_output="$repo/build/$profile/linux-7.1-pc98-i${cpu_family}-busybox-swap.img"
+	default_output="$repo/build/$profile/linux-7.2-pc98-i${cpu_family}-busybox-swap.img"
 	;;
 video)
 	profile="i${cpu_family}-video"
 	default_buildroot_work="$repo/build/i386-video/buildroot"
-	default_output="$repo/build/$profile/linux-7.1-pc98-i${cpu_family}-busybox.img"
+	default_output="$repo/build/$profile/linux-7.2-pc98-i${cpu_family}-busybox.img"
 	;;
 *)
 	echo "unsupported I386_CONSOLE mode: $console_mode" >&2
@@ -63,7 +63,7 @@ if [ "$skip_kernel_build" = 0 ]; then
 	I386_KERNEL_BUILD="$kernel_build" \
 	I386_CONFIG_OUTPUT="$config_output" \
 		"$repo/scripts/configure-i386-busybox.sh"
-	make -C "$repo/external/kernel/linux-7.1" O="$kernel_build" ARCH=i386 -j"$jobs" vmlinux
+	make -C "$repo/external/kernel/linux-7.2" O="$kernel_build" ARCH=i386 -j"$jobs" vmlinux
 	objcopy --strip-all "$kernel_build/vmlinux" "$boot_vmlinux"
 	chmod 0644 "$boot_vmlinux"
 elif [ "$skip_kernel_build" = 1 ]; then
@@ -121,7 +121,7 @@ proc	/proc	proc	defaults	0	0
 sysfs	/sys	sysfs	defaults	0	0
 EOF
 
-KERNEL_VERSION=7.1 \
+KERNEL_VERSION=7.2 \
 KERNEL_BUILD="$kernel_build" \
 KERNEL_IMAGE="$boot_vmlinux" \
 ROOT_STAGE="$image_root_stage" \

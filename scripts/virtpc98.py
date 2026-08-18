@@ -1355,8 +1355,8 @@ def fdd_format_of(path):
 
 SETTINGS = "virtpc98.ini"
 SECTION = "virtpc98"
-# The Windows package ships both system emulators.  Use i386 for the period
-# CPU choices and switch to x86_64 only for Intel 64-bit.
+# The Windows package ships both system emulators.  Use i386 for 32-bit CPU
+# choices and switch to x86_64 for Core 2 and later models.
 QEMU_X86_64_NAMES = ("qemu-system-x86_64.exe",
                      "qemu-system-x86_64w.exe",
                      "qemu-system-x86_64")
@@ -1478,27 +1478,58 @@ def relaunch_elevated():
     return code > 32
 
 
-MACHINE_CHOICES = ("PC-9801", "PC-9821")
-MACHINE_ARG = {"PC-9801": "pc9801", "PC-9821": "pc9821"}
+MACHINE_CHOICES = ("PC-9801", "PC-9821", "IBM PC Compatible")
+MACHINE_ARG = {"PC-9801": "pc9801", "PC-9821": "pc9821",
+               "IBM PC Compatible": "pc"}
 
-CPU_CHOICES = ("386SX", "386DX", "486DX", "Pentium", "Pentium 2",
-               "Pentium 3", "Pentium 4", "Intel 64-bit")
-CPU_DEFAULT = "486DX"
+CPU_CHOICES = (
+    "i386SX", "i386DX", "i486SX", "i486DX", "Pentium", "MMX Pentium",
+    "AMD K6", "Cyrix 6x86", "Pentium Pro", "Pentium 2", "Pentium 3",
+    "Pentium 4 (Willamette)", "Pentium 4 (Northwood)",
+    "Pentium 4 (Prescott)", "Pentium M (Dothan)", "Core Duo",
+    "Core 2 Duo", "Core i7 (Nehalem)", "Core i7 (Westmere)",
+    "Core i7 (Sandy Bridge)", "Core i7 (Ivy Bridge)",
+    "Core i7 (Haswell)", "Core i7 (Broadwell)", "Core i7 (Skylake)")
+CPU_DEFAULT = "i486DX"
 CPU_ARG = {
-    # QEMU has one 80386 model; the SX/DX distinction is the external bus,
-    # which its PC-98 machine does not expose as a separate CPU property.
-    "386SX": "386",
-    "386DX": "386",
-    "486DX": "486",
+    # PC-98 convention treated the common i386SX configurations as lacking
+    # an FPU and the i386DX configurations as having one.  QEMU does not
+    # model the SX external bus width, but it can expose that FPU distinction.
+    "i386SX": "386,-fpu",
+    "i386DX": "386,+fpu",
+    "i486SX": "486,-fpu",
+    "i486DX": "486",
     "Pentium": "pentium",
+    "MMX Pentium": "pentium,model=4,stepping=3,+mmx",
+    # QEMU has no dedicated K6 or 6x86 model.  These retain the compatible
+    # Pentium execution core while presenting the historically useful CPUID.
+    "AMD K6": "pentium,vendor=AuthenticAMD,family=5,model=6,stepping=1,+mmx",
+    "Cyrix 6x86": "pentium,vendor=CyrixInstead,family=5,model=2,stepping=5",
+    "Pentium Pro": "pentium2,family=6,model=1,stepping=9,-mmx",
     "Pentium 2": "pentium2",
     "Pentium 3": "pentium3",
-    # QEMU has no named Pentium 4 model.  Its qemu32 feature set with family
-    # 15 gives the PC-9821 SMP validation the intended NetBurst-class CPU.
-    "Pentium 4": "qemu32,family=15,model=2,stepping=9",
-    "Intel 64-bit": "core2duo",
+    # QEMU has no named NetBurst or Pentium M models, so keep their execution
+    # feature set in qemu32 and provide the corresponding Intel CPUID values.
+    "Pentium 4 (Willamette)":
+        "qemu32,vendor=GenuineIntel,family=15,model=1,stepping=2,-pni",
+    "Pentium 4 (Northwood)":
+        "qemu32,vendor=GenuineIntel,family=15,model=2,stepping=9,-pni",
+    "Pentium 4 (Prescott)":
+        "qemu32,vendor=GenuineIntel,family=15,model=3,stepping=4,+pni",
+    "Pentium M (Dothan)":
+        "qemu32,vendor=GenuineIntel,family=6,model=13,stepping=8,-pni",
+    "Core Duo": "coreduo",
+    "Core 2 Duo": "core2duo",
+    "Core i7 (Nehalem)": "Nehalem",
+    "Core i7 (Westmere)": "Westmere",
+    "Core i7 (Sandy Bridge)": "SandyBridge",
+    "Core i7 (Ivy Bridge)": "IvyBridge",
+    "Core i7 (Haswell)": "Haswell",
+    "Core i7 (Broadwell)": "Broadwell",
+    "Core i7 (Skylake)": "Skylake-Client",
 }
-SMP_CPU_CHOICES = CPU_CHOICES[4:]
+CPU_64BIT_CHOICES = frozenset(CPU_CHOICES[16:])
+SMP_CPU_CHOICES = frozenset(CPU_CHOICES[9:])
 CORE_CHOICES = ("1", "2", "3", "4", "5", "6", "7", "8")
 
 GRAPHICS_GDC = "GDC (640x480 16-color)"
@@ -1509,6 +1540,8 @@ GRAPHICS_PEGC_CIRRUS = "PEGC + Cirrus Core Graph"
 PC9801_GRAPHICS = (GRAPHICS_GDC,)
 PC9821_GRAPHICS = (GRAPHICS_GDC, GRAPHICS_PEGC, GRAPHICS_CIRRUS,
                    GRAPHICS_PEGC_CIRRUS)
+GRAPHICS_VGA = "Standard VGA"
+IBM_GRAPHICS = (GRAPHICS_VGA,)
 
 LEGACY_GRAPHICS_GDC = "GDC (640x400)"
 LEGACY_GRAPHICS_CIRRUS = "GDC (640x400) + Cirrus (-1024x768)"
@@ -1526,7 +1559,9 @@ def machine_value(value):
         return "pc9801"
     if lowered in ("pc9821", "9821"):
         return "pc9821"
-    raise ValueError("unknown PC-98 machine: %s" % value)
+    if lowered in ("pc", "ibm", "ibm-pc", "ibm pc", "ibm pc compatible"):
+        return "pc"
+    raise ValueError("unknown machine: %s" % value)
 
 
 def cpu_label(value):
@@ -1535,14 +1570,37 @@ def cpu_label(value):
     if value in CPU_CHOICES:
         return value
     aliases = {
-        "386": "386DX", "386sx": "386SX", "386dx": "386DX",
-        "486": "486DX", "486dx": "486DX", "pentium": "Pentium",
+        "386": "i386DX", "386sx": "i386SX", "i386sx": "i386SX",
+        "386dx": "i386DX", "i386dx": "i386DX",
+        "486": "i486DX", "486sx": "i486SX", "i486sx": "i486SX",
+        "486dx": "i486DX", "i486dx": "i486DX", "pentium": "Pentium",
+        "pentium-mmx": "MMX Pentium", "pentium mmx": "MMX Pentium",
+        "mmx pentium": "MMX Pentium", "k6": "AMD K6",
+        "amd k6": "AMD K6", "6x86": "Cyrix 6x86",
+        "cyrix": "Cyrix 6x86", "cyrix 6x86": "Cyrix 6x86",
+        "pentiumpro": "Pentium Pro", "pentium pro": "Pentium Pro",
         "pentium2": "Pentium 2", "pentium 2": "Pentium 2",
         "pentium3": "Pentium 3", "pentium 3": "Pentium 3",
-        "pentium4": "Pentium 4", "pentium 4": "Pentium 4",
-        "core2duo": "Intel 64-bit", "qemu64": "Intel 64-bit",
-        "x86_64": "Intel 64-bit", "intel64": "Intel 64-bit",
-        "intel 64-bit": "Intel 64-bit",
+        "pentium4": "Pentium 4 (Northwood)",
+        "pentium 4": "Pentium 4 (Northwood)",
+        "willamette": "Pentium 4 (Willamette)",
+        "northwood": "Pentium 4 (Northwood)",
+        "prescott": "Pentium 4 (Prescott)",
+        "pentium m": "Pentium M (Dothan)", "dothan": "Pentium M (Dothan)",
+        "coreduo": "Core Duo", "core duo": "Core Duo",
+        "core2duo": "Core 2 Duo", "core 2 duo": "Core 2 Duo",
+        # Preserve the old broad 64-bit selection as the oldest matching
+        # concrete processor rather than invalidating saved configurations.
+        "qemu64": "Core 2 Duo", "x86_64": "Core 2 Duo",
+        "intel64": "Core 2 Duo", "intel 64-bit": "Core 2 Duo",
+        "nehalem": "Core i7 (Nehalem)", "westmere": "Core i7 (Westmere)",
+        "sandybridge": "Core i7 (Sandy Bridge)",
+        "sandy bridge": "Core i7 (Sandy Bridge)",
+        "ivybridge": "Core i7 (Ivy Bridge)",
+        "ivy bridge": "Core i7 (Ivy Bridge)",
+        "haswell": "Core i7 (Haswell)",
+        "broadwell": "Core i7 (Broadwell)",
+        "skylake": "Core i7 (Skylake)",
     }
     normalized = aliases.get(value.lower())
     if normalized:
@@ -1566,8 +1624,8 @@ def validate_cpu_config(cfg):
     machine = machine_value(cfg.get("machine"))
     cpu = cpu_label(cfg.get("cpu"))
     cores = core_count(cfg.get("cores"))
-    if cores > 1 and machine != "pc9821":
-        raise ValueError("Cores greater than 1 require PC-9821")
+    if cores > 1 and machine == "pc9801":
+        raise ValueError("Cores greater than 1 require PC-9821 or IBM PC")
     if cores > 1 and cpu not in SMP_CPU_CHOICES:
         raise ValueError("Cores greater than 1 require Pentium 2 or later")
     return machine, cpu, cores
@@ -1578,7 +1636,7 @@ def qemu_executable(path, cpu):
     base = os.path.basename(path).lower()
     x64_names = tuple(name.lower() for name in QEMU_X86_64_NAMES)
     i386_names = tuple(name.lower() for name in QEMU_I386_NAMES)
-    wants_x64 = cpu == "Intel 64-bit"
+    wants_x64 = cpu in CPU_64BIT_CHOICES
     wanted = QEMU_X86_64_NAMES if wants_x64 else QEMU_I386_NAMES
     if base in (x64_names if wants_x64 else i386_names):
         return path
@@ -1600,7 +1658,7 @@ def qemu_executable(path, cpu):
         if found:
             return found
         if wants_x64:
-            raise ValueError("Intel 64-bit requires qemu-system-x86_64")
+            raise ValueError("%s requires qemu-system-x86_64" % cpu)
     # A custom executable or wrapper cannot be identified by its basename.
     return path
 
@@ -1610,6 +1668,8 @@ def graphics_value(value):
     value = str(value or GRAPHICS_CIRRUS).strip()
     aliases = {"gdc": GRAPHICS_GDC, "cirrus": GRAPHICS_CIRRUS,
                "pegc": GRAPHICS_PEGC,
+               "vga": GRAPHICS_VGA, "standard-vga": GRAPHICS_VGA,
+               "standard vga": GRAPHICS_VGA,
                "pegc-cirrus": GRAPHICS_PEGC_CIRRUS,
                "pegc+cirrus": GRAPHICS_PEGC_CIRRUS,
                "cirrus+pegc": GRAPHICS_PEGC_CIRRUS,
@@ -1627,11 +1687,14 @@ def graphics_has_pegc(value):
 def qemu_machine(cfg):
     """Return the complete -M value for the selected display hardware."""
     machine = machine_value(cfg.get("machine"))
-    graphics = graphics_value(cfg.get("graphics"))
-    allowed = PC9801_GRAPHICS if machine == "pc9801" else PC9821_GRAPHICS
+    default_graphics = {"pc9801": GRAPHICS_GDC, "pc9821": GRAPHICS_CIRRUS,
+                        "pc": GRAPHICS_VGA}[machine]
+    graphics = graphics_value(cfg.get("graphics") or default_graphics)
+    allowed = {"pc9801": PC9801_GRAPHICS, "pc9821": PC9821_GRAPHICS,
+               "pc": IBM_GRAPHICS}[machine]
     if graphics not in allowed:
         raise ValueError("%s is not available on %s" % (graphics, machine))
-    if machine == "pc9801":
+    if machine != "pc9821":
         return machine
     return "%s,pegc=%s,coregraph=%s" % (
         machine,
@@ -1640,27 +1703,29 @@ def qemu_machine(cfg):
                               GRAPHICS_PEGC_CIRRUS) else "off")
 
 
-def free_tcp_port():
-    """Reserve an ephemeral localhost port number for QEMU's QMP server."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-    finally:
-        sock.close()
-
-
 class QmpClient:
-    """Small synchronous QMP client used only for removable media."""
+    """Small synchronous QMP client used by the launcher controls."""
 
-    def __init__(self, port):
+    def __init__(self, port=None):
         self.port = port
         self.sock = None
         self.reader = None
+        self.writer = None
         self.lock = threading.Lock()
         self.serial = 0
 
     def connect(self, process, timeout=8.0):
+        if self.port is None:
+            # QMP over the child's pipes avoids Windows Firewall treating the
+            # i386 and x86_64 executables as two unrelated TCP servers.
+            self.reader = process.stdout
+            self.writer = process.stdin
+            greeting = self._read_message()
+            if "QMP" not in greeting:
+                raise RuntimeError("invalid QMP greeting")
+            self.command("qmp_capabilities")
+            return
+
         deadline = time.monotonic() + timeout
         last_error = None
         while time.monotonic() < deadline:
@@ -1671,6 +1736,7 @@ class QmpClient:
                     ("127.0.0.1", self.port), timeout=0.5)
                 self.sock.settimeout(5.0)
                 self.reader = self.sock.makefile("r", encoding="utf-8")
+                self.writer = self.sock.makefile("wb")
                 greeting = self._read_message()
                 if "QMP" not in greeting:
                     raise RuntimeError("invalid QMP greeting")
@@ -1695,7 +1761,8 @@ class QmpClient:
             if arguments:
                 request["arguments"] = arguments
             wire = (json.dumps(request, separators=(",", ":")) + "\n")
-            self.sock.sendall(wire.encode("utf-8"))
+            self.writer.write(wire.encode("utf-8"))
+            self.writer.flush()
             while True:
                 reply = self._read_message()
                 # Events may arrive between a request and its reply.
@@ -1707,9 +1774,15 @@ class QmpClient:
                 return reply.get("return")
 
     def close(self):
-        reader, sock = self.reader, self.sock
+        reader, writer, sock = self.reader, self.writer, self.sock
         self.reader = None
+        self.writer = None
         self.sock = None
+        if writer is not None:
+            try:
+                writer.close()
+            except OSError:
+                pass
         if reader is not None:
             try:
                 reader.close()
@@ -1729,7 +1802,7 @@ def qemu_command(cfg):
     channel as hard disks, so the 1st/2nd disk and a mounted folder compete
     for those; the secondary channel is the CD-ROM's.
     """
-    _machine, cpu, cores = validate_cpu_config(cfg)
+    machine, cpu, cores = validate_cpu_config(cfg)
     argv = [qemu_executable(cfg["qemu"], cpu),
             "-M", qemu_machine(cfg),
             "-cpu", CPU_ARG[cpu], "-smp", str(cores),
@@ -1741,7 +1814,9 @@ def qemu_command(cfg):
         argv += ["-accel", "kvm"]
     elif cfg.get("hyperv"):
         argv += ["-accel", "whpx"]
-    if cfg.get("roms"):
+    # The BIOS Folder control contains PC-98 firmware.  IBM PC uses QEMU's
+    # standard PC firmware and must not search the PC-98-only directory.
+    if machine != "pc" and cfg.get("roms"):
         argv += ["-L", cfg["roms"]]
     for unit, key in enumerate(("fdd1", "fdd2")):
         image = cfg.get(key)
@@ -1752,7 +1827,7 @@ def qemu_command(cfg):
     disks = [(k, cfg.get(k)) for k in ("hdd1", "hdd2", "mount") if cfg.get(k)]
     for unit, (key, value) in enumerate(disks[:2]):
         if key == "mount":
-            value = "fat98:rw:" + value
+            value = ("fat:rw:" if machine == "pc" else "fat98:rw:") + value
         argv += ["-drive",
                  "if=ide,bus=0,unit=%d,format=raw,file=%s" % (unit, value)]
     for key, value in disks[2:]:
@@ -1766,14 +1841,17 @@ def qemu_command(cfg):
                      + drive_backing(cfg[key])]
     if cfg.get("serial"):
         argv += ["-chardev", "serial,id=ser0,path=" +
-                 serial_path(cfg["serial"]),
-                 "-device", "serial98,chardev=ser0"]
-        notes.append("serial98 is not in QEMU yet, so this will not start"
-                     " until the 8251 device lands")
+                 serial_path(cfg["serial"])]
+        if machine == "pc":
+            argv += ["-serial", "chardev:ser0"]
+        else:
+            argv += ["-device", "serial98,chardev=ser0"]
+            notes.append("serial98 is not in QEMU yet, so this will not start"
+                         " until the 8251 device lands")
     # the 86 board's FM and the Sound System's PCM are separate parts, and a
     # guest that only wants one of them should not be handed the other
     fm, pcm = cfg.get("fm", True), cfg.get("pcm", True)
-    if fm or pcm:
+    if machine != "pc" and (fm or pcm):
         argv += ["-audiodev", "dsound,id=snd" if os.name == "nt"
                  else "sdl,id=snd"]
         # the boards are ISA devices of their own, not part of the machine
@@ -1784,8 +1862,11 @@ def qemu_command(cfg):
     if cfg.get("lan") == "nat":
         # the guest sits behind QEMU's own NAT; no host privileges needed
         argv += ["-netdev", "user,id=lan",
-                 "-device", "pc98-lgy98,netdev=lan"]
-    if cfg.get("_qmp_port"):
+                 "-device", ("rtl8139" if machine == "pc" else "pc98-lgy98")
+                 + ",netdev=lan"]
+    if cfg.get("_qmp_stdio"):
+        argv += ["-qmp", "stdio"]
+    elif cfg.get("_qmp_port"):
         argv += ["-qmp", "tcp:127.0.0.1:%d,server=on,wait=off"
                  % cfg["_qmp_port"]]
     if cfg.get("extra"):
@@ -2674,7 +2755,7 @@ Booting
                [--cd=ISO] [--scsi1=IMAGE] ... [--scsi4=IMAGE]
                [--serial=PORT] [--mount=DIR] [--roms=DIR]
                [--memory=64M] [--kvm] [--hyperv] [--qemu=PATH]
-               [--machine=pc9801|pc9821]
+               [--machine=pc9801|pc9821|pc]
                [--cpu=486] [--cores=1] [--snapshot]
                [--graphics=gdc|cirrus|pegc|pegc-cirrus]
                [--sound=86|wss|none] [--lan] [--dry-run]
@@ -2682,18 +2763,21 @@ Booting
   --kvm and --hyperv are experimental; without them the guest runs
   under TCG, which is the tested path.
 
-  --machine selects PC-9801 or PC-9821; the default is PC-9821.
+  --machine selects PC-9801, PC-9821, or IBM PC Compatible; the default is
+  PC-9821.  The IBM PC choice uses QEMU's standard PC BIOS and VGA.
 
-  --cpu selects 386sx, 386dx, 486, pentium, pentium2, pentium3,
-  pentium4, or intel64.  --cores accepts 1 through 8.  More than one core
-  requires PC-9821 and Pentium 2 or later.
+  --cpu accepts the GUI names or short names including 386sx, 386dx, 486sx,
+  486dx, pentium, pentium-mmx, k6, cyrix, pentiumpro, pentium2, pentium3,
+  willamette, northwood, prescott, dothan, coreduo, core2duo, and the named
+  Core i7 microarchitectures.  --cores accepts 1 through 8.  More than one
+  core requires PC-9821 or IBM PC Compatible and Pentium 2 or later.
 
   --snapshot prevents QEMU from writing changes back to disk images.
 
   --graphics selects GDC (640x480 16-color), PEGC (640x480 256-color),
   Cirrus Core Graph (640x480 True Color through 1024x768 256-color), or
   PEGC + Cirrus Core Graph.  PEGC is available only on PC-9821 and uses
-  QEMU's compatible BIOS.
+  QEMU's compatible BIOS.  IBM PC Compatible uses standard VGA.
 
   --sound fits one board: 86 is the PC-9801-86 (FM and PCM), wss is the
   Mate-X built-in Sound System.  The default is 86.
@@ -2843,7 +2927,7 @@ def gui():
     class App(tk.Tk):
         def __init__(self):
             tk.Tk.__init__(self)
-            self.title("QEMU Virtualization Platform for PC98 Architecture")
+            self.title("QEMU Virtualization Platform for PC-98 and IBM PC")
             self.minsize(840, 620)
             self.columnconfigure(0, weight=1)
             self.busy = False
@@ -2851,6 +2935,8 @@ def gui():
             self.qmp = None
             self.qmp_drives = set()
             self.saved_roms = ""
+            self.saved_pc98_sound = SOUND_CHOICES[0][0]
+            self.saved_pc98_compat = True
 
             book = ttk.Notebook(self)
             book.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
@@ -3065,9 +3151,11 @@ def gui():
             ttk.Label(hardware, text="Sound", width=LABEL_WIDTH).grid(
                 row=6, column=0, sticky="w", pady=2)
             # a fixed set of boards, so the field is a choice and not free text
-            ttk.Combobox(hardware, textvariable=self.sound, state="readonly",
-                         values=[c[0] for c in SOUND_CHOICES]).grid(
-                row=6, column=1, columnspan=4, sticky="ew", pady=2)
+            self.sound_box = ttk.Combobox(
+                hardware, textvariable=self.sound, state="readonly",
+                values=[c[0] for c in SOUND_CHOICES])
+            self.sound_box.grid(row=6, column=1, columnspan=4,
+                                sticky="ew", pady=2)
             ttk.Label(hardware, text="Network", width=LABEL_WIDTH).grid(
                 row=7, column=0, sticky="w", pady=2)
             self.network = tk.StringVar(value=NETWORK_CHOICES[0])
@@ -3079,10 +3167,11 @@ def gui():
             row += 1
             inner = self.add_row(path, 0, *PATH_ROWS[0])          # QEMU
             inner = self.add_row(path, inner, *PATH_ROWS[1])      # BIOS Folder
-            ttk.Checkbutton(path, text="Use compatible BIOS",
-                            variable=self.compat,
-                            command=self.apply_compat).grid(
-                row=inner, column=1, sticky="w", pady=(0, 2))
+            self.compat_button = ttk.Checkbutton(
+                path, text="Use compatible BIOS", variable=self.compat,
+                command=self.apply_compat)
+            self.compat_button.grid(row=inner, column=1, sticky="w",
+                                    pady=(0, 2))
 
             virt = self.add_group(right, row, "Virtualization Options")
             row += 1
@@ -3117,8 +3206,9 @@ def gui():
             return frame
 
         def update_graphics_choices(self, preferred=None):
-            choices = (PC9801_GRAPHICS if self.machine.get() == "PC-9801"
-                       else PC9821_GRAPHICS)
+            choices = {"pc9801": PC9801_GRAPHICS,
+                       "pc9821": PC9821_GRAPHICS,
+                       "pc": IBM_GRAPHICS}[machine_value(self.machine.get())]
             self.graphics_box["values"] = choices
             selected = preferred if preferred in choices else self.graphics.get()
             if selected not in choices:
@@ -3127,6 +3217,24 @@ def gui():
 
         def machine_selected(self, _event=None):
             self.update_graphics_choices()
+            if machine_value(self.machine.get()) == "pc":
+                if self.sound.get() != "None":
+                    self.saved_pc98_sound = self.sound.get()
+                self.sound.set("None")
+                self.sound_box.state(["disabled"])
+                if "disabled" not in self.compat_button.state():
+                    self.saved_pc98_compat = self.compat.get()
+                self.compat.set(False)
+                self.compat_button.state(["disabled"])
+                self.entries["roms"].state(["disabled"])
+                self.browsers["roms"].state(["disabled"])
+            else:
+                self.sound_box.state(["!disabled", "readonly"])
+                if self.sound.get() == "None":
+                    self.sound.set(self.saved_pc98_sound)
+                self.compat_button.state(["!disabled"])
+                self.compat.set(self.saved_pc98_compat)
+                self.apply_compat()
 
         def cpu_selected(self, _event=None):
             qemu = self.vars["qemu"].get()
@@ -3389,18 +3497,19 @@ def gui():
             qmp = None
             try:
                 cfg = dict(cfg)
-                cfg["_qmp_port"] = free_tcp_port()
+                cfg["_qmp_stdio"] = True
                 argv, notes = qemu_command(cfg)
                 for note in notes:
                     self.post(note)
                 self.post(" ".join('"%s"' % a if " " in a else a
                                    for a in argv))
                 self.process = subprocess.Popen(
-                    argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     **no_window())
                 self.qmp_drives = {key for key in ("fdd1", "fdd2")
                                    if cfg.get(key)}
-                qmp = QmpClient(cfg["_qmp_port"])
+                qmp = QmpClient()
                 try:
                     qmp.connect(self.process)
                     self.qmp = qmp
@@ -3409,7 +3518,7 @@ def gui():
                     qmp.close()
                     qmp = None
                     self.post("QMP unavailable: %s" % err)
-                for line in self.process.stdout:
+                for line in self.process.stderr:
                     self.post(line.decode("utf-8", "replace").rstrip())
                 self.post("qemu exited (%s)" % self.process.wait())
             except Exception as err:
@@ -3797,7 +3906,9 @@ def gui():
             machine = saved.get("machine", MACHINE_CHOICES[1])
             if machine not in MACHINE_CHOICES:
                 machine = {"pc9801": MACHINE_CHOICES[0],
-                           "pc9821": MACHINE_CHOICES[1]}.get(
+                           "pc9821": MACHINE_CHOICES[1],
+                           "pc": MACHINE_CHOICES[2],
+                           "ibm": MACHINE_CHOICES[2]}.get(
                                machine.lower(), MACHINE_CHOICES[1])
             self.machine.set(machine)
             try:
@@ -3826,8 +3937,9 @@ def gui():
             if not self.vars["qemu"].get():
                 self.vars["qemu"].set(find(QEMU_NAMES))
             self.cpu_selected()
-            self.compat.set(parser.getboolean(SECTION, "compat",
-                                              fallback=True))
+            self.saved_pc98_compat = parser.getboolean(
+                SECTION, "compat", fallback=True)
+            self.compat.set(self.saved_pc98_compat)
             self.snapshot.set(parser.getboolean(SECTION, "snapshot",
                                                 fallback=False))
             self.saved_roms = saved.get("roms", "") or default_roms(
@@ -3839,18 +3951,22 @@ def gui():
             if not self.compat.get() and roms and not all(
                     os.path.isfile(os.path.join(roms, f)) for f in ROM_FILES):
                 self.write("put the PC-98 BIOS and font ROMs in %s" % roms)
+            self.machine_selected()
 
         def save(self):
             state = {k: v.get() for k, v in self.vars.items()}
-            if self.compat.get():
+            ibm_pc = machine_value(self.machine.get()) == "pc"
+            compat = self.saved_pc98_compat if ibm_pc else self.compat.get()
+            if compat:
                 state["roms"] = self.saved_roms
             # the two boards are stored separately, so the wording of the
             # drop-down can change without stranding anyone's settings
-            fm, pcm = sound_parts(self.sound.get())
+            sound = self.saved_pc98_sound if ibm_pc else self.sound.get()
+            fm, pcm = sound_parts(sound)
             state["lan"] = NETWORK_ARG.get(self.network.get(), "")
             parser = configparser.ConfigParser(interpolation=None)
             parser[SECTION] = dict(
-                state, compat=str(self.compat.get()).lower(),
+                state, compat=str(compat).lower(),
                 machine=self.machine.get(), cpu=self.cpu.get(),
                 cores=self.cores.get(), memory=self.memory.get(),
                 graphics=self.graphics.get(),

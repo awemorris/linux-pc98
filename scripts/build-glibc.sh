@@ -48,7 +48,7 @@ CPU_FAMILY=386 I386_CONSOLE=dual \
 I386_KERNEL_BUILD="$kernel_build" \
 I386_CONFIG_OUTPUT="$root/kernel-headers.config" \
 	"$repo/scripts/configure-i386-busybox.sh"
-make -C "$repo/external/kernel/linux-7.1" O="$kernel_build" ARCH=i386 \
+make -C "$repo/external/kernel/linux-7.2" O="$kernel_build" ARCH=i386 \
 	headers_install INSTALL_HDR_PATH="$sysroot/usr"
 
 build_dir="$root/build-$family"
@@ -68,7 +68,7 @@ CFLAGS="-O2 -g -march=$march -mtune=$march -fno-omit-frame-pointer" \
 	--host="$host" \
 	--prefix=/usr \
 	--with-headers="$sysroot/usr/include" \
-	--enable-kernel=7.1.0 \
+	--enable-kernel=7.2.0 \
 	--disable-multi-arch \
 	--disable-werror \
 	"${extra_configure[@]}"

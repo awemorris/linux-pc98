@@ -1,0 +1,329 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+#ifndef _ASM_X86_ATOMIC_H
+#define _ASM_X86_ATOMIC_H
+
+#include <linux/compiler.h>
+#include <linux/types.h>
+#include <asm/alternative.h>
+#include <asm/cmpxchg.h>
+#include <asm/rmwcc.h>
+#include <asm/barrier.h>
+
+#ifdef CONFIG_M386
+
+/*
+ * This header can be reached while asm/irqflags.h itself is being assembled
+ * through the nospec/static-key include chain.  Keep the 386 UP exclusion
+ * primitive local instead of depending on either irqflags header.
+ */
+static __always_inline unsigned long m386_atomic_irq_save(void)
+{
+	unsigned long flags;
+
+	asm volatile("pushfl; popl %0; cli"
+		     : "=rm" (flags)
+		     :
+		     : "memory");
+	return flags;
+}
+
+static __always_inline void m386_atomic_irq_restore(unsigned long flags)
+{
+	if (flags & (1UL << 9))	/* EFLAGS.IF */
+		asm volatile("sti" : : : "memory");
+}
+
+static __always_inline int arch_atomic_read(const atomic_t *v)
+{
+	return __READ_ONCE(v->counter);
+}
+#define arch_atomic_read arch_atomic_read
+
+static __always_inline void arch_atomic_set(atomic_t *v, int i)
+{
+	__WRITE_ONCE(v->counter, i);
+}
+#define arch_atomic_set arch_atomic_set
+
+#define M386_ATOMIC_OP(name, op)					\
+static __always_inline void arch_atomic_##name(int i, atomic_t *v)	\
+{									\
+	unsigned long flags = m386_atomic_irq_save();			\
+	v->counter op i;						\
+	m386_atomic_irq_restore(flags);					\
+}
+
+#define M386_ATOMIC_OP_RETURN(name, op)					\
+static __always_inline int arch_atomic_##name##_return(int i, atomic_t *v) \
+{									\
+	unsigned long flags = m386_atomic_irq_save();			\
+	int ret = (v->counter op i);					\
+	m386_atomic_irq_restore(flags);					\
+	return ret;							\
+}
+
+#define M386_ATOMIC_FETCH_OP(name, op)					\
+static __always_inline int arch_atomic_fetch_##name(int i, atomic_t *v)	\
+{									\
+	unsigned long flags = m386_atomic_irq_save();			\
+	int ret = v->counter;						\
+	v->counter op i;						\
+	m386_atomic_irq_restore(flags);					\
+	return ret;							\
+}
+
+M386_ATOMIC_OP(add, +=)
+M386_ATOMIC_OP(sub, -=)
+M386_ATOMIC_OP(and, &=)
+M386_ATOMIC_OP(or, |=)
+M386_ATOMIC_OP(xor, ^=)
+M386_ATOMIC_OP_RETURN(add, +=)
+M386_ATOMIC_OP_RETURN(sub, -=)
+M386_ATOMIC_FETCH_OP(add, +=)
+M386_ATOMIC_FETCH_OP(sub, -=)
+M386_ATOMIC_FETCH_OP(and, &=)
+M386_ATOMIC_FETCH_OP(or, |=)
+M386_ATOMIC_FETCH_OP(xor, ^=)
+
+#undef M386_ATOMIC_OP
+#undef M386_ATOMIC_OP_RETURN
+#undef M386_ATOMIC_FETCH_OP
+
+#define arch_atomic_add arch_atomic_add
+#define arch_atomic_sub arch_atomic_sub
+#define arch_atomic_and arch_atomic_and
+#define arch_atomic_or arch_atomic_or
+#define arch_atomic_xor arch_atomic_xor
+#define arch_atomic_add_return arch_atomic_add_return
+#define arch_atomic_sub_return arch_atomic_sub_return
+#define arch_atomic_fetch_add arch_atomic_fetch_add
+#define arch_atomic_fetch_sub arch_atomic_fetch_sub
+#define arch_atomic_fetch_and arch_atomic_fetch_and
+#define arch_atomic_fetch_or arch_atomic_fetch_or
+#define arch_atomic_fetch_xor arch_atomic_fetch_xor
+
+static __always_inline bool arch_atomic_sub_and_test(int i, atomic_t *v)
+{
+	return arch_atomic_sub_return(i, v) == 0;
+}
+#define arch_atomic_sub_and_test arch_atomic_sub_and_test
+
+static __always_inline void arch_atomic_inc(atomic_t *v)
+{
+	arch_atomic_add(1, v);
+}
+#define arch_atomic_inc arch_atomic_inc
+
+static __always_inline void arch_atomic_dec(atomic_t *v)
+{
+	arch_atomic_sub(1, v);
+}
+#define arch_atomic_dec arch_atomic_dec
+
+static __always_inline bool arch_atomic_dec_and_test(atomic_t *v)
+{
+	return arch_atomic_sub_return(1, v) == 0;
+}
+#define arch_atomic_dec_and_test arch_atomic_dec_and_test
+
+static __always_inline bool arch_atomic_inc_and_test(atomic_t *v)
+{
+	return arch_atomic_add_return(1, v) == 0;
+}
+#define arch_atomic_inc_and_test arch_atomic_inc_and_test
+
+static __always_inline bool arch_atomic_add_negative(int i, atomic_t *v)
+{
+	return arch_atomic_add_return(i, v) < 0;
+}
+#define arch_atomic_add_negative arch_atomic_add_negative
+
+static __always_inline int arch_atomic_cmpxchg(atomic_t *v, int old, int new)
+{
+	return arch_cmpxchg(&v->counter, old, new);
+}
+#define arch_atomic_cmpxchg arch_atomic_cmpxchg
+
+static __always_inline bool arch_atomic_try_cmpxchg(atomic_t *v, int *old,
+						    int new)
+{
+	return arch_try_cmpxchg(&v->counter, old, new);
+}
+#define arch_atomic_try_cmpxchg arch_atomic_try_cmpxchg
+
+static __always_inline int arch_atomic_xchg(atomic_t *v, int new)
+{
+	return arch_xchg(&v->counter, new);
+}
+#define arch_atomic_xchg arch_atomic_xchg
+
+#else /* !CONFIG_M386 */
+
+/*
+ * Atomic operations that C can't guarantee us.  Useful for
+ * resource counting etc..
+ */
+
+static __always_inline int arch_atomic_read(const atomic_t *v)
+{
+	/*
+	 * Note for KASAN: we deliberately don't use READ_ONCE_NOCHECK() here,
+	 * it's non-inlined function that increases binary size and stack usage.
+	 */
+	return __READ_ONCE((v)->counter);
+}
+
+static __always_inline void arch_atomic_set(atomic_t *v, int i)
+{
+	__WRITE_ONCE(v->counter, i);
+}
+
+static __always_inline void arch_atomic_add(int i, atomic_t *v)
+{
+	asm_inline volatile(LOCK_PREFIX "addl %1, %0"
+		     : "+m" (v->counter)
+		     : "ir" (i) : "memory");
+}
+
+static __always_inline void arch_atomic_sub(int i, atomic_t *v)
+{
+	asm_inline volatile(LOCK_PREFIX "subl %1, %0"
+		     : "+m" (v->counter)
+		     : "ir" (i) : "memory");
+}
+
+static __always_inline bool arch_atomic_sub_and_test(int i, atomic_t *v)
+{
+	return GEN_BINARY_RMWcc(LOCK_PREFIX "subl", v->counter, e, "er", i);
+}
+#define arch_atomic_sub_and_test arch_atomic_sub_and_test
+
+static __always_inline void arch_atomic_inc(atomic_t *v)
+{
+	asm_inline volatile(LOCK_PREFIX "incl %0"
+		     : "+m" (v->counter) :: "memory");
+}
+#define arch_atomic_inc arch_atomic_inc
+
+static __always_inline void arch_atomic_dec(atomic_t *v)
+{
+	asm_inline volatile(LOCK_PREFIX "decl %0"
+		     : "+m" (v->counter) :: "memory");
+}
+#define arch_atomic_dec arch_atomic_dec
+
+static __always_inline bool arch_atomic_dec_and_test(atomic_t *v)
+{
+	return GEN_UNARY_RMWcc(LOCK_PREFIX "decl", v->counter, e);
+}
+#define arch_atomic_dec_and_test arch_atomic_dec_and_test
+
+static __always_inline bool arch_atomic_inc_and_test(atomic_t *v)
+{
+	return GEN_UNARY_RMWcc(LOCK_PREFIX "incl", v->counter, e);
+}
+#define arch_atomic_inc_and_test arch_atomic_inc_and_test
+
+static __always_inline bool arch_atomic_add_negative(int i, atomic_t *v)
+{
+	return GEN_BINARY_RMWcc(LOCK_PREFIX "addl", v->counter, s, "er", i);
+}
+#define arch_atomic_add_negative arch_atomic_add_negative
+
+static __always_inline int arch_atomic_add_return(int i, atomic_t *v)
+{
+	return i + xadd(&v->counter, i);
+}
+#define arch_atomic_add_return arch_atomic_add_return
+
+#define arch_atomic_sub_return(i, v) arch_atomic_add_return(-(i), v)
+
+static __always_inline int arch_atomic_fetch_add(int i, atomic_t *v)
+{
+	return xadd(&v->counter, i);
+}
+#define arch_atomic_fetch_add arch_atomic_fetch_add
+
+#define arch_atomic_fetch_sub(i, v) arch_atomic_fetch_add(-(i), v)
+
+static __always_inline int arch_atomic_cmpxchg(atomic_t *v, int old, int new)
+{
+	return arch_cmpxchg(&v->counter, old, new);
+}
+#define arch_atomic_cmpxchg arch_atomic_cmpxchg
+
+static __always_inline bool arch_atomic_try_cmpxchg(atomic_t *v, int *old, int new)
+{
+	return arch_try_cmpxchg(&v->counter, old, new);
+}
+#define arch_atomic_try_cmpxchg arch_atomic_try_cmpxchg
+
+static __always_inline int arch_atomic_xchg(atomic_t *v, int new)
+{
+	return arch_xchg(&v->counter, new);
+}
+#define arch_atomic_xchg arch_atomic_xchg
+
+static __always_inline void arch_atomic_and(int i, atomic_t *v)
+{
+	asm_inline volatile(LOCK_PREFIX "andl %1, %0"
+			: "+m" (v->counter)
+			: "ir" (i)
+			: "memory");
+}
+
+static __always_inline int arch_atomic_fetch_and(int i, atomic_t *v)
+{
+	int val = arch_atomic_read(v);
+
+	do { } while (!arch_atomic_try_cmpxchg(v, &val, val & i));
+
+	return val;
+}
+#define arch_atomic_fetch_and arch_atomic_fetch_and
+
+static __always_inline void arch_atomic_or(int i, atomic_t *v)
+{
+	asm_inline volatile(LOCK_PREFIX "orl %1, %0"
+			: "+m" (v->counter)
+			: "ir" (i)
+			: "memory");
+}
+
+static __always_inline int arch_atomic_fetch_or(int i, atomic_t *v)
+{
+	int val = arch_atomic_read(v);
+
+	do { } while (!arch_atomic_try_cmpxchg(v, &val, val | i));
+
+	return val;
+}
+#define arch_atomic_fetch_or arch_atomic_fetch_or
+
+static __always_inline void arch_atomic_xor(int i, atomic_t *v)
+{
+	asm_inline volatile(LOCK_PREFIX "xorl %1, %0"
+			: "+m" (v->counter)
+			: "ir" (i)
+			: "memory");
+}
+
+static __always_inline int arch_atomic_fetch_xor(int i, atomic_t *v)
+{
+	int val = arch_atomic_read(v);
+
+	do { } while (!arch_atomic_try_cmpxchg(v, &val, val ^ i));
+
+	return val;
+}
+#define arch_atomic_fetch_xor arch_atomic_fetch_xor
+
+#endif /* CONFIG_M386 */
+
+#ifdef CONFIG_X86_32
+# include <asm/atomic64_32.h>
+#else
+# include <asm/atomic64_64.h>
+#endif
+
+#endif /* _ASM_X86_ATOMIC_H */

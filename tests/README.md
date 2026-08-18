@@ -13,7 +13,7 @@ It tests the dynamic loader and glibc 2.41 through:
 Build it with `../build-glibc-tests.sh i386` or
 `../build-glibc-tests.sh i486`. The exact-i386 build is complemented by the
 TAP selftest in
-`../external/kernel/linux-7.1/tools/testing/selftests/x86/i386_atomic.c`.
+`../external/kernel/linux-7.2/tools/testing/selftests/x86/i386_atomic.c`.
 
 The qemu-pc98 runtime test root must use the matching staged dynamic loader
 and libraries. The validated configuration uses a dynamically glibc-linked

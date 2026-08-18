@@ -7,7 +7,7 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 bootloader_dir="$repo/external/zedBSD/build/pc98"
 rootfs="${1:?usage: $0 ROOTFS OUTPUT [VMLINUX]}"
 output="${2:?usage: $0 ROOTFS OUTPUT [VMLINUX]}"
-kernel="${3:-$repo/build/kernel-7.1-i486/vmlinux.boot}"
+kernel="${3:-$repo/build/kernel-7.2-i486/vmlinux.boot}"
 
 heads="${DISK_HEADS:-8}"
 sectors="${DISK_SECTORS:-17}"

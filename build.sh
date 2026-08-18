@@ -45,7 +45,7 @@ Primary commands:
   noct build|clean            build Noct or remove the zedBSD pc98 build tree
   boot-install [options]      destructively create a BOOT partition environment
   dos-loader                  rebuild LINUX98.EXE and INST.EXE (OpenWatcom)
-  kernel [options]            configure and build Linux 7.1
+  kernel [options]            configure and build Linux 7.2
   rootfs PROFILE              build a root filesystem
   rootfs-cache COMMAND        fetch/store/publish reusable rootfs archives
   image PROFILE [options]     create or update a named disk-image variant
@@ -95,7 +95,7 @@ Options:
   --cpu 386|486|686           CPU baseline (default: 686)
   --profile pc98|full         device profile (default: pc98)
   --output-dir DIR            out-of-tree kernel build directory
-                              (default: build/kernel-7.1[-i386|-i486])
+                              (default: build/kernel-7.2[-i386|-i486])
   --jobs N                    parallel jobs (default: nproc)
   --console video|dual        built-in console selection (default: video)
 
@@ -135,6 +135,7 @@ EOF
 build_kernel()
 {
 	local cpu=686 profile=pc98 output_dir="" jobs="${JOBS:-$(nproc)}"
+	local kernel_version="${KERNEL_VERSION:-7.2}"
 	local console=video root_stage="${ROOT_STAGE:-}"
 	while test "$#" -gt 0; do
 		case "$1" in
@@ -166,9 +167,9 @@ build_kernel()
 	esac
 	if test -z "$output_dir"; then
 		case "$cpu" in
-			386) output_dir="$repo/build/kernel-7.1-i386" ;;
-			486) output_dir="$repo/build/kernel-7.1-i486" ;;
-			686) output_dir="$repo/build/kernel-7.1" ;;
+			386) output_dir="$repo/build/kernel-$kernel_version-i386" ;;
+			486) output_dir="$repo/build/kernel-$kernel_version-i486" ;;
+			686) output_dir="$repo/build/kernel-$kernel_version" ;;
 		esac
 	fi
 	if test -z "$root_stage"; then

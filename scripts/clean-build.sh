@@ -35,9 +35,9 @@ case "$mode" in
 	current)
 		remove_build_dir bootsimple
 		"$repo/external/zedBSD/build.sh" clean pc98
-		for name in kernel-7.1 kernel-7.1-i486; do
+		for name in kernel-7.2 kernel-7.2-i386 kernel-7.2-i486; do
 			test -d "$build/$name" || continue
-			make -C "$repo/external/kernel/linux-7.1" O="$build/$name" ARCH=i386 clean
+			make -C "$repo/external/kernel/linux-7.2" O="$build/$name" ARCH=i386 clean
 		done
 		;;
 	stale)
@@ -51,9 +51,9 @@ case "$mode" in
 			diag-i686-debian-defaultcpu \
 			diag-i686-debian-defaultcpu-2 \
 			config-check-i386 config-check-i486 config-check-debian \
-			kernel-7.1-localmod-config kernel-7.1-lean-config \
-			kernel-7.1-full-config-check kernel-7.1-i686-lgy98-config \
-			kernel-7.1-i486-lgy98-test kernel-7.0 kernel \
+			kernel-7.2-localmod-config kernel-7.2-lean-config \
+			kernel-7.2-full-config-check kernel-7.2-i686-lgy98-config \
+			kernel-7.2-i486-lgy98-test kernel-7.0 kernel \
 			kernel-scsi-test kernel-scsi-i486-test \
 			musl-patch-dryrun musl-tas-input musl-vendor-import \
 			patchset-check-musl buildroot-patch-dryrun \

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-kernel_version="${KERNEL_VERSION:-7.1}"
+kernel_version="${KERNEL_VERSION:-7.2}"
 default_image="$repo/build/qemu-pc98-linux-$kernel_version.raw"
 image="${OUTPUT_IMAGE:-$default_image}"
 dist_dir="${DIST_DIR:-$repo/dist}"

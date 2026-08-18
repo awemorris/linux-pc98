@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 . "$repo/scripts/zedbsd-env.sh"
-kernel_version="${KERNEL_VERSION:-7.1}"
+kernel_version="${KERNEL_VERSION:-7.2}"
 default_kernel_build="$repo/build/kernel-$kernel_version"
 default_image="$repo/build/qemu-pc98-linux-$kernel_version.raw"
 image="${1:-${OUTPUT_IMAGE:-$default_image}}"

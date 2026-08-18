@@ -40,7 +40,7 @@ common=(
 
 if [ "$family" = i386 ]; then
 	"$cross_prefix-gcc" "${common[@]}" -pthread \
-		"$repo/external/kernel/linux-7.1/tools/testing/selftests/x86/i386_atomic.c" \
+		"$repo/external/kernel/linux-7.2/tools/testing/selftests/x86/i386_atomic.c" \
 		-o "$output/i386-atomic-selftest"
 fi
 

@@ -1364,6 +1364,12 @@ QEMU_I386_NAMES = ("qemu-system-i386.exe", "qemu-system-i386w.exe",
                    "qemu-system-i386")
 QEMU_NAMES = QEMU_I386_NAMES + QEMU_X86_64_NAMES
 COMPAT_ROM_DIR = os.path.join("share", "pc98bios")
+EXTENDED_COMPAT_ROM_DIR = os.path.join("share", "pc98bios-extended")
+COMPAT_ROM_FILES = ("pc98itf.bin", "pc98bios.bin", "pc98font.bin")
+BIOS_COMPAT = "Compatible BIOS"
+BIOS_EXTENDED = "Extended Compatible BIOS"
+BIOS_STOCK = "Stock ROM"
+BIOS_CHOICES = (BIOS_COMPAT, BIOS_EXTENDED, BIOS_STOCK)
 ROM_NAMES = ("bios-xa7c9w", "roms", "bios")
 ROM_FILES = ("pc98bank0.bin", "pc98font.bin")
 
@@ -1394,9 +1400,41 @@ def find(names, want_dir=False):
     return ""
 
 
-def compat_roms(qemu):
-    root = os.path.dirname(qemu) if qemu else here()
-    return os.path.normpath(os.path.join(root, COMPAT_ROM_DIR))
+def compat_rom_candidates(qemu, extended=False):
+    """Likely -L directories for packaged, build-tree and installed QEMU."""
+    root = os.path.dirname(os.path.abspath(qemu)) if qemu else here()
+    leaf = "pc98bios-extended" if extended else ""
+    packaged = EXTENDED_COMPAT_ROM_DIR if extended else COMPAT_ROM_DIR
+    candidates = [
+        os.path.join(root, packaged),
+        os.path.join(root, os.pardir, "pc-bios", leaf),
+        os.path.join(root, os.pardir, "share", "qemu", leaf),
+        os.path.join(root, "share", "qemu", leaf),
+        os.path.join(root, leaf),
+    ]
+    result = []
+    seen = set()
+    for path in candidates:
+        path = os.path.normpath(path)
+        key = os.path.normcase(path)
+        if key not in seen:
+            seen.add(key)
+            result.append(path)
+    return result
+
+
+def compat_roms(qemu, extended=False):
+    candidates = compat_rom_candidates(qemu, extended)
+    for path in candidates:
+        if all(os.path.isfile(os.path.join(path, name))
+               for name in COMPAT_ROM_FILES):
+            return path
+    # Preserve the packaged layout as the useful expected path in the UI.
+    return candidates[0]
+
+
+def bios_roms(qemu, bios):
+    return compat_roms(qemu, bios == BIOS_EXTENDED)
 
 
 def default_roms(qemu):
@@ -1814,10 +1852,14 @@ def qemu_command(cfg):
         argv += ["-accel", "kvm"]
     elif cfg.get("hyperv"):
         argv += ["-accel", "whpx"]
-    # The BIOS Folder control contains PC-98 firmware.  IBM PC uses QEMU's
-    # standard PC firmware and must not search the PC-98-only directory.
-    if machine != "pc" and cfg.get("roms"):
-        argv += ["-L", cfg["roms"]]
+    # Compatibility-ROM choices follow the selected QEMU executable so build
+    # trees, installed copies and packaged copies each use their own firmware.
+    # IBM PC uses QEMU's standard PC firmware and ignores the PC-98 selection.
+    roms = cfg.get("roms")
+    if cfg.get("bios") in (BIOS_COMPAT, BIOS_EXTENDED):
+        roms = bios_roms(cfg["qemu"], cfg["bios"])
+    if machine != "pc" and roms:
+        argv += ["-L", roms]
     for unit, key in enumerate(("fdd1", "fdd2")):
         image = cfg.get(key)
         if image:
@@ -2936,7 +2978,7 @@ def gui():
             self.qmp_drives = set()
             self.saved_roms = ""
             self.saved_pc98_sound = SOUND_CHOICES[0][0]
-            self.saved_pc98_compat = True
+            self.saved_pc98_bios = BIOS_COMPAT
 
             book = ttk.Notebook(self)
             book.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
@@ -2990,9 +3032,10 @@ def gui():
         # ------------------------------------------------------------ boot
         def add_clear(self, frame, row, key):
             """Every field gets one, in the same column, so it is findable."""
-            ttk.Button(frame, text="Clear", width=7,
-                       command=lambda: self.clear_row(key)).grid(
-                row=row, column=4, padx=(4, 0), pady=2)
+            button = ttk.Button(frame, text="Clear", width=7,
+                                command=lambda: self.clear_row(key))
+            button.grid(row=row, column=4, padx=(4, 0), pady=2)
+            return button
 
         def clear_row(self, key):
             """Clear a field, ejecting a running VM's floppy first."""
@@ -3019,7 +3062,7 @@ def gui():
                 ttk.Button(frame, text="Drive...", width=9,
                            command=lambda: self.pick_drive(key, device)).grid(
                     row=row, column=3, padx=(4, 0), pady=2)
-            self.add_clear(frame, row, key)
+            self.clearers[key] = self.add_clear(frame, row, key)
             return row + 1
 
         def add_group(self, frame, row, title):
@@ -3051,7 +3094,8 @@ def gui():
             self.vars = {k: tk.StringVar() for k, _, _, _, _ in BOOT_ROWS}
             # not a file, so it gets its own row rather than a BOOT_ROWS entry
             self.vars["serial"] = tk.StringVar()
-            self.compat = tk.BooleanVar(value=True)
+            self.bios = tk.StringVar(value=BIOS_COMPAT)
+            self.vars["qemu"].trace_add("write", self.qemu_path_changed)
             self.machine = tk.StringVar(value=MACHINE_CHOICES[1])
             self.cpu = tk.StringVar(value=CPU_DEFAULT)
             self.cores = tk.StringVar(value=CORE_CHOICES[0])
@@ -3062,7 +3106,7 @@ def gui():
             self.sound = tk.StringVar(value=SOUND_CHOICES[0][0])
             self.kvm = tk.BooleanVar(value=False)
             self.hyperv = tk.BooleanVar(value=False)
-            self.entries, self.browsers = {}, {}
+            self.entries, self.browsers, self.clearers = {}, {}, {}
 
             halves = ttk.Frame(frame)
             halves.grid(row=0, column=0, sticky="ew")
@@ -3147,7 +3191,7 @@ def gui():
             ttk.Button(hardware, text="Scan", width=9,
                        command=self.scan_serial).grid(
                 row=5, column=3, padx=(4, 0), pady=2)
-            self.add_clear(hardware, 5, "serial")
+            self.clearers["serial"] = self.add_clear(hardware, 5, "serial")
             ttk.Label(hardware, text="Sound", width=LABEL_WIDTH).grid(
                 row=6, column=0, sticky="w", pady=2)
             # a fixed set of boards, so the field is a choice and not free text
@@ -3166,12 +3210,16 @@ def gui():
             path = self.add_group(right, row, "Path")
             row += 1
             inner = self.add_row(path, 0, *PATH_ROWS[0])          # QEMU
+            ttk.Label(path, text="BIOS Type", width=LABEL_WIDTH).grid(
+                row=inner, column=0, sticky="w", pady=2)
+            self.bios_box = ttk.Combobox(
+                path, textvariable=self.bios, state="readonly",
+                values=BIOS_CHOICES)
+            self.bios_box.grid(row=inner, column=1, columnspan=4,
+                               sticky="ew", pady=2)
+            self.bios_box.bind("<<ComboboxSelected>>", self.bios_selected)
+            inner += 1
             inner = self.add_row(path, inner, *PATH_ROWS[1])      # BIOS Folder
-            self.compat_button = ttk.Checkbutton(
-                path, text="Use compatible BIOS", variable=self.compat,
-                command=self.apply_compat)
-            self.compat_button.grid(row=inner, column=1, sticky="w",
-                                    pady=(0, 2))
 
             virt = self.add_group(right, row, "Virtualization Options")
             row += 1
@@ -3222,19 +3270,19 @@ def gui():
                     self.saved_pc98_sound = self.sound.get()
                 self.sound.set("None")
                 self.sound_box.state(["disabled"])
-                if "disabled" not in self.compat_button.state():
-                    self.saved_pc98_compat = self.compat.get()
-                self.compat.set(False)
-                self.compat_button.state(["disabled"])
+                if "disabled" not in self.bios_box.state():
+                    self.saved_pc98_bios = self.bios.get()
+                self.bios_box.state(["disabled"])
                 self.entries["roms"].state(["disabled"])
                 self.browsers["roms"].state(["disabled"])
+                self.clearers["roms"].state(["disabled"])
             else:
                 self.sound_box.state(["!disabled", "readonly"])
                 if self.sound.get() == "None":
                     self.sound.set(self.saved_pc98_sound)
-                self.compat_button.state(["!disabled"])
-                self.compat.set(self.saved_pc98_compat)
-                self.apply_compat()
+                self.bios_box.state(["!disabled", "readonly"])
+                self.bios.set(self.saved_pc98_bios)
+                self.apply_bios()
 
         def cpu_selected(self, _event=None):
             qemu = self.vars["qemu"].get()
@@ -3246,12 +3294,19 @@ def gui():
             except ValueError as err:
                 self.write(str(err))
 
+        def qemu_path_changed(self, *_args):
+            if self.bios.get() != BIOS_STOCK:
+                self.vars["roms"].set(bios_roms(
+                    self.vars["qemu"].get(), self.bios.get()))
+
         def graphics_selected(self, _event=None):
             # Full PEGC is implemented by the compatibility BIOS and QEMU
             # deliberately rejects it with a vendor ROM dump.
-            if graphics_has_pegc(self.graphics.get()) and not self.compat.get():
-                self.compat.set(True)
-                self.apply_compat()
+            if (graphics_has_pegc(self.graphics.get())
+                    and self.bios.get() == BIOS_STOCK):
+                self.bios.set(BIOS_COMPAT)
+                self.saved_pc98_bios = BIOS_COMPAT
+                self.apply_bios()
                 self.write("PEGC selected: using the compatible BIOS")
 
         def slide_memory(self, raw):
@@ -3284,9 +3339,6 @@ def gui():
                 self.vars[key].set(path)
                 if key == "qemu":
                     self.cpu_selected()
-                    path = self.vars["qemu"].get()
-                    if self.compat.get():
-                        self.vars["roms"].set(compat_roms(path))
 
         def pick_drive(self, key, kind):
             """Point a boot row at a real drive instead of an image file."""
@@ -3357,23 +3409,33 @@ def gui():
             self.wait_window(top)
             return picked[0] if picked else ""
 
-        def apply_compat(self):
-            if not self.compat.get() and graphics_has_pegc(
-                    self.graphics.get()):
-                self.compat.set(True)
+        def bios_selected(self, _event=None):
+            self.saved_pc98_bios = self.bios.get()
+            self.apply_bios()
+
+        def apply_bios(self):
+            if (self.bios.get() == BIOS_STOCK
+                    and graphics_has_pegc(self.graphics.get())):
+                self.bios.set(BIOS_COMPAT)
+                self.saved_pc98_bios = BIOS_COMPAT
                 self.write("PEGC requires the compatible BIOS")
-                return
-            compat = compat_roms(self.vars["qemu"].get())
-            if self.compat.get():
+            if self.bios.get() != BIOS_STOCK:
                 current = self.vars["roms"].get()
-                if current and not current.endswith(COMPAT_ROM_DIR):
+                auto_paths = (compat_roms(self.vars["qemu"].get()),
+                              compat_roms(self.vars["qemu"].get(), True))
+                if current and all(os.path.normcase(os.path.normpath(current))
+                                   != os.path.normcase(os.path.normpath(path))
+                                   for path in auto_paths):
                     self.saved_roms = current
-                self.vars["roms"].set(compat)
+                self.vars["roms"].set(bios_roms(self.vars["qemu"].get(),
+                                                 self.bios.get()))
                 self.entries["roms"].state(["readonly"])
                 self.browsers["roms"].state(["disabled"])
+                self.clearers["roms"].state(["disabled"])
             else:
                 self.entries["roms"].state(["!readonly"])
                 self.browsers["roms"].state(["!disabled"])
+                self.clearers["roms"].state(["!disabled"])
                 self.vars["roms"].set(
                     self.saved_roms or default_roms(self.vars["qemu"].get()))
 
@@ -3381,6 +3443,7 @@ def gui():
             cfg = {k: v.get().strip() for k, v in self.vars.items()}
             fm, pcm = sound_parts(self.sound.get())
             cfg.update(machine=self.machine.get(),
+                       bios=self.bios.get(),
                        cpu=self.cpu.get(), cores=self.cores.get(),
                        memory=self.memory.get().strip(),
                        graphics=self.graphics.get(),
@@ -3937,18 +4000,21 @@ def gui():
             if not self.vars["qemu"].get():
                 self.vars["qemu"].set(find(QEMU_NAMES))
             self.cpu_selected()
-            self.saved_pc98_compat = parser.getboolean(
-                SECTION, "compat", fallback=True)
-            self.compat.set(self.saved_pc98_compat)
+            saved_bios = saved.get("bios", "")
+            if saved_bios not in BIOS_CHOICES:
+                saved_bios = (BIOS_COMPAT if parser.getboolean(
+                    SECTION, "compat", fallback=True) else BIOS_STOCK)
+            self.saved_pc98_bios = saved_bios
+            self.bios.set(saved_bios)
             self.snapshot.set(parser.getboolean(SECTION, "snapshot",
                                                 fallback=False))
             self.saved_roms = saved.get("roms", "") or default_roms(
                 self.vars["qemu"].get())
-            self.apply_compat()
+            self.apply_bios()
             if graphics_has_pegc(self.graphics.get()):
                 self.graphics_selected()
             roms = self.vars["roms"].get()
-            if not self.compat.get() and roms and not all(
+            if self.bios.get() == BIOS_STOCK and roms and not all(
                     os.path.isfile(os.path.join(roms, f)) for f in ROM_FILES):
                 self.write("put the PC-98 BIOS and font ROMs in %s" % roms)
             self.machine_selected()
@@ -3956,8 +4022,8 @@ def gui():
         def save(self):
             state = {k: v.get() for k, v in self.vars.items()}
             ibm_pc = machine_value(self.machine.get()) == "pc"
-            compat = self.saved_pc98_compat if ibm_pc else self.compat.get()
-            if compat:
+            bios = self.saved_pc98_bios if ibm_pc else self.bios.get()
+            if bios != BIOS_STOCK:
                 state["roms"] = self.saved_roms
             # the two boards are stored separately, so the wording of the
             # drop-down can change without stranding anyone's settings
@@ -3966,7 +4032,7 @@ def gui():
             state["lan"] = NETWORK_ARG.get(self.network.get(), "")
             parser = configparser.ConfigParser(interpolation=None)
             parser[SECTION] = dict(
-                state, compat=str(compat).lower(),
+                state, bios=bios, compat=str(bios != BIOS_STOCK).lower(),
                 machine=self.machine.get(), cpu=self.cpu.get(),
                 cores=self.cores.get(), memory=self.memory.get(),
                 graphics=self.graphics.get(),
